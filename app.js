@@ -3132,7 +3132,7 @@ const biwengerCompetitionToLocal = (competition) => {
   return "club";
 };
 
-const normalizeRemoteImageUrl = (value, base = "https://cf.biwenger.com") => {
+const normalizeRemoteImageUrl = (value, base = "https://cdn.biwenger.com") => {
   const raw = String(value || "").trim();
   if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
@@ -3147,10 +3147,19 @@ const biwengerLeagueIconUrl = (leagueId) => {
   const id = Number(leagueId || 0);
   return id > 0 ? `https://cdn.biwenger.com/i/l/${id}.png` : "";
 };
+const biwengerDefaultUserIconUrl = "https://cdn.biwenger.com/img/user.svg";
 
-const entityIconUrl = (entity = {}) => safeRemoteImageUrl(
-  entity.icon || entity.avatar || entity.photo || entity.image || entity.logo || entity.badge || entity.shield || ""
-);
+const entityIconUrl = (entity = {}) => {
+  const direct = safeRemoteImageUrl(
+    entity.icon || entity.avatar || entity.avatarUrl || entity.photo || entity.photoUrl
+      || entity.image || entity.imageUrl || entity.logo || entity.badge || entity.shield
+      || entity.profileImage || entity.profileImageUrl || ""
+  );
+  if (direct) return direct;
+  return Number(entity.userId || 0) > 0 || (Number(entity.id || 0) > 0 && entity.isUser)
+    ? biwengerDefaultUserIconUrl
+    : "";
+};
 
 const renderEntityAvatar = (entity = {}, className = "") => {
   const name = String(entity.name || entity.leagueName || "Liga");

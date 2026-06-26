@@ -2660,8 +2660,7 @@ function biwenger_league_overview(array $session, int $timeoutSeconds, array $he
             $seenUsers[$userId] = true;
             $fallbackPosition += 1;
             $finance = biwenger_finance_snapshot(array_merge($entry, $user));
-            $icon = biwenger_entity_media($user, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture'])
-                ?: biwenger_entity_media($entry, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture']);
+            $icon = biwenger_user_icon($user, $entry, $userId);
             $rows[] = [
                 'position' => biwenger_standing_position($entry, $fallbackPosition),
                 'userId' => $userId,
@@ -2729,8 +2728,7 @@ function biwenger_league_users(array $session, int $timeoutSeconds, array $heade
         $seenUsers[$userId] = true;
         $fallbackPosition += 1;
         $finance = biwenger_finance_snapshot(array_merge($entry, $user));
-        $icon = biwenger_entity_media($user, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture'])
-            ?: biwenger_entity_media($entry, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture']);
+        $icon = biwenger_user_icon($user, $entry, $userId);
         $rows[] = [
             'position' => biwenger_standing_position($entry, $fallbackPosition),
             'userId' => $userId,
@@ -4774,9 +4772,10 @@ function biwenger_activity_actor_payload($value, string $fallbackName = '', int 
     $entity = is_array($value) ? $value : [];
     $name = biwenger_entity_name($value, $fallbackName);
     $id = biwenger_entity_id($value, $fallbackId);
-    $icon = $entity ? biwenger_entity_media($entity, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture']) : null;
+    $icon = $entity ? biwenger_user_icon($entity, [], $id) : biwenger_default_user_icon();
     return [
         'id' => $id,
+        'userId' => $id,
         'name' => $name,
         'icon' => $icon,
         'isMarket' => biwenger_is_market_actor($name, $id)
@@ -5380,9 +5379,9 @@ function biwenger_normalize_media_url(string $value): ?string
     if ($value === '') return null;
     if (preg_match('~^https?://~i', $value)) return $value;
     if (strpos($value, '//') === 0) return 'https:' . $value;
-    if ($value[0] === '/') return 'https://cf.biwenger.com' . $value;
-    if (preg_match('~^(?:img|images|media|uploads|assets|i)/.+\.(?:png|jpe?g|webp|gif)(?:\?.*)?$~i', $value)) {
-        return 'https://cf.biwenger.com/' . ltrim($value, '/');
+    if ($value[0] === '/') return 'https://cdn.biwenger.com' . $value;
+    if (preg_match('~^(?:img|images|media|uploads|assets|i)/[^\s]+$~i', $value)) {
+        return 'https://cdn.biwenger.com/' . ltrim($value, '/');
     }
     return null;
 }
@@ -5390,6 +5389,23 @@ function biwenger_normalize_media_url(string $value): ?string
 function biwenger_league_icon_fallback(int $leagueId): ?string
 {
     return $leagueId > 0 ? 'https://cdn.biwenger.com/i/l/' . $leagueId . '.png' : null;
+}
+
+function biwenger_default_user_icon(): string
+{
+    return 'https://cdn.biwenger.com/img/user.svg';
+}
+
+function biwenger_user_icon(array $user, array $entry = [], int $userId = 0): string
+{
+    $keys = [
+        'icon', 'iconUrl', 'logo', 'badge', 'shield', 'avatar', 'avatarUrl',
+        'photo', 'photoUrl', 'picture', 'pictureUrl', 'image', 'imageUrl',
+        'profileImage', 'profileImageUrl', 'profilePicture', 'profilePictureUrl'
+    ];
+    return biwenger_entity_media($user, $keys)
+        ?: biwenger_entity_media($entry, $keys)
+        ?: biwenger_default_user_icon();
 }
 
 function biwenger_entity_media(array $entity, array $keys, int $depth = 0): ?string
@@ -5409,7 +5425,7 @@ function biwenger_entity_media(array $entity, array $keys, int $depth = 0): ?str
         }
     }
     foreach ($entity as $key => $value) {
-        if (in_array((string)$key, ['user', 'users', 'account', 'owner', 'members'], true)) continue;
+        if (in_array((string)$key, ['user', 'users', 'members'], true)) continue;
         if (!is_array($value)) continue;
         $found = biwenger_entity_media($value, $keys, $depth + 1);
         if ($found) return $found;

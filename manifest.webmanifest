@@ -1,0 +1,18 @@
+{
+  "name": "Radar Biwenger",
+  "short_name": "Radar",
+  "description": "Mercado, plantilla y recomendacion de fichajes para Biwenger.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#071318",
+  "theme_color": "#071318",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "assets/app-icon.png?v=5",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

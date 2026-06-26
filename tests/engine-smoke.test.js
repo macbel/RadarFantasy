@@ -1,0 +1,228 @@
+const fs = require("fs");
+const vm = require("vm");
+
+const context = {
+  console,
+  window: {}
+};
+
+vm.createContext(context);
+vm.runInContext(fs.readFileSync("data.js", "utf8"), context);
+
+const appCode = fs.readFileSync("app.js", "utf8").replace(
+  /\ninit\(\);\s*$/,
+  `
+const sample = [
+  "Oihan Sancet - Athletic - MC - 12.300.000",
+  "Ante Budimir - Osasuna - DL - 9.800.000",
+  "Pepelu - Valencia - MC - 5.900.000"
+].join("\\n");
+
+if (parseCurrencyInput("5.500.000 €") !== 5500000
+  || parseCurrencyInput("5,5 M") !== 5500000
+  || parseCurrencyInput("750 mil") !== 750000) {
+  throw new Error("Currency input parsing changed sale amounts");
+}
+
+state.players = parseMarketText(sample);
+const analyzed = state.players
+  .map((player) => analyzePlayer(player, state.players))
+  .sort((a, b) => b.recommendation - a.recommendation);
+
+if (analyzed.length !== 3) {
+  throw new Error("Expected 3 analyzed players");
+}
+
+if (!analyzed.every((player) => Number.isInteger(player.recommendation))) {
+  throw new Error("Recommendation score must be an integer");
+}
+
+if (!analyzed[0].name || analyzed[0].recommendation < analyzed[2].recommendation) {
+  throw new Error("Players are not ranked correctly");
+}
+
+const ocrSample = [
+  "Mercado",
+  "Oihan Sancet",
+  "Athletic",
+  "12.300.000 €",
+  "Comprar",
+  "Pepelu",
+  "Valencia",
+  "5.900.000 €"
+].join("\\n");
+
+const ocrPlayers = parseMarketText(ocrSample);
+if (ocrPlayers.length !== 2) {
+  throw new Error(\`Expected 2 OCR players, got \${ocrPlayers.length}\`);
+}
+
+if (ocrPlayers[0].name !== "Oihan Sancet" || ocrPlayers[0].price !== 12300000) {
+  throw new Error("OCR-style player reconstruction failed");
+}
+
+state.competition = "worldcup";
+const worldcupPlayers = state.players
+  .map((player) => playerForCompetition(player))
+  .map((player, index, players) => analyzePlayer(player, players))
+  .sort((a, b) => b.recommendation - a.recommendation);
+
+const worldcupSancet = worldcupPlayers.find((player) => player.name === "Oihan Sancet");
+if (!worldcupSancet || worldcupSancet.team !== "Espana") {
+  throw new Error("World Cup context did not switch player to national team");
+}
+
+if (worldcupSancet.starter >= 86) {
+  throw new Error("World Cup context did not adjust starter probability");
+}
+
+const dirtyWorldcupSample = [
+  "James Trafford - England - POR - 2230000",
+  "Ørjan Nyland Norway Sin seleccion - Sin seleccion - POR - 1760000",
+  "Nikola Vasilj Bosnia & Herzegovina - Sin seleccion - POR - 1430000",
+  "Archie Brown - Fenerbahçe - DF - 2610000",
+  "Gaël Kakuta DR Congo Sin seleccion - Sin seleccion - MC - 840000"
+].join("\\n");
+
+const dirtyWorldcupPlayers = parseMarketText(dirtyWorldcupSample);
+const nyland = dirtyWorldcupPlayers.find((player) => player.name.includes("Nyland"));
+if (!nyland || nyland.team !== "Noruega" || /sin seleccion/i.test(nyland.name)) {
+  throw new Error("Dirty World Cup OCR cleanup failed for Nyland: " + JSON.stringify(nyland));
+}
+
+const archieBrown = dirtyWorldcupPlayers.find((player) => player.name === "Archie Brown");
+if (!archieBrown || archieBrown.team !== "Sin seleccion") {
+  throw new Error("World Cup club segment should not become selection: " + JSON.stringify(archieBrown));
+}
+
+const kakuta = dirtyWorldcupPlayers.find((player) => player.name.includes("Kakuta"));
+if (!kakuta || kakuta.team !== "RD Congo") {
+  throw new Error("DR Congo alias was not detected: " + JSON.stringify(kakuta));
+}
+
+if (detectBiwengerPosterKind("PLANTILLA LA MANDARINA MECANICA MUNDIAL") !== "squad") {
+  throw new Error("Squad poster header was not detected");
+}
+
+if (detectCompetitionFromOcrText("PLANTILLA MUNDIAL LUCENTINO") !== "worldcup") {
+  throw new Error("World Cup squad header was not detected");
+}
+
+const biwengerCardSamples = [
+  ["Trafford 0 2.230.000 €", "", "POR", "Trafford", 2230000],
+  ["Nikola Vasilj 0 1.430.00", "", "POR", "Nikola Vasilj", 1430000],
+  ["JalalHassan 0 190.000 €", "", "POR", "Jalal Hassan", 190000],
+  ["Min-jaeKim 0 3.330.000 €", "", "DF", "Min-jae Kim", 3330000],
+  ["ozbeh Cheshmi 0 J 370.000 €", "", "MC", "Roozbeh Cheshmi", 370000],
+  ["Rafaelledao 0 13.720.000 €", "", "DL", "Rafael Leao", 13720000],
+  ["S.Tounekti 0 550.000 €", "", "DL", "Sebastian Tounekti", 550000]
+];
+
+for (const [text, priceText, position, expectedName, expectedPrice] of biwengerCardSamples) {
+  const parsed = parseBiwengerCardOcr(text, priceText, position);
+  if (!parsed || parsed.name !== expectedName || parsed.price !== expectedPrice) {
+    throw new Error(\`Bad Biwenger card parse for "\${text}": \${JSON.stringify(parsed)}\`);
+  }
+}
+
+const squadCardSamples = [
+  ["Maignan 0 5.570.000 â‚¬", "", "POR", "Maignan", 5570000],
+  ["Meshaal Barsham 0 360.000 â‚¬", "", "POR", "Meshaal Barsham", 360000],
+  ["Otamendi 0 3.890.000 â‚¬", "", "DF", "Otamendi", 3890000],
+  ["Mudau 0 550.000 â‚¬", "", "DF", "Mudau", 550000],
+  ["Jordan Ayew 0 1.380.000 â‚¬", "", "DL", "Jordan Ayew", 1380000]
+];
+
+for (const [text, priceText, position, expectedName, expectedPrice] of squadCardSamples) {
+  const parsed = parseBiwengerCardOcr(text, priceText, position, { requirePrice: true });
+  if (!parsed || parsed.name !== expectedName || parsed.price !== expectedPrice) {
+    throw new Error("Bad squad card parse: " + JSON.stringify(parsed));
+  }
+}
+
+if (parseBiwengerCardOcr("Hugo Broos", "", "ENT", { requirePrice: true })) {
+  throw new Error("Coach card without price should not be accepted as player");
+}
+
+const maignanWithoutPrice = parseBiwengerCardOcr("Maignan 0", "", "POR", { requireTrustedName: true });
+if (!maignanWithoutPrice || maignanWithoutPrice.name !== "Maignan" || maignanWithoutPrice.position !== "POR") {
+  throw new Error("Trusted squad player should be accepted even if price OCR fails");
+}
+
+if (parseBiwengerCardOcr("PLANTILLA o", "", "MC", { requireTrustedName: true })) {
+  throw new Error("Generic squad OCR garbage should not be accepted as trusted player");
+}
+
+const importedTeamPlayer = {
+  ...state.players[0],
+  id: "biwenger-team-99",
+  biwengerPlayerId: 99,
+  media: { playerImage: "https://example.com/player.png", emblemImage: "https://example.com/team.png" },
+  sourceLinks: { futbolFantasy: "https://example.com/profile" }
+};
+const savedTeam = mergeTeamPlayerEdits(parseMarketText("Oihan Sancet - Athletic - MC - 12.300.000"), [importedTeamPlayer]);
+if (savedTeam[0].biwengerPlayerId !== 99 || !savedTeam[0].media.playerImage || !savedTeam[0].sourceLinks.futbolFantasy) {
+  throw new Error("Saving team must preserve imported player identity, media and source data");
+}
+
+const marketOwnerPlayer = hydrateImportedPlayers([{
+  id: "market-owner-test",
+  biwengerPlayerId: 77,
+  marketOwnerId: 42,
+  name: "Jugador rival",
+  team: "Equipo rival",
+  position: "MC",
+  price: 1000000
+}])[0];
+if (marketOwnerPlayer.marketOwnerId !== 42) {
+  throw new Error("Market seller identity must survive hydration so bids reach the correct rival");
+}
+
+const nowSeconds = Math.floor(Date.now() / 1000);
+state.players = hydrateImportedPlayers([{
+  id: "market-current-501",
+  biwengerPlayerId: 501,
+  marketOwnerId: 42,
+  name: "Jugador actual",
+  team: "Equipo rival",
+  position: "MC",
+  price: 1000000
+}, {
+  id: "market-stale-502",
+  biwengerPlayerId: 502,
+  marketOwnerId: 43,
+  name: "Samu Costa",
+  team: "Mallorca",
+  position: "MC",
+  price: 2000000
+}]);
+state.teamPlayers = hydrateImportedPlayers([{
+  id: "team-owned-503",
+  biwengerPlayerId: 503,
+  name: "Jugador propio",
+  team: "Mi equipo",
+  position: "DF",
+  price: 1500000
+}]);
+const safeOwnOffers = activeOwnBidOffers([
+  { offerId: 10, playerId: 502, playerName: "Samu Costa", amount: 2100000, isMine: true, isIncoming: false, status: "pending", source: "outgoing", expiresTs: nowSeconds - 60 },
+  { offerId: 20, playerId: 501, playerName: "Jugador actual", amount: 1000000, isMine: true, isIncoming: false, status: "pending", source: "user", timestampTs: nowSeconds },
+  { offerId: 21, playerId: 501, playerName: "Jugador actual", amount: 1200000, isMine: true, isIncoming: false, status: "pending", source: "outgoing", timestampTs: nowSeconds },
+  { offerId: 22, playerId: 503, playerName: "Jugador propio", amount: 900000, isMine: true, isIncoming: false, status: "pending", source: "outgoing", timestampTs: nowSeconds }
+]);
+if (safeOwnOffers.length !== 1 || safeOwnOffers[0].playerId !== 501 || safeOwnOffers[0].amount !== 1200000) {
+  throw new Error("Own bid filter must drop expired, owned-player and duplicate stale offers: " + JSON.stringify(safeOwnOffers));
+}
+
+console.log(JSON.stringify({
+  players: analyzed.length,
+  ocrPlayers: ocrPlayers.length,
+  biwengerCards: biwengerCardSamples.length,
+  worldcupBest: worldcupPlayers[0].name,
+  best: analyzed[0].name,
+  score: analyzed[0].recommendation
+}));
+`
+);
+
+vm.runInContext(appCode, context);

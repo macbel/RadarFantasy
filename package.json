@@ -1,0 +1,23 @@
+{
+  "name": "fantasy-market-scout",
+  "version": "2.7.0",
+  "private": true,
+  "description": "Scout de fichajes fantasy para web, Android e iOS 16+",
+  "scripts": {
+    "start": "node dev-server.js",
+    "test": "node tests\\dom-contract.test.js && node tests\\engine-smoke.test.js",
+    "build:web": "node scripts/prepare-mobile-web.cjs",
+    "mobile:copy": "npm run build:web && npx cap copy",
+    "mobile:sync": "npm run build:web && npx cap sync",
+    "mobile:android": "npm run build:web && npx cap sync android && npx cap open android",
+    "mobile:ios": "npm run build:web && npx cap sync ios && npx cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.4.2"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.4.2",
+    "@capacitor/cli": "^7.4.2",
+    "@capacitor/ios": "^7.4.2"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "appId": "com.fantasymarketscout.app",
+  "appName": "Fantasy Market Scout",
+  "webDir": "mobile-web",
+  "bundledWebRuntime": false,
+  "server": {
+    "cleartext": true
+  }
+}

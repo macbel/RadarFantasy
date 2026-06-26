@@ -1,0 +1,26 @@
+.fantasy-db/
+api/media-db/
+node_modules/
+mobile-web/
+
+# Local tooling and generated build outputs
+.tooling/
+android/.gradle/
+android/app/build/
+ios/App/Pods/
+ios/App/Podfile.lock
+*.apk
+
+# Local configuration and secrets
+app-config.js
+.env
+*.key
+*.pem
+*.p12
+*.keystore
+*.jks
+
+# Local investigation dumps
+*.log
+*.tmp
+*.bak

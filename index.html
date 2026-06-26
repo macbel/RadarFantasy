@@ -1,0 +1,928 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>Radar Biwenger</title>
+    <meta name="theme-color" content="#081317" />
+    <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
+    <link rel="manifest" href="manifest.webmanifest?v=11" />
+    <link rel="stylesheet" href="styles.css?v=41" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Navegacion principal">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <img src="assets/app-icon.png?v=5" alt="" />
+          </div>
+          <div>
+            <h1>Radar Biwenger</h1>
+            <p>Mercado, plantilla y decisión</p>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="Vistas">
+          <button class="nav-item active" type="button" data-view="market">
+            <span class="icon icon-market" aria-hidden="true"></span>
+            Mercado
+          </button>
+          <button class="nav-item" type="button" data-view="team">
+            <span class="icon icon-team" aria-hidden="true"></span>
+            Mi equipo
+          </button>
+          <button class="nav-item" type="button" data-view="compare">
+            <span class="icon icon-compare" aria-hidden="true"></span>
+            Comparador
+          </button>
+          <button class="nav-item" type="button" data-view="league">
+            <span class="icon icon-team" aria-hidden="true"></span>
+            Liga
+          </button>
+          <button class="nav-item" type="button" data-view="videos">
+            <span class="icon icon-video" aria-hidden="true"></span>
+            Mundial en vivo
+          </button>
+          <button class="nav-item" type="button" data-view="settings">
+            <span class="icon icon-settings" aria-hidden="true"></span>
+            Ajustes
+          </button>
+        </nav>
+
+        <div class="sidebar-block">
+          <label for="league-select">Liga activa</label>
+          <div class="active-league-identity" id="active-league-identity">
+            <img id="active-league-icon" src="assets/app-icon.png?v=5" alt="" />
+            <div>
+              <strong id="active-league-title">Mi liga</strong>
+              <span id="active-league-provider">Identidad local</span>
+            </div>
+          </div>
+          <select id="league-select">
+            <option value="">Cargando ligas...</option>
+          </select>
+          <div class="league-create">
+            <input id="league-name" type="text" maxlength="60" placeholder="Nombre de liga" />
+            <button class="icon-button" type="button" id="create-league" aria-label="Crear liga" title="Crear liga">+</button>
+          </div>
+          <button class="ghost-button sidebar-action-button" type="button" id="delete-league">
+            <span class="icon icon-clear" aria-hidden="true"></span>
+            Eliminar liga
+          </button>
+          <span class="mini-status" id="league-status">Guardado local activo.</span>
+        </div>
+
+        <div class="sidebar-block">
+          <label for="competition-select">Competicion</label>
+          <select id="competition-select">
+            <option value="club">Liga / clubes</option>
+            <option value="worldcup">Mundial / selecciones</option>
+          </select>
+        </div>
+
+        <div class="sidebar-block">
+          <label for="scoring-system">Sistema</label>
+          <select id="scoring-system">
+            <option value="mixed">Media AS/SofaScore</option>
+            <option value="as">Picas AS</option>
+            <option value="sofascore">SofaScore</option>
+            <option value="stats">Estadisticas</option>
+          </select>
+        </div>
+
+        <div class="sidebar-block compact">
+          <span class="muted-label">Ultima lectura</span>
+          <strong id="last-updated">Sin mercado cargado</strong>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="topbar-league-copy">
+            <p class="eyebrow">Mercado diario</p>
+            <h2>Ranking de fichajes</h2>
+          </div>
+          <div class="topbar-actions">
+            <button class="ghost-button" type="button" id="sync-biwenger">
+              <span class="icon icon-refresh" aria-hidden="true"></span>
+              Biwenger
+            </button>
+            <button class="ghost-button" type="button" id="refresh-sources">
+              <span class="icon icon-refresh" aria-hidden="true"></span>
+              Actualizar fuentes
+            </button>
+            <button class="primary-button" type="button" id="analyze-market">
+              <span class="icon icon-search" aria-hidden="true"></span>
+              Recalcular
+            </button>
+          </div>
+        </header>
+
+        <section class="view active" id="market-view" aria-label="Analisis de mercado">
+          <section class="input-band" aria-label="Entrada de mercado">
+            <div class="market-input">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Entrada</p>
+                  <h3>Mercado y respaldo manual</h3>
+                </div>
+                <div class="section-heading-actions">
+                  <button class="ghost-button" type="button" id="market-refresh-inline" disabled>
+                    <span class="icon icon-refresh" aria-hidden="true"></span>
+                    Actualizar mercado
+                  </button>
+                  <button class="icon-button" type="button" id="clear-input" aria-label="Limpiar entrada" title="Limpiar entrada">
+                    <span class="icon icon-clear" aria-hidden="true"></span>
+                  </button>
+                </div>
+              </div>
+              <div class="manual-entry-header">
+                <span class="muted-label">Respaldo manual</span>
+              </div>
+              <textarea id="market-text" spellcheck="false" placeholder="Ejemplo:
+Oihan Sancet - Athletic - MC - 12.300.000
+Muriqi Mallorca 8.100.000
+Pepelu, Valencia, MC, 5.900.000"></textarea>
+              <div class="ocr-status" id="ocr-status" role="status" aria-live="polite">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span>La captura queda como respaldo. La via recomendada es Biwenger directo.</span>
+              </div>
+              <div class="ocr-status source-status" id="source-status" role="status" aria-live="polite">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span>Fuentes listas. Al analizar se consultaran SofaScore y FutbolFantasy si usas localhost.</span>
+              </div>
+              <div class="dropzone" id="image-dropzone">
+                <input id="image-upload" type="file" accept="image/*" capture="environment" />
+                <div class="dropzone-visual" aria-hidden="true">
+                  <span class="icon icon-image"></span>
+                </div>
+                <div>
+                  <strong>Captura del mercado</strong>
+                  <p>Plan B manual. Si Biwenger directo no esta disponible, prueba aqui.</p>
+                </div>
+              </div>
+              <img id="image-preview" class="image-preview" alt="Vista previa de captura del mercado" hidden />
+            </div>
+
+            <div class="control-panel" aria-label="Controles de analisis">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Modelo</p>
+                  <h3>Pesos de recomendacion</h3>
+                </div>
+              </div>
+              <div class="weights-grid">
+                <label>
+                  Titularidad
+                  <input id="weight-start" type="range" min="0" max="60" value="35" />
+                  <span id="weight-start-value">35%</span>
+                </label>
+                <label>
+                  Sistema
+                  <input id="weight-system" type="range" min="0" max="60" value="25" />
+                  <span id="weight-system-value">25%</span>
+                </label>
+                <label>
+                  Precio
+                  <input id="weight-price" type="range" min="0" max="60" value="20" />
+                  <span id="weight-price-value">20%</span>
+                </label>
+                <label>
+                  Forma
+                  <input id="weight-form" type="range" min="0" max="60" value="15" />
+                  <span id="weight-form-value">15%</span>
+                </label>
+                <label>
+                  Encaje plantilla
+                  <input id="weight-fit" type="range" min="0" max="60" value="15" />
+                  <span id="weight-fit-value">15%</span>
+                </label>
+              </div>
+              <div class="filter-row">
+                <label>
+                  Posicion
+                  <select id="position-filter">
+                    <option value="all">Todas</option>
+                    <option value="POR">POR</option>
+                    <option value="DF">DF</option>
+                    <option value="MC">MC</option>
+                    <option value="DL">DL</option>
+                    <option value="ENT">ENT</option>
+                  </select>
+                </label>
+                <label>
+                  Presupuesto max.
+                  <input id="budget-filter" type="number" min="0" step="100000" placeholder="Sin limite" />
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="summary-band" aria-label="Resumen de recomendaciones">
+            <div class="metric">
+              <span class="muted-label">Jugadores</span>
+              <strong id="metric-count">0</strong>
+            </div>
+            <div class="metric">
+              <span class="muted-label">Mejor opcion</span>
+              <strong id="metric-best">Pendiente</strong>
+            </div>
+            <div class="metric">
+              <span class="muted-label">Valor medio</span>
+              <strong id="metric-value">0 M</strong>
+            </div>
+            <div class="metric">
+              <span class="muted-label">Riesgo alto</span>
+              <strong id="metric-risk">0</strong>
+            </div>
+            <div class="metric finance-metric">
+              <span class="muted-label">Saldo</span>
+              <strong id="metric-balance">S/D</strong>
+            </div>
+            <div class="metric finance-metric">
+              <span class="muted-label">Valor equipo</span>
+              <strong id="metric-team-value">S/D</strong>
+            </div>
+            <div class="metric finance-metric maximum-bid-metric">
+              <span class="muted-label">Puja maxima</span>
+              <strong id="metric-maximum-bid">S/D</strong>
+            </div>
+            <div class="metric finance-metric">
+              <span class="muted-label">Pujas activas</span>
+              <strong id="metric-bids">0</strong>
+            </div>
+            <div class="metric finance-metric">
+              <span class="muted-label">Saldo tras pujas</span>
+              <strong id="metric-future-balance">S/D</strong>
+            </div>
+          </section>
+          <div class="bid-analysis" id="bid-analysis">Conecta Biwenger para analizar el impacto de tus pujas.</div>
+          <section class="market-strategy-grid" aria-label="Plan estratégico de mercado">
+            <article class="strategy-panel strategy-panel-wide">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">Plan de mercado</p>
+                  <h3>Estrategia para hoy</h3>
+                </div>
+              </div>
+              <div id="market-plan" class="market-plan">
+                <p class="muted-empty compact">Carga el mercado para generar una estrategia con tu saldo, equipo y pujas.</p>
+              </div>
+            </article>
+            <article class="strategy-panel">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">Radar</p>
+                  <h3>Oportunidades y trampas</h3>
+                </div>
+              </div>
+              <div id="opportunity-radar" class="opportunity-radar">
+                <p class="muted-empty compact">Sin mercado analizado.</p>
+              </div>
+            </article>
+            <article class="strategy-panel">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">Alertas</p>
+                  <h3>Lo que cambia la puja</h3>
+                </div>
+              </div>
+              <div id="market-alerts" class="market-alerts">
+                <p class="muted-empty compact">Sin alertas todavía.</p>
+              </div>
+            </article>
+            <article class="strategy-panel">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">Fuentes</p>
+                  <h3>Confianza de datos</h3>
+                </div>
+              </div>
+              <div id="source-quality-panel" class="source-quality-panel">
+                <p class="muted-empty compact">Actualiza fuentes para medir cobertura.</p>
+              </div>
+            </article>
+            <article class="strategy-panel">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">Histórico</p>
+                  <h3>Decisiones aprendidas</h3>
+                </div>
+              </div>
+              <div id="decision-history-panel" class="decision-history-panel">
+                <p class="muted-empty compact">Aparecerán las últimas lecturas del mercado.</p>
+              </div>
+            </article>
+          </section>
+          <section class="market-decision-center" aria-label="Centro de decision de mercado">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Centro de decisión</p>
+                <h3>Qué hacer y hasta dónde pujar</h3>
+              </div>
+            </div>
+            <div id="market-decision-lanes" class="decision-lanes">
+              <p class="muted-empty compact">Carga o actualiza el mercado para ver acciones recomendadas.</p>
+            </div>
+          </section>
+          <section class="market-top-five" id="market-top-five" aria-label="Top 5 recomendaciones">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Top 5</p>
+                <h3>Mejores fichajes ahora</h3>
+              </div>
+            </div>
+            <div id="market-top-five-list" class="top-five-list">
+              <p class="muted-empty compact">Carga o actualiza el mercado para ver el top 5.</p>
+            </div>
+          </section>
+
+          <section class="results-layout">
+            <div class="table-panel" aria-label="Tabla de mercado">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Prioridad</p>
+                  <h3>Ordenado por recomendacion</h3>
+                </div>
+                <div class="market-heading-actions">
+                  <button class="ghost-button" type="button" id="refresh-market-bids">
+                    <span class="icon icon-refresh" aria-hidden="true"></span>
+                    Actualizar pujas
+                  </button>
+                  <button class="ghost-button" type="button" id="export-csv">
+                    <span class="icon icon-download" aria-hidden="true"></span>
+                    CSV
+                  </button>
+                </div>
+              </div>
+              <div class="market-position-filter" role="group" aria-label="Filtrar mercado por posicion">
+                <button class="active" type="button" data-market-position="all">Todos</button>
+                <button class="pos-POR" type="button" data-market-position="POR">POR</button>
+                <button class="pos-DF" type="button" data-market-position="DF">DF</button>
+                <button class="pos-MC" type="button" data-market-position="MC">MC</button>
+                <button class="pos-DL" type="button" data-market-position="DL">DL</button>
+                <button class="pos-ENT" type="button" data-market-position="ENT">ENT</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Jugador</th>
+                      <th>Pos.</th>
+                      <th>Próximo</th>
+                      <th>Precio</th>
+                      <th>Vendedor</th>
+                      <th>Decisión</th>
+                      <th>Puja max.</th>
+                      <th>Tu puja</th>
+                      <th>Rivales</th>
+                      <th>Titular</th>
+                      <th>Forma</th>
+                      <th>Estado</th>
+                      <th>Riesgo</th>
+                      <th>Datos</th>
+                      <th>Ficha</th>
+                      <th>Nota</th>
+                    </tr>
+                  </thead>
+                  <tbody id="results-body">
+                    <tr class="empty-row">
+                      <td colspan="16">Carga un mercado para empezar el analisis.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div id="results-cards" class="market-cards">
+                <article class="market-card empty">
+                  <p>Carga un mercado para empezar el analisis.</p>
+                </article>
+              </div>
+            </div>
+
+            <aside class="detail-panel" aria-label="Detalle del jugador">
+              <div id="player-detail" class="detail-empty">
+                <div class="pitch-visual" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <h3>Selecciona un jugador</h3>
+                <p>Veras la lectura de titularidad, encaje por sistema, precio objetivo y argumentos de fichaje.</p>
+              </div>
+            </aside>
+          </section>
+
+          <div id="market-detail-sheet" class="detail-sheet" hidden>
+            <button class="detail-sheet-backdrop" type="button" id="close-market-detail-backdrop" aria-label="Cerrar detalle"></button>
+            <div class="detail-sheet-dialog" id="market-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="market-detail-title">
+              <div class="detail-sheet-header">
+                <div>
+                  <p class="eyebrow">Detalle rapido</p>
+                  <h3 id="market-detail-title">Jugador</h3>
+                </div>
+                <button class="icon-button" type="button" id="close-market-detail" aria-label="Cerrar detalle">
+                  <span class="icon icon-clear" aria-hidden="true"></span>
+                </button>
+              </div>
+              <div id="mobile-player-detail" class="detail-empty">
+                <div class="pitch-visual" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <h3>Selecciona un jugador</h3>
+                <p>Veras la lectura de titularidad, encaje por sistema, precio objetivo y argumentos de fichaje.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="team-view" aria-label="Mi equipo y alineacion ideal">
+          <section class="team-layout">
+            <div class="market-input">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Plantilla</p>
+                  <h3>Tu plantilla actual</h3>
+                </div>
+                <button class="icon-button" type="button" id="clear-team" aria-label="Vaciar equipo" title="Vaciar equipo">
+                  <span class="icon icon-clear" aria-hidden="true"></span>
+                </button>
+              </div>
+              <textarea id="team-text" spellcheck="false" placeholder="Pega jugadores manualmente o trae tu plantilla desde Biwenger. Se guardara en la liga activa."></textarea>
+              <div class="ocr-status" id="team-status" role="status" aria-live="polite">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span>Equipo pendiente de cargar para esta liga.</span>
+              </div>
+              <div class="dropzone" id="team-image-dropzone">
+                <input id="team-image-upload" type="file" accept="image/*" capture="environment" />
+                <div class="dropzone-visual" aria-hidden="true">
+                  <span class="icon icon-image"></span>
+                </div>
+                <div>
+                  <strong>Captura de tu equipo</strong>
+                  <p>Solo como respaldo manual si no puedes importar la plantilla.</p>
+                </div>
+              </div>
+              <img id="team-image-preview" class="image-preview" alt="Vista previa de captura del equipo" hidden />
+              <div class="team-actions">
+                <button class="ghost-button" type="button" id="team-refresh-inline" disabled>
+                  <span class="icon icon-refresh" aria-hidden="true"></span>
+                  Actualizar equipo
+                </button>
+                <button class="primary-button" type="button" id="analyze-team">
+                  <span class="icon icon-search" aria-hidden="true"></span>
+                  Guardar equipo
+                </button>
+                <button class="ghost-button" type="button" id="calculate-lineup">
+                  <span class="icon icon-team" aria-hidden="true"></span>
+                  Once ideal
+                </button>
+              </div>
+              <section class="lineup-panel team-lineup-frame" aria-label="Asistente de alineacion">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Asistente de alineacion</p>
+                    <h3>Once recomendado</h3>
+                  </div>
+                </div>
+                <div id="lineup-output" class="lineup-output">
+                  <p class="muted-empty">Guarda tu equipo y calcula el once ideal para ver formacion, titulares y alertas.</p>
+                </div>
+              </section>
+            </div>
+
+            <div class="team-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Balance</p>
+                  <h3>Necesidades de plantilla</h3>
+                </div>
+              </div>
+              <div class="team-finance-summary" aria-label="Finanzas de la liga">
+                <div>
+                  <span class="muted-label">Saldo</span>
+                  <strong id="team-finance-balance">S/D</strong>
+                </div>
+                <div>
+                  <span class="muted-label">Valor plantilla</span>
+                  <strong id="team-finance-value">S/D</strong>
+                </div>
+                <div>
+                  <span class="muted-label">Revalorización</span>
+                  <strong id="team-finance-revaluation">S/D</strong>
+                </div>
+              </div>
+              <div class="position-counts" id="team-position-counts"></div>
+              <div class="team-roster" id="team-roster">
+                <p class="muted-empty">Carga tu equipo para ajustar las recomendaciones del mercado.</p>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="compare-view" aria-label="Comparador de jugadores">
+          <section class="compare-layout">
+            <div class="compare-controls">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Decisor rapido</p>
+                  <h3>Comparar dos fichajes</h3>
+                </div>
+              </div>
+              <div class="filter-row">
+                <label>
+                  Jugador A
+                  <select id="compare-a"></select>
+                </label>
+                <label>
+                  Jugador B
+                  <select id="compare-b"></select>
+                </label>
+              </div>
+              <button class="primary-button" type="button" id="run-compare">
+                <span class="icon icon-compare" aria-hidden="true"></span>
+                Comparar
+              </button>
+            </div>
+            <div class="compare-output" id="compare-output">
+              <h3>Sin comparacion</h3>
+              <p>Analiza un mercado y elige dos jugadores para ver cual encaja mejor.</p>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="league-view" aria-label="Clasificacion y rivales">
+          <div class="league-command-bar">
+            <button class="primary-button" type="button" id="refresh-league">
+              <span class="icon icon-refresh" aria-hidden="true"></span>
+              Actualizar centro
+            </button>
+            <button class="ghost-button league-tab active" type="button" data-league-tab="assistant">Asistente</button>
+            <button class="ghost-button league-tab" type="button" data-league-tab="bids">Pujas</button>
+            <button class="ghost-button league-tab" type="button" data-league-tab="sales">Ventas</button>
+            <button class="ghost-button league-tab" type="button" data-league-tab="rivals">Rivales</button>
+            <button class="ghost-button league-tab" type="button" data-league-tab="fixtures">Jornada</button>
+            <button class="ghost-button league-tab" type="button" data-league-tab="live-round">Jornada fantasy</button>
+            <button class="ghost-button league-tab" type="button" data-league-tab="league">Clasificación</button>
+          </div>
+          <div class="ocr-status league-operation-status" id="league-operation-status" role="status" aria-live="polite">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span>Centro operativo listo.</span>
+          </div>
+          <section class="league-workspace active" data-league-panel="assistant">
+            <div class="league-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Asistente diario</p>
+                  <h3>Pujas, ventas y ofertas recomendadas</h3>
+                </div>
+                <button class="ghost-button" type="button" id="refresh-assistant">Recalcular asistente</button>
+              </div>
+              <div id="bid-sale-assistant" class="bid-sale-assistant">
+                <p class="muted-empty">Actualiza el centro para generar el plan de hoy.</p>
+              </div>
+            </div>
+          </section>
+          <section class="league-workspace" data-league-panel="bids">
+            <div class="league-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Centro de pujas</p>
+                  <h3>Ofertas activas y saldo futuro</h3>
+                </div>
+              </div>
+              <div id="bid-center" class="operations-list">
+                <p class="muted-empty">Actualiza el centro para gestionar tus pujas.</p>
+              </div>
+            </div>
+          </section>
+          <section class="league-workspace" data-league-panel="sales">
+            <div class="league-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Gestor de ventas</p>
+                  <h3>Tu plantilla en el mercado</h3>
+                </div>
+                <button class="ghost-button" type="button" id="renew-sales">Renovar ventas</button>
+              </div>
+              <div id="sales-center" class="operations-list">
+                <p class="muted-empty">Actualiza el centro para gestionar ventas.</p>
+              </div>
+            </div>
+          </section>
+          <section class="league-workspace" data-league-panel="rivals">
+            <div class="league-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Inteligencia de rivales</p>
+                  <h3>Plantilla y debilidades</h3>
+                </div>
+              </div>
+              <label class="rival-selector">
+                Rival
+                <select id="rival-select"><option value="">Selecciona un rival</option></select>
+              </label>
+              <div id="rival-intelligence" class="intelligence-summary"></div>
+              <div id="rival-team" class="team-roster">
+                <p class="muted-empty">Selecciona un rival para consultar su plantilla visible.</p>
+              </div>
+            </div>
+          </section>
+          <section class="league-workspace" data-league-panel="fixtures">
+            <div class="league-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Jornada actual</p>
+                  <h3>Partidos y resultados</h3>
+                </div>
+                <button class="ghost-button" type="button" id="refresh-fixtures">Actualizar jornada</button>
+              </div>
+              <div id="league-fixtures" class="fixtures-list">
+                <p class="muted-empty">Conecta Biwenger para consultar la jornada actual.</p>
+              </div>
+            </div>
+          </section>
+          <section class="league-workspace" data-league-panel="live-round">
+            <div class="league-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Jornada fantasy en curso</p>
+                  <h3>Alineaciones y ranking provisional</h3>
+                </div>
+                <button class="ghost-button" type="button" id="refresh-live-round">Actualizar</button>
+              </div>
+              <div id="live-round-ranking" class="live-round-ranking">
+                <p class="muted-empty">Conecta Biwenger para ver las alineaciones de la jornada.</p>
+              </div>
+            </div>
+          </section>
+          <section class="league-workspace" data-league-panel="league">
+          <section class="league-pro-layout">
+            <div class="league-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Clasificación general</p>
+                  <h3>Tabla de tu liga</h3>
+                </div>
+              </div>
+              <div id="league-standings-summary" class="league-standings-summary"></div>
+              <div id="league-standings" class="league-standings">
+                <p class="muted-empty">Conecta Biwenger para cargar la clasificacion.</p>
+              </div>
+            </div>
+            <div class="league-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Actividad</p>
+                  <h3>Tablon de la liga</h3>
+                </div>
+              </div>
+              <div id="league-activity" class="operations-list">
+                <p class="muted-empty">Actualiza el centro para consultar la actividad.</p>
+              </div>
+            </div>
+          </section>
+          </section>
+        </section>
+
+        <section class="view" id="videos-view" aria-label="Mundial en vivo">
+          <section class="video-highlights-layout">
+            <div class="video-highlights-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">ScoreBat</p>
+                  <h3>Mundial en vivo</h3>
+                </div>
+                <a class="ghost-button" href="https://www.scorebat.com/embed/league/fifa-world-cup/" target="_blank" rel="noopener">
+                  Abrir Mundial
+                </a>
+              </div>
+              <div class="scorebat-embed scorebat-league-embed">
+                <iframe
+                  id="scorebat-worldcup-frame"
+                  src="about:blank"
+                  title="Mundial en vivo en ScoreBat"
+                  frameborder="0"
+                  allow="autoplay; fullscreen"
+                  allowfullscreen
+                  loading="lazy"
+                  class="_scorebatEmbeddedPlayer_"
+                ></iframe>
+              </div>
+              <p class="video-embed-note">Partidos, resultados y vídeos del Mundial. Si el widget no carga, utiliza “Abrir Mundial”.</p>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="settings-view" aria-label="Ajustes y hoja de ruta">
+          <section class="settings-layout">
+            <div class="roadmap-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Conexion futura</p>
+                  <h3>Integraciones previstas</h3>
+                </div>
+              </div>
+              <div class="roadmap-list">
+                <div>
+                  <strong>Biwenger</strong>
+                  <p>Activo: conexion con tu cuenta, lectura del mercado y de tu plantilla desde la API privada usada por la propia web.</p>
+                </div>
+                <div>
+                  <strong>Fuentes fantasy</strong>
+                  <p>Activo: FutbolFantasy, SoccerWiki, Transfermarkt y cache local diaria para completar titularidad, valor, lesiones y fichas.</p>
+                </div>
+                <div>
+                  <strong>OCR</strong>
+                  <p>Queda como respaldo manual. La ruta principal pasa a ser Biwenger directo.</p>
+                </div>
+              </div>
+            </div>
+            <div class="settings-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Perfil de liga</p>
+                  <h3>Preferencias</h3>
+                </div>
+              </div>
+              <div class="biwenger-card integration-card">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Biwenger directo</p>
+                    <h3>Cuenta y datos de liga</h3>
+                  </div>
+                </div>
+                <div class="biwenger-form">
+                  <label>
+                    Email
+                    <input id="biwenger-email" type="email" autocomplete="username" placeholder="tu@email.com" />
+                  </label>
+                  <label>
+                    Contrasena
+                    <input id="biwenger-password" type="password" autocomplete="current-password" placeholder="Tu contrasena" />
+                  </label>
+                </div>
+                <div class="biwenger-actions">
+                  <button class="primary-button" type="button" id="biwenger-login">
+                    <span class="icon icon-team" aria-hidden="true"></span>
+                    Conectar
+                  </button>
+                  <button class="ghost-button" type="button" id="biwenger-import-market">
+                    <span class="icon icon-market" aria-hidden="true"></span>
+                    Traer mercado
+                  </button>
+                  <button class="ghost-button" type="button" id="biwenger-import-team">
+                    <span class="icon icon-team" aria-hidden="true"></span>
+                    Traer equipo
+                  </button>
+                  <button class="ghost-button" type="button" id="biwenger-logout">
+                    <span class="icon icon-clear" aria-hidden="true"></span>
+                    Salir
+                  </button>
+                </div>
+                <div class="ocr-status" id="biwenger-status" role="status" aria-live="polite">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <span>Conecta tu cuenta para traer mercado, equipo, pujas y saldo.</span>
+                </div>
+              </div>
+              <div class="api-config-card integration-card futbolfantasy-card">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Futbol Fantasy</p>
+                    <h3>Seguimiento y minutos</h3>
+                  </div>
+                </div>
+                <div class="ocr-status ff-cookie-help" role="note">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <span>FF privado suele bloquear el login automatico. En movil no hay una forma comoda de leer cookies; por defecto usaremos fuentes publicas, Biwenger y API-Football.</span>
+                </div>
+                <details class="ff-advanced-login">
+                  <summary>Conexion privada avanzada (solo escritorio)</summary>
+                  <div class="biwenger-form">
+                    <label>
+                      Email
+                      <input id="ff-email" type="email" autocomplete="username" placeholder="tu@email.com" />
+                    </label>
+                    <label>
+                      Contrasena
+                      <input id="ff-password" type="password" autocomplete="current-password" placeholder="Tu contrasena" />
+                    </label>
+                  </div>
+                  <div class="ff-cookie-form">
+                    <label>
+                      Cookie de sesion
+                      <textarea id="ff-session-cookie" rows="3" spellcheck="false" placeholder="Cookie: futbolfantasy_session=...; XSRF-TOKEN=..."></textarea>
+                    </label>
+                  </div>
+                  <div class="ff-actions biwenger-actions">
+                    <button class="primary-button" type="button" id="ff-login">
+                      <span class="icon icon-team" aria-hidden="true"></span>
+                      Probar login
+                    </button>
+                    <button class="ghost-button" type="button" id="ff-cookie-login">
+                      <span class="icon icon-refresh" aria-hidden="true"></span>
+                      Usar cookie
+                    </button>
+                  </div>
+                </details>
+                <div class="ff-actions biwenger-actions">
+                  <button class="ghost-button" type="button" id="ff-sync-team">
+                    <span class="icon icon-refresh" aria-hidden="true"></span>
+                    Enviar equipo
+                  </button>
+                  <button class="ghost-button" type="button" id="ff-open-tracking">
+                    <span class="icon icon-market" aria-hidden="true"></span>
+                    Abrir seguimiento
+                  </button>
+                  <button class="ghost-button" type="button" id="ff-logout">
+                    <span class="icon icon-clear" aria-hidden="true"></span>
+                    Salir FF
+                  </button>
+                </div>
+                <div class="ocr-status" id="ff-status" role="status" aria-live="polite">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <span>Conecta Futbol Fantasy para usar Seguimiento como fuente de minutos, entradas y salidas.</span>
+                </div>
+              </div>
+              <div class="api-config-card">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Despliegue</p>
+                    <h3>API de fuentes</h3>
+                  </div>
+                </div>
+                <label class="api-config-label">
+                  URL de la API
+                  <input id="api-base-url" type="text" placeholder="https://tu-api-fantasy.com" />
+                </label>
+                <div class="api-config-actions">
+                  <button class="primary-button" type="button" id="save-api-config">
+                    <span class="icon icon-refresh" aria-hidden="true"></span>
+                    Guardar API
+                  </button>
+                  <button class="ghost-button" type="button" id="clear-api-config">
+                    <span class="icon icon-clear" aria-hidden="true"></span>
+                    Usar esta web
+                  </button>
+                </div>
+                <div class="ocr-status" id="api-config-status" role="status" aria-live="polite">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <span>Sin configurar. Si esta web no publica /api, indica aqui la URL del backend.</span>
+                </div>
+              </div>
+              <label class="toggle-row">
+                <input id="strict-budget" type="checkbox" checked />
+                <span>Penalizar fuerte si supera presupuesto</span>
+              </label>
+              <label class="toggle-row">
+                <input id="risk-averse" type="checkbox" />
+                <span>Modo conservador ante rotaciones y lesiones</span>
+              </label>
+              <label class="toggle-row">
+                <input id="investment-mode" type="checkbox" />
+                <span>Priorizar revalorizacion de mercado</span>
+              </label>
+              <button class="ghost-button demo-button" type="button" id="load-demo">
+                <span class="icon icon-upload" aria-hidden="true"></span>
+                Cargar demo manual
+              </button>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="recent-form-popover" class="recent-form-popover" role="dialog" aria-live="polite" hidden></div>
+
+    <div id="fixture-video-modal" class="video-modal" hidden>
+      <button class="video-modal-backdrop" type="button" id="fixture-video-backdrop" aria-label="Cerrar video"></button>
+      <div class="video-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="fixture-video-title">
+        <div class="video-modal-header">
+          <div>
+            <p class="eyebrow">Video resumen</p>
+            <h3 id="fixture-video-title">Resumen del partido</h3>
+          </div>
+          <div class="video-modal-actions">
+            <a id="fixture-video-external" class="ghost-button" href="https://www.scorebat.com/" target="_blank" rel="noopener">Abrir fuera</a>
+            <button class="icon-button" type="button" id="close-fixture-video" aria-label="Cerrar video">
+              <span class="icon icon-clear" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+        <div class="video-modal-frame">
+          <iframe id="fixture-video-frame" src="about:blank" title="Video resumen" frameborder="0" allow="autoplay; fullscreen" allowfullscreen></iframe>
+        </div>
+      </div>
+    </div>
+
+    <script src="app-config.js?v=11"></script>
+    <script src="data.js?v=11"></script>
+    <script src="vendor/tesseract/tesseract.min.js"></script>
+    <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
+    <script src="app.js?v=54"></script>
+  </body>
+</html>

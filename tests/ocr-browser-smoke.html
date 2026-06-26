@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>OCR smoke</title>
+    <script src="../vendor/tesseract/tesseract.min.js"></script>
+  </head>
+  <body>
+    <pre id="result">pending</pre>
+    <canvas id="sample" width="900" height="180"></canvas>
+    <script>
+      const result = document.querySelector("#result");
+      const canvas = document.querySelector("#sample");
+      const ctx = canvas.getContext("2d");
+
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "black";
+      ctx.font = "48px Arial";
+      ctx.fillText("Oihan Sancet 12.300.000", 40, 100);
+
+      Tesseract.recognize(canvas, "eng", {
+        workerPath: "../vendor/tesseract/worker.min.js",
+        logger: (message) => {
+          if (message.status) {
+            result.textContent = `${message.status} ${Math.round((message.progress || 0) * 100)}%`;
+          }
+        }
+      }).then(({ data }) => {
+        result.textContent = data.text;
+      }).catch((error) => {
+        result.textContent = `ERROR: ${error.message || error}`;
+      });
+    </script>
+  </body>
+</html>

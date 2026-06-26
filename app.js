@@ -2435,6 +2435,14 @@ const maximumBidGap = (player) => {
   return Number.isFinite(maximumBid) ? price - maximumBid : 0;
 };
 
+const maximumBidRecommendationCap = (player) => {
+  const gap = maximumBidGap(player);
+  const price = Number(player.price || player.biwengerValue || 0);
+  if (!Number.isFinite(gap) || gap <= 0 || price <= 0) return 100;
+  const gapRatio = gap / Math.max(price, 1);
+  return Math.round(Math.max(18, 44 - Math.min(26, gapRatio * 78)));
+};
+
 const renderMaximumBidBadge = (player, compact = false) => {
   const maximumBid = Number(state.finance.maximumBid);
   if (!Number.isFinite(maximumBid) || maximumBid <= 0) {
@@ -6223,10 +6231,11 @@ const analyzePlayer = (player, allPlayers) => {
   const overBudget = budget && player.price > budget;
   if (overBudget && state.preferences.strictBudget) score -= 18;
   const exceedsMaximumBid = playerExceedsMaximumBid(player);
+  const maximumBidCap = exceedsMaximumBid ? maximumBidRecommendationCap(player) : null;
   if (exceedsMaximumBid) {
     const gap = maximumBidGap(player);
     const gapRatio = gap / Math.max(Number(player.price || 1), 1);
-    score = Math.min(score - 22 - Math.min(18, gapRatio * 42), 54);
+    score = Math.min(score - 30 - Math.min(26, gapRatio * 78), maximumBidCap);
   }
 
   const intelligenceBidAdjustment = clamp(
@@ -6243,7 +6252,7 @@ const analyzePlayer = (player, allPlayers) => {
   const maxBid = player.price ? Math.round(player.price * maxBidMultiplier / 100000) * 100000 : 0;
   const decision = marketDecisionForPlayer({ ...player, squadFitScore: Math.round(fit), recentForm: recent }, score, intelligence, relative, maxBid);
   if (decision.type === "avoid") {
-    score = Math.min(score, 48);
+    score = Math.min(score, maximumBidCap ?? 48);
   } else if (decision.type === "watch") {
     score = Math.min(score, 68);
   } else if (decision.type === "buy") {

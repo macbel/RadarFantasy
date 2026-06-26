@@ -41,6 +41,72 @@ if (!analyzed[0].name || analyzed[0].recommendation < analyzed[2].recommendation
   throw new Error("Players are not ranked correctly");
 }
 
+const previousMaximumBid = state.finance.maximumBid;
+const previousOperations = state.biwengerOperations;
+state.finance.maximumBid = 6000000;
+state.biwengerOperations = { offers: [] };
+const budgetPlayers = hydrateImportedPlayers([
+  {
+    id: "expensive-star",
+    name: "Estrella cara",
+    team: "Francia",
+    position: "DL",
+    price: 25000000,
+    biwengerValue: 25000000,
+    starter: 96,
+    form: 94,
+    asScore: 94,
+    sofascore: 94,
+    stats: 94,
+    risk: "low",
+    sourceStatus: "live",
+    dataConfidence: 94,
+    sourceSummary: {
+      recentMatches: [
+        { provider: "biwenger", points: { biwenger: 10, mixed: 10 }, minutes: 90 },
+        { provider: "biwenger", points: { biwenger: 8, mixed: 8 }, minutes: 88 },
+        { provider: "biwenger", points: { biwenger: 9, mixed: 9 }, minutes: 90 }
+      ]
+    }
+  },
+  {
+    id: "affordable-fit",
+    name: "Pujable util",
+    team: "Francia",
+    position: "MC",
+    price: 4500000,
+    biwengerValue: 4500000,
+    starter: 70,
+    form: 68,
+    asScore: 68,
+    sofascore: 68,
+    stats: 68,
+    risk: "low",
+    sourceStatus: "live",
+    dataConfidence: 82,
+    sourceSummary: {
+      recentMatches: [
+        { provider: "biwenger", points: { biwenger: 5, mixed: 5 }, minutes: 72 },
+        { provider: "biwenger", points: { biwenger: 6, mixed: 6 }, minutes: 90 },
+        { provider: "biwenger", points: { biwenger: 4, mixed: 4 }, minutes: 66 }
+      ]
+    }
+  }
+]);
+const budgetAnalyzed = budgetPlayers
+  .map((player) => analyzePlayer(player, budgetPlayers))
+  .sort((a, b) => b.recommendation - a.recommendation);
+const expensiveStar = budgetAnalyzed.find((player) => player.id === "expensive-star");
+const affordableFit = budgetAnalyzed.find((player) => player.id === "affordable-fit");
+if (!expensiveStar?.exceedsMaximumBid || expensiveStar.recommendation > 44) {
+  throw new Error("Maximum bid cap did not demote unaffordable player: " + JSON.stringify(expensiveStar));
+}
+if (!affordableFit || budgetAnalyzed[0].id !== "affordable-fit") {
+  throw new Error("Affordable player should outrank unaffordable player: " + JSON.stringify(budgetAnalyzed));
+}
+state.finance.maximumBid = previousMaximumBid;
+state.biwengerOperations = previousOperations;
+
 const ocrSample = [
   "Mercado",
   "Oihan Sancet",

@@ -15,6 +15,7 @@
   biwenger: {
     authenticated: false,
     connected: false,
+    userId: null,
     leagueName: "",
     leagueId: null,
     leagueIcon: "",
@@ -67,7 +68,14 @@
   preferences: {
     strictBudget: true,
     riskAverse: false,
-    investmentMode: false
+    investmentMode: false,
+    rewards: {
+      pointValue: 0,
+      rank1: 0,
+      rank2: 0,
+      rank3: 0,
+      mvp: 0
+    }
   }
 };
 
@@ -364,6 +372,22 @@ const formatMoney = (value) => {
 const formatFinanceMoney = (value) => Number.isFinite(value)
   ? `${Math.round(value).toLocaleString("es-ES")} €`
   : "S/D";
+
+const numericPreference = (value, fallback = 0) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.round(numeric) : fallback;
+};
+
+const normalizedRewardPreferences = () => {
+  const rewards = state.preferences?.rewards || {};
+  return {
+    pointValue: numericPreference(rewards.pointValue),
+    rank1: numericPreference(rewards.rank1),
+    rank2: numericPreference(rewards.rank2),
+    rank3: numericPreference(rewards.rank3),
+    mvp: numericPreference(rewards.mvp)
+  };
+};
 
 const formatCurrencyInput = (value) => Number.isFinite(Number(value))
   ? `${Math.round(Number(value)).toLocaleString("es-ES")} €`
@@ -1179,6 +1203,71 @@ const assistantBidBudget = () => {
   return Number.isFinite(maximumBid) && maximumBid > 0 ? maximumBid : Infinity;
 };
 
+const activeIncomingOffers = (offers = state.biwengerOperations?.offers || []) =>
+  offers.filter((offer) => offer.isIncoming && !terminalOfferStatuses.has(String(offer.status || "").toLowerCase()));
+
+const currentLiveRoundOwnTeam = () => {
+  const teams = state.liveRound?.teams || [];
+  if (!Array.isArray(teams) || !teams.length) return null;
+  const userId = Number(state.biwenger.userId || 0);
+  if (userId > 0) {
+    const byId = teams.find((team) => Number(team.userId || 0) === userId);
+    if (byId) return byId;
+  }
+  const mine = teams.find((team) => team.isMe);
+  if (mine) return mine;
+  const userName = normalize(state.biwenger.userName || "");
+  const leagueName = normalize(activeLeagueName() || "");
+  return teams.find((team) => {
+    const name = normalize(team.name || "");
+    return name && (name === userName || name === leagueName || name.includes(userName) || userName.includes(name));
+  }) || null;
+};
+
+const estimatedRoundReward = () => {
+  const rewards = normalizedRewardPreferences();
+  const team = currentLiveRoundOwnTeam();
+  const reliablePoints = Number(team?.points);
+  const derivedPoints = Array.isArray(team?.players)
+    ? team.players.reduce((sum, player) => sum + (Number.isFinite(Number(player.roundPoints)) ? Number(player.roundPoints) : 0), 0)
+    : 0;
+  const points = Number.isFinite(reliablePoints) ? reliablePoints : derivedPoints;
+  const rank = Number(team?.provisionalRank || team?.rank || 0);
+  const pointsReward = Math.max(0, Math.round((Number.isFinite(points) ? points : 0) * rewards.pointValue));
+  const positionReward = rank === 1
+    ? rewards.rank1
+    : rank === 2
+      ? rewards.rank2
+      : rank === 3
+        ? rewards.rank3
+        : 0;
+  const mvpReward = Array.isArray(team?.players) && team.players.some((player) => player.isMvp || player.mvp || player.roundMvp)
+    ? rewards.mvp
+    : 0;
+  return {
+    amount: pointsReward + positionReward + mvpReward,
+    pointsReward,
+    positionReward,
+    mvpReward,
+    points: Number.isFinite(points) ? Math.round(points) : 0,
+    rank: rank || null,
+    configured: Object.values(rewards).some((value) => value > 0),
+    reliable: Boolean(team?.pointsReliable && Number.isFinite(reliablePoints)),
+    teamName: team?.name || ""
+  };
+};
+
+const incomingOfferSummary = (incoming = activeIncomingOffers()) => {
+  const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
+  const total = incoming.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+  return {
+    count: incoming.length,
+    total,
+    balanceAfterAll: Number.isFinite(balance) ? balance + total : null,
+    balance
+  };
+};
+
 const playerCurrentMarketPrice = (player = {}) => [
   player.biwengerValue,
   player.price,
@@ -1252,7 +1341,7 @@ const assistantBidRows = (players = assistantMarketPlayers()) => {
   return selected;
 };
 
-const saleUrgencyForPlayer = (player) => {
+const saleUrgencyForPlayer = (player, context = {}) => {
   const counts = teamPositionCounts();
   const target = SQUAD_TARGETS[player.position] || 3;
   const positionCount = counts[player.position] || 0;
@@ -1262,7 +1351,9 @@ const saleUrgencyForPlayer = (player) => {
   const quality = Number(player.lineupScore ?? player.recommendation ?? 50);
   const noNextMatch = Boolean(player.marketIntelligence?.noNextMatch);
   const valueDiff = Number(player.biwengerDiff ?? player.sourceSummary?.fantasy?.biwengerDiff ?? 0);
-  const balance = Number(state.finance.balance);
+  const balance = Number.isFinite(Number(context.balanceAfterRoundAndOffers))
+    ? Number(context.balanceAfterRoundAndOffers)
+    : Number(state.finance.balance);
   const negativePressure = Number.isFinite(balance) && balance < 0 ? 14 : 0;
   const immediateRisk = noNextMatch || player.health?.status === "suspended" || player.health?.status === "injured";
   const protectHotStreak = recent.hot && !immediateRisk;
@@ -1304,16 +1395,17 @@ const saleUrgencyForPlayer = (player) => {
   };
 };
 
-const assistantSaleRows = (players = assistantTeamPlayers()) => players
-  .map((player) => ({ player, sale: saleUrgencyForPlayer(player) }))
+const assistantSaleRows = (players = assistantTeamPlayers(), context = {}) => players
+  .map((player) => ({ player, sale: saleUrgencyForPlayer(player, context) }))
   .filter((row) => row.sale.action !== "Mantener" && row.sale.score >= 54 && Number(row.sale.value || 0) > 0)
   .sort((a, b) => b.sale.score - a.sale.score || b.sale.value - a.sale.value)
   .slice(0, 6);
 
-const assistantOfferRows = (incoming, myOffers) => {
+const assistantOfferRows = (incoming, myOffers, futureIncome = 0) => {
   const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
   const committed = myOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
-  const targetAmount = Number.isFinite(balance) ? Math.max(0, -balance, -(balance - committed)) : 0;
+  const adjustedBalance = Number.isFinite(balance) ? balance + Number(futureIncome || 0) : balance;
+  const targetAmount = Number.isFinite(adjustedBalance) ? Math.max(0, -adjustedBalance, -(adjustedBalance - committed)) : 0;
   const recommended = chooseRecommendedOfferSet(incoming, targetAmount);
   const recommendedIds = new Set(recommended.map(offerIdKey));
   return incoming.map((offer) => {
@@ -1344,6 +1436,56 @@ const assistantOfferRows = (incoming, myOffers) => {
   }).sort((a, b) => b.priority - a.priority);
 };
 
+const assistantPlanSnapshot = () => {
+  const operations = state.biwengerOperations || {};
+  const offers = operations.offers || [];
+  const myOffers = activeOwnBidOffers(offers);
+  const incoming = activeIncomingOffers(offers);
+  const balance = Number(operations.finance?.balance ?? state.finance.balance);
+  const roundReward = estimatedRoundReward();
+  const bids = assistantBidRows();
+  const offerRows = assistantOfferRows(incoming, myOffers, roundReward.amount);
+  const recommendedOfferAmount = offerRows
+    .filter((row) => row.action === "Aceptar")
+    .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const allOfferAmount = incoming.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+  const saleContext = {
+    balanceAfterRoundAndOffers: Number.isFinite(balance)
+      ? balance + roundReward.amount + recommendedOfferAmount
+      : null
+  };
+  const sales = assistantSaleRows(assistantTeamPlayers(), saleContext);
+  const salePotential = sales
+    .filter((row) => row.sale.action !== "Mantener")
+    .reduce((sum, row) => sum + Number(row.sale.suggestedPrice || 0), 0);
+  const bidDelta = bids.reduce((sum, row) => sum + Number(row.delta || 0), 0);
+  const bidWinCost = bids.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const committedNow = myOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+  return {
+    operations,
+    offers,
+    myOffers,
+    incoming,
+    bids,
+    sales,
+    offerRows,
+    roundReward,
+    balance,
+    committedNow,
+    bidDelta,
+    bidWinCost,
+    allOfferAmount,
+    recommendedOfferAmount,
+    salePotential,
+    balanceAfterAllOffers: Number.isFinite(balance) ? balance + allOfferAmount : null,
+    balanceAfterRecommendedOffers: Number.isFinite(balance) ? balance + recommendedOfferAmount : null,
+    balanceAfterRound: Number.isFinite(balance) ? balance + roundReward.amount : null,
+    balanceAfterRecommendedOffersAndRound: Number.isFinite(balance) ? balance + recommendedOfferAmount + roundReward.amount : null,
+    planBalance: Number.isFinite(balance) ? balance - bidWinCost + recommendedOfferAmount + salePotential + roundReward.amount : null,
+    projectedWithSales: Number.isFinite(balance) ? balance + recommendedOfferAmount + salePotential + roundReward.amount : null
+  };
+};
+
 const renderAssistantPlayerRow = (player, meta = "") => {
   const marketPrice = playerCurrentMarketPrice(player);
   return `
@@ -1366,23 +1508,16 @@ const renderAssistantPlayerRow = (player, meta = "") => {
 const renderBidSaleAssistant = () => {
   const target = qs("#bid-sale-assistant");
   if (!target) return;
-  const operations = state.biwengerOperations || {};
-  const offers = operations.offers || [];
-  const myOffers = activeOwnBidOffers(offers);
-  const incoming = offers.filter((offer) => offer.isIncoming && !terminalOfferStatuses.has(String(offer.status || "").toLowerCase()));
-  const bids = assistantBidRows();
+  const plan = assistantPlanSnapshot();
+  const { bids, sales, offerRows, incoming, myOffers, balance, committedNow, bidDelta, bidWinCost, allOfferAmount, recommendedOfferAmount, salePotential, roundReward } = plan;
   const bidBudgetMeta = bids.meta || {};
-  const sales = assistantSaleRows();
-  const offerRows = assistantOfferRows(incoming, myOffers);
-  const balance = Number(operations.finance?.balance ?? state.finance.balance);
-  const committedNow = myOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
-  const bidDelta = bids.reduce((sum, row) => sum + Number(row.delta || 0), 0);
-  const bidWinCost = bids.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-  const acceptAmount = offerRows.filter((row) => row.action === "Aceptar").reduce((sum, row) => sum + row.amount, 0);
-  const salePotential = sales.filter((row) => row.sale.action !== "Mantener").reduce((sum, row) => sum + row.sale.suggestedPrice, 0);
-  const projected = Number.isFinite(balance) ? balance - bidDelta + acceptAmount : null;
-  const projectedWithSales = Number.isFinite(projected) ? projected + salePotential : null;
-  const planBalance = Number.isFinite(balance) ? balance - bidWinCost + salePotential : null;
+  const projected = plan.balanceAfterRecommendedOffers;
+  const projectedAllOffers = plan.balanceAfterAllOffers;
+  const projectedWithSales = plan.projectedWithSales;
+  const planBalance = plan.planBalance;
+  const actionCount = bids.filter((row) => row.action !== "Mantener puja" && Number(row.delta || 0) > 0).length
+    + sales.filter((row) => row.sale.action !== "Mantener").length
+    + offerRows.filter((row) => row.action === "Aceptar" || row.action === "Rechazar").length;
   const mainAdvice = !state.biwenger.connected
     ? "Conecta Biwenger para que el asistente use saldo, puja maxima y ofertas reales."
     : Number.isFinite(balance) && balance < 0
@@ -1402,18 +1537,26 @@ const renderBidSaleAssistant = () => {
       <div>
         <p class="eyebrow">Plan de hoy</p>
         <h4>${escapeHtml(mainAdvice)}</h4>
+        <div class="assistant-hero-actions">
+          <button class="primary-button execute-assistant-plan" type="button" ${!state.biwenger.connected || !actionCount ? "disabled" : ""}>Ejecutar acciones sugeridas</button>
+          <small>${actionCount ? `${actionCount} accion${actionCount === 1 ? "" : "es"} listas para revisar` : "Sin acciones ejecutables ahora"}</small>
+        </div>
       </div>
       <div class="assistant-metrics">
         <div><span>Saldo</span><strong class="${balance < 0 ? "negative" : "positive"}">${formatFinanceMoney(balance)}</strong></div>
         <div><span>Pujas nuevas / límite</span><strong>${escapeHtml(bidBudgetText)}</strong></div>
+        <div><span>Ofertas recibidas</span><strong>${incoming.length} · ${formatFinanceMoney(allOfferAmount)}</strong></div>
+        <div><span>Si aceptas todas</span><strong class="${projectedAllOffers < 0 ? "negative" : "positive"}">${formatFinanceMoney(projectedAllOffers)}</strong></div>
+        <div><span>Ofertas recomendadas</span><strong class="${projected < 0 ? "negative" : "positive"}">${formatFinanceMoney(projected)}</strong><small>${formatFinanceMoney(recommendedOfferAmount)}</small></div>
+        <div><span>Recompensa jornada</span><strong class="${roundReward.amount > 0 ? "positive" : ""}">${formatFinanceMoney(roundReward.amount)}</strong><small>${roundReward.configured ? `${roundReward.points} pts${roundReward.rank ? ` · #${roundReward.rank}` : ""}` : "Configura premios en ajustes"}</small></div>
         <div><span>Si ganas pujas</span><strong class="${planBalance < 0 ? "negative" : "positive"}">${formatFinanceMoney(planBalance)}</strong></div>
-        <div><span>Si aceptas ofertas</span><strong class="${projected < 0 ? "negative" : "positive"}">${formatFinanceMoney(projected)}</strong></div>
         <div><span>Con ventas sugeridas</span><strong class="${projectedWithSales < 0 ? "negative" : "positive"}">${formatFinanceMoney(projectedWithSales)}</strong></div>
       </div>
       ${Number.isFinite(planBalance) ? `
         <p class="assistant-plan-summary">
-          Saldo si ganas todas las pujas sugeridas y haces todas las ventas: ${formatFinanceMoney(balance)}
-          - ${formatFinanceMoney(bidWinCost)} + ${formatFinanceMoney(salePotential)}
+          Plan completo: ${formatFinanceMoney(balance)}
+          - ${formatFinanceMoney(bidWinCost)} + ofertas recomendadas ${formatFinanceMoney(recommendedOfferAmount)}
+          + ventas ${formatFinanceMoney(salePotential)} + jornada ${formatFinanceMoney(roundReward.amount)}
           = <strong class="${planBalance < 0 ? "negative" : "positive"}">${formatFinanceMoney(planBalance)}</strong>
         </p>
       ` : ""}
@@ -1467,7 +1610,125 @@ const renderBidSaleAssistant = () => {
   bindAssistantActions(target);
 };
 
+const postBiwengerAssistantAction = async (path, payload = {}) => {
+  const response = await apiFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || "Biwenger no ha aceptado la accion");
+  return result;
+};
+
+const executeAssistantPlan = async () => {
+  if (!state.biwenger.connected) {
+    setLeagueOperationStatus("Conecta Biwenger antes de ejecutar acciones del asistente.", "error");
+    return;
+  }
+  const plan = assistantPlanSnapshot();
+  const bidActions = plan.bids.filter((row) =>
+    row.action !== "Mantener puja"
+    && Number(row.delta || 0) > 0
+    && Number(row.amount || 0) > 0
+    && Number(row.player?.biwengerPlayerId || 0) > 0
+    && (!row.plan.blocked || row.plan.hasOwnBid)
+  );
+  const saleActions = plan.sales.filter((row) =>
+    row.sale.action !== "Mantener"
+    && Number(row.sale.suggestedPrice || 0) > 0
+    && Number(row.player?.biwengerPlayerId || 0) > 0
+  );
+  const offerActions = plan.offerRows.filter((row) =>
+    (row.action === "Aceptar" || row.action === "Rechazar")
+    && Number(row.offer?.offerId || 0) > 0
+  );
+  const totalActions = bidActions.length + saleActions.length + offerActions.length;
+  if (!totalActions) {
+    setLeagueOperationStatus("No hay acciones sugeridas ejecutables en este momento.", "");
+    return;
+  }
+  const bidTotal = bidActions.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const saleTotal = saleActions.reduce((sum, row) => sum + Number(row.sale.suggestedPrice || 0), 0);
+  const acceptTotal = offerActions
+    .filter((row) => row.action === "Aceptar")
+    .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const rejectCount = offerActions.filter((row) => row.action === "Rechazar").length;
+  const warning = [
+    "Vas a ejecutar acciones reales en Biwenger.",
+    "",
+    `${bidActions.length} puja(s) por ${formatFinanceMoney(bidTotal)}.`,
+    `${saleActions.length} venta(s) por ${formatFinanceMoney(saleTotal)}.`,
+    `${offerActions.filter((row) => row.action === "Aceptar").length} oferta(s) aceptadas por ${formatFinanceMoney(acceptTotal)}.`,
+    `${rejectCount} oferta(s) rechazadas.`,
+    "",
+    `Saldo estimado tras el plan completo: ${formatFinanceMoney(plan.planBalance)}.`,
+    "Revisa que estas de acuerdo antes de continuar."
+  ].join("\n");
+  if (!window.confirm(warning)) {
+    setLeagueOperationStatus("Ejecucion del asistente cancelada.", "");
+    return;
+  }
+
+  const buttons = qsa(".execute-assistant-plan");
+  buttons.forEach((button) => {
+    button.disabled = true;
+    button.textContent = "Ejecutando...";
+  });
+  const failures = [];
+  let completed = 0;
+  const runStep = async (label, callback) => {
+    setLeagueOperationStatus(`Ejecutando ${completed + 1}/${totalActions}: ${label}...`, "busy");
+    try {
+      await callback();
+      completed += 1;
+    } catch (error) {
+      failures.push(`${label}: ${error.message || "error"}`);
+      completed += 1;
+    }
+  };
+
+  for (const row of bidActions) {
+    await runStep(`puja por ${row.player.name}`, () => postBiwengerAssistantAction("/api/biwenger/bid", {
+      playerId: Number(row.player.biwengerPlayerId),
+      amount: Number(row.amount || 0),
+      toUserId: Number(row.player.marketOwnerId || 0)
+    }));
+  }
+  for (const row of saleActions) {
+    await runStep(`venta de ${row.player.name}`, () => postBiwengerAssistantAction("/api/biwenger/sale", {
+      playerId: Number(row.player.biwengerPlayerId),
+      price: Number(row.sale.suggestedPrice || 0)
+    }));
+  }
+  for (const row of offerActions) {
+    await runStep(`${row.action.toLowerCase()} oferta por ${row.offer.playerName || "jugador"}`, () => postBiwengerAssistantAction("/api/biwenger/offer-status", {
+      offerId: Number(row.offer.offerId),
+      status: row.action === "Aceptar" ? "accepted" : "rejected"
+    }));
+  }
+
+  await loadBiwengerOperations(false);
+  await refreshBiwengerStatus();
+  renderFinance();
+  renderTable();
+  renderTeam();
+  renderBidSaleAssistant();
+  await saveActiveLeague();
+
+  buttons.forEach((button) => {
+    button.disabled = false;
+    button.textContent = "Ejecutar acciones sugeridas";
+  });
+  if (failures.length) {
+    setLeagueOperationStatus(`Plan ejecutado con ${failures.length} incidencia(s): ${failures.slice(0, 3).join(" | ")}`, "error");
+  } else {
+    setLeagueOperationStatus(`Plan ejecutado: ${totalActions} accion${totalActions === 1 ? "" : "es"} completada${totalActions === 1 ? "" : "s"}.`, "ready");
+  }
+};
+
 const bindAssistantActions = (target) => {
+  target.querySelectorAll(".execute-assistant-plan").forEach((button) => button.addEventListener("click", executeAssistantPlan));
   target.querySelectorAll(".assistant-bid-form").forEach((form) => form.addEventListener("submit", (event) => {
     event.preventDefault();
     placeBiwengerBid(form, { buttonText: "Enviar" });
@@ -1512,6 +1773,41 @@ const writeDecisionHistory = (items) => {
   }
 };
 
+const resolveDecisionHistoryPlayer = (row = {}) => {
+  const biwengerId = Number(row.id || 0);
+  const normalizedName = normalize(row.name || "");
+  const current = [...state.players, ...state.teamPlayers].find((player) =>
+    (biwengerId > 0 && Number(player.biwengerPlayerId || player.id || 0) === biwengerId)
+    || (normalizedName && normalize(player.name || "") === normalizedName)
+  );
+  return {
+    ...(row || {}),
+    ...(current || {}),
+    id: current?.id || row.id || "",
+    biwengerPlayerId: current?.biwengerPlayerId || row.id || null,
+    name: current?.name || row.name || "Jugador",
+    team: current?.team || row.team || "",
+    position: current?.position || row.position || "MC",
+    price: current?.price || row.price || 0,
+    media: {
+      ...(row.media || {}),
+      ...(current?.media || {})
+    },
+    sourceSummary: {
+      ...(row.sourceSummary || {}),
+      ...(current?.sourceSummary || {})
+    },
+    sourceLinks: {
+      ...(row.sourceLinks || {}),
+      ...(current?.sourceLinks || {})
+    },
+    competitionPoints: current?.competitionPoints ?? row.competitionPoints ?? row.points ?? 0,
+    points: current?.points ?? row.points ?? 0,
+    recommendation: current?.recommendation ?? row.recommendation ?? 0,
+    starter: current?.starter ?? row.starter ?? 0
+  };
+};
+
 const recordDecisionHistory = (players) => {
   if (!players.length) return;
   const signature = [
@@ -1540,11 +1836,20 @@ const recordDecisionHistory = (players) => {
       team: player.team,
       position: player.position,
       price: player.price,
+      biwengerValue: player.biwengerValue,
+      competitionPoints: player.competitionPoints,
+      points: player.points,
       recommendation: player.recommendation,
       decision: player.marketDecision?.type || "",
       bid: smartBidPlan(player).recommendedBid,
       starter: player.starter,
-      confidence: analysisConfidence(player).score
+      confidence: analysisConfidence(player).score,
+      media: player.media || {},
+      sourceSummary: {
+        ...(player.sourceSummary || {}),
+        recentMatches: Array.isArray(player.sourceSummary?.recentMatches) ? player.sourceSummary.recentMatches.slice(-5) : []
+      },
+      sourceLinks: player.sourceLinks || {}
     }))
   });
   writeDecisionHistory(history);
@@ -1566,14 +1871,30 @@ const renderDecisionHistoryPanel = () => {
     const delta = previousTop ? Number(top.recommendation || 0) - Number(previousTop.recommendation || 0) : null;
     const date = new Date(item.createdAt);
     const label = Number.isNaN(date.getTime()) ? "" : date.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    const player = top ? resolveDecisionHistoryPlayer(top) : null;
+    const currentMarketPlayer = player ? state.players.find((itemPlayer) => itemPlayer.id === player.id) : null;
     return `
-      <div class="history-row">
-        <span>${escapeHtml(label)}</span>
-        <strong>${top ? escapeHtml(top.name) : "Sin top"}</strong>
-        <small>${top ? `${renderPositionBadge(top.position)} ${top.recommendation} · ${top.decision || "decisión"}${delta === null ? "" : ` · ${delta >= 0 ? "+" : ""}${delta}`}` : "Sin jugadores"}</small>
+      <div class="history-row history-player-row ${currentMarketPlayer ? "clickable" : ""}" ${currentMarketPlayer ? `data-player-id="${escapeHtml(currentMarketPlayer.id)}"` : ""}>
+        <span class="history-date">${escapeHtml(label)}</span>
+        ${player ? renderPlayerMedia(player, "sm") : ""}
+        <div class="history-player-copy">
+          <div class="player-name-line"><strong>${player ? escapeHtml(player.name) : "Sin top"}</strong>${player ? renderRecentFormDots(player) : ""}</div>
+          <small class="history-meta">
+            ${player ? renderPositionBadge(player.position) : ""}
+            ${player ? renderScoringBadge(player) : ""}
+            ${player ? `<b>${Number(player.recommendation || top?.recommendation || 0)} rec.</b>` : ""}
+            ${top ? `<b>${escapeHtml(top.decision || "decision")}</b>` : ""}
+            ${delta === null ? "" : `<b>${delta >= 0 ? "+" : ""}${delta}</b>`}
+          </small>
+          ${player ? `<small class="history-next-match">${renderNextMatch(player, true)}</small>` : `<small>Sin jugadores</small>`}
+        </div>
       </div>
     `;
   }).join("");
+  target.querySelectorAll(".history-player-row[data-player-id]").forEach((row) => row.addEventListener("click", () => {
+    state.selectedPlayerId = row.dataset.playerId;
+    renderTable();
+  }));
 };
 
 const renderSourceQualityPanel = (players) => {
@@ -3233,6 +3554,7 @@ const applyBiwengerSession = (payload) => {
   state.biwenger.authenticated = Boolean(payload?.connected);
   state.biwenger.connected = state.biwenger.authenticated && contextMatches;
   document.body.classList.toggle("biwenger-connected", state.biwenger.connected);
+  state.biwenger.userId = Number(payload?.userId || payload?.id || 0) || null;
   state.biwenger.userName = payload?.userName || "";
   state.biwenger.leagueName = payload?.leagueName || "";
   state.biwenger.leagueId = remoteLeagueId || null;
@@ -3317,7 +3639,14 @@ const applyLeague = (league) => {
   state.scoring = league.scoring || state.scoring;
   state.weights = { ...state.weights, ...(league.weights || {}) };
   state.filters = { ...state.filters, ...(league.filters || {}) };
-  state.preferences = { ...state.preferences, ...(league.preferences || {}) };
+  state.preferences = {
+    ...state.preferences,
+    ...(league.preferences || {}),
+    rewards: {
+      ...(state.preferences.rewards || {}),
+      ...(league.preferences?.rewards || {})
+    }
+  };
   state.players = Array.isArray(league.marketPlayers)
     ? league.marketPlayers.map(cleanWorldcupPlayerIdentity)
     : [];
@@ -3404,7 +3733,14 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
       finance: { ...(remote.finance || {}), ...(league.finance || {}) },
       weights: { ...(remote.weights || {}), ...(league.weights || {}) },
       filters: { ...(remote.filters || {}), ...(league.filters || {}) },
-      preferences: { ...(remote.preferences || {}), ...(league.preferences || {}) },
+      preferences: {
+        ...(remote.preferences || {}),
+        ...(league.preferences || {}),
+        rewards: {
+          ...(remote.preferences?.rewards || {}),
+          ...(league.preferences?.rewards || {})
+        }
+      },
       icon: safeRemoteImageUrl(league.icon) || safeRemoteImageUrl(remote.icon) || null,
       cover: safeRemoteImageUrl(league.cover) || safeRemoteImageUrl(remote.cover) || null,
       biwengerLeagueId: league.biwengerLeagueId || remote.biwengerLeagueId || null,
@@ -4575,6 +4911,7 @@ const renderOfferSimulation = (incoming, myOffers) => {
   const simulatedBalance = Number.isFinite(balance) ? balance + selectedAmount : null;
   const simulatedProjected = Number.isFinite(balance) ? balance + selectedAmount - committed : null;
   const simulatedMaximumBid = Number.isFinite(maximumBid) ? maximumBid + selectedAmount : null;
+  const incomingSummary = incomingOfferSummary(incoming);
   const targetAmount = Number.isFinite(balance) ? Math.max(0, -balance, -(balance - committed)) : 0;
   const recommended = chooseRecommendedOfferSet(incoming, targetAmount);
   const recommendedIds = new Set(recommended.map(offerIdKey));
@@ -4600,6 +4937,8 @@ const renderOfferSimulation = (incoming, myOffers) => {
         </div>
       </div>
       <div class="operation-metrics offer-simulation-metrics">
+        <div><span>Total ofertas</span><strong>${incoming.length} · ${formatFinanceMoney(incomingSummary.total)}</strong></div>
+        <div class="${incomingSummary.balanceAfterAll < 0 ? "danger" : ""}"><span>Si aceptas todas</span><strong>${formatFinanceMoney(incomingSummary.balanceAfterAll)}</strong></div>
         <div><span>Seleccionado</span><strong>${formatFinanceMoney(selectedAmount)}</strong></div>
         <div class="${simulatedBalance < 0 ? "danger" : ""}"><span>Saldo simulado</span><strong>${formatFinanceMoney(simulatedBalance)}</strong></div>
         <div class="${simulatedProjected < 0 ? "danger" : ""}"><span>Saldo con pujas</span><strong>${formatFinanceMoney(simulatedProjected)}</strong></div>
@@ -4640,16 +4979,23 @@ const renderBiwengerOperations = () => {
   const operations = state.biwengerOperations || {};
   const offers = operations.offers || [];
   const myOffers = activeOwnBidOffers(offers);
-  const incoming = offers.filter((offer) => offer.isIncoming && !terminalOfferStatuses.has(String(offer.status || "").toLowerCase()));
+  const incoming = activeIncomingOffers(offers);
   const committed = myOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
   const balance = Number(operations.finance?.balance ?? state.finance.balance);
   const future = Number.isFinite(balance) ? balance - committed : null;
+  const incomingSummary = incomingOfferSummary(incoming);
+  const roundReward = estimatedRoundReward();
+  const futureWithRound = Number.isFinite(future) ? future + roundReward.amount : null;
 
   bidsTarget.innerHTML = `
     <div class="operation-metrics">
       <div><span>Saldo actual</span><strong>${formatFinanceMoney(balance)}</strong></div>
       <div><span>Pujado</span><strong>${formatFinanceMoney(committed)}</strong></div>
+      <div><span>Ofertas recibidas</span><strong>${incoming.length} · ${formatFinanceMoney(incomingSummary.total)}</strong></div>
+      <div class="${incomingSummary.balanceAfterAll < 0 ? "danger" : ""}"><span>Si aceptas todas</span><strong>${formatFinanceMoney(incomingSummary.balanceAfterAll)}</strong></div>
       <div class="${future < 0 ? "danger" : ""}"><span>Saldo si ganas todo</span><strong>${formatFinanceMoney(future)}</strong></div>
+      <div><span>Recompensa jornada</span><strong>${formatFinanceMoney(roundReward.amount)}</strong></div>
+      <div class="${futureWithRound < 0 ? "danger" : ""}"><span>Saldo fin jornada</span><strong>${formatFinanceMoney(futureWithRound)}</strong></div>
     </div>
     ${myOffers.length ? myOffers.map((offer) => `
       <form class="operation-row bid-edit-form" data-offer-id="${offer.offerId}" data-player-id="${offer.playerId}" data-owner-id="${offer.toId}">
@@ -4746,13 +5092,12 @@ const renderBiwengerOperations = () => {
     renderBiwengerOperations();
   }));
   bidsTarget.querySelector(".offer-sim-recommend")?.addEventListener("click", () => {
-    const incomingNow = (state.biwengerOperations?.offers || []).filter((offer) =>
-      offer.isIncoming && !terminalOfferStatuses.has(String(offer.status || "").toLowerCase())
-    );
+    const incomingNow = activeIncomingOffers(state.biwengerOperations?.offers || []);
     const myOffersNow = activeOwnBidOffers(state.biwengerOperations?.offers || []);
     const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
     const committed = myOffersNow.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
-    const targetAmount = Number.isFinite(balance) ? Math.max(0, -balance, -(balance - committed)) : 0;
+    const reward = estimatedRoundReward().amount;
+    const targetAmount = Number.isFinite(balance) ? Math.max(0, -(balance + reward), -(balance + reward - committed)) : 0;
     state.offerSimulation.selectedOfferIds = chooseRecommendedOfferSet(incomingNow, targetAmount).map(offerIdKey);
     renderBiwengerOperations();
   });
@@ -6469,6 +6814,18 @@ const syncSettingsControls = () => {
   if (riskAverse) riskAverse.checked = Boolean(state.preferences.riskAverse);
   const investmentMode = qs("#investment-mode");
   if (investmentMode) investmentMode.checked = Boolean(state.preferences.investmentMode);
+  const rewards = normalizedRewardPreferences();
+  const rewardInputs = {
+    "#reward-point-value": rewards.pointValue,
+    "#reward-rank-1": rewards.rank1,
+    "#reward-rank-2": rewards.rank2,
+    "#reward-rank-3": rewards.rank3,
+    "#reward-mvp": rewards.mvp
+  };
+  Object.entries(rewardInputs).forEach(([selector, value]) => {
+    const input = qs(selector);
+    if (input) input.value = value ? formatCurrencyInput(value) : "";
+  });
   updateWeightLabels();
   syncMarketPositionFilter();
 };
@@ -8013,6 +8370,26 @@ const initEvents = () => {
     renderTable();
     persistLeagueSettings();
   });
+  const rewardInputMap = {
+    "#reward-point-value": "pointValue",
+    "#reward-rank-1": "rank1",
+    "#reward-rank-2": "rank2",
+    "#reward-rank-3": "rank3",
+    "#reward-mvp": "mvp"
+  };
+  Object.entries(rewardInputMap).forEach(([selector, key]) => {
+    const input = qs(selector);
+    input?.addEventListener("input", () => {
+      state.preferences.rewards = {
+        ...(state.preferences.rewards || {}),
+        [key]: parseCurrencyInput(input.value)
+      };
+      renderBidSaleAssistant();
+      renderBiwengerOperations();
+      persistLeagueSettings();
+    });
+  });
+  bindCurrencyInputs(qs(".reward-config-card"));
   qs("#save-api-config").addEventListener("click", async () => {
     const input = qs("#api-base-url");
     const value = trimTrailingSlash(input.value.trim());

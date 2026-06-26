@@ -889,6 +889,37 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <input id="investment-mode" type="checkbox" />
                 <span>Priorizar revalorizacion de mercado</span>
               </label>
+              <div class="reward-config-card">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Premios de jornada</p>
+                    <h3>Saldo futuro estimado</h3>
+                  </div>
+                </div>
+                <div class="reward-config-grid">
+                  <label>
+                    Euros por punto
+                    <input id="reward-point-value" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
+                  </label>
+                  <label>
+                    1º jornada
+                    <input id="reward-rank-1" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
+                  </label>
+                  <label>
+                    2º jornada
+                    <input id="reward-rank-2" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
+                  </label>
+                  <label>
+                    3º jornada
+                    <input id="reward-rank-3" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
+                  </label>
+                  <label>
+                    MVP
+                    <input id="reward-mvp" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
+                  </label>
+                </div>
+                <p class="settings-help">El asistente solo suma estos premios si hay puntuacion de jornada disponible. Por defecto es 0 para no inventar saldo.</p>
+              </div>
               <button class="ghost-button demo-button" type="button" id="load-demo">
                 <span class="icon icon-upload" aria-hidden="true"></span>
                 Cargar demo manual
@@ -926,6 +957,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=11"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=54"></script>
+    <script src="app.js?v=55"></script>
   </body>
 </html>

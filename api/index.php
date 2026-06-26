@@ -2094,10 +2094,22 @@ function sanitize_filters_payload($filters): array
 function sanitize_preferences_payload($preferences): array
 {
     $preferences = is_array($preferences) ? $preferences : [];
+    $rewards = isset($preferences['rewards']) && is_array($preferences['rewards']) ? $preferences['rewards'] : [];
+    $money = static function ($value): int {
+        if (!is_numeric($value)) return 0;
+        return max(0, (int)round((float)$value));
+    };
     return [
         'strictBudget' => !array_key_exists('strictBudget', $preferences) || !empty($preferences['strictBudget']),
         'riskAverse' => !empty($preferences['riskAverse']),
-        'investmentMode' => !empty($preferences['investmentMode'])
+        'investmentMode' => !empty($preferences['investmentMode']),
+        'rewards' => [
+            'pointValue' => $money($rewards['pointValue'] ?? 0),
+            'rank1' => $money($rewards['rank1'] ?? 0),
+            'rank2' => $money($rewards['rank2'] ?? 0),
+            'rank3' => $money($rewards['rank3'] ?? 0),
+            'mvp' => $money($rewards['mvp'] ?? 0)
+        ]
     ];
 }
 

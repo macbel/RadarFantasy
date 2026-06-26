@@ -768,7 +768,8 @@ input[type="range"] {
   margin-top: 14px;
 }
 
-.api-config-card {
+.api-config-card,
+.reward-config-card {
   margin-bottom: 14px;
   padding: 14px;
   border: 1px solid var(--line);
@@ -790,6 +791,32 @@ input[type="range"] {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 12px;
+}
+
+.reward-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 10px;
+}
+
+.reward-config-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.reward-config-grid input {
+  width: 100%;
+}
+
+.settings-help {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .position-counts {
@@ -1538,7 +1565,7 @@ tr.over-maximum-bid td,
 
 .market-plan-summary span,
 .source-quality-grid span,
-.history-row span {
+.history-row > span {
   display: block;
   margin-bottom: 4px;
   color: var(--muted);
@@ -1553,6 +1580,60 @@ tr.over-maximum-bid td,
   color: var(--text);
   font-size: 13px;
   line-height: 1.35;
+}
+
+.history-player-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "date date"
+    "media copy";
+  gap: 7px 8px;
+  align-items: center;
+}
+
+.history-player-row.clickable {
+  cursor: pointer;
+}
+
+.history-player-row .history-date {
+  grid-area: date;
+}
+
+.history-player-row .player-media {
+  grid-area: media;
+}
+
+.history-player-copy {
+  grid-area: copy;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.history-player-row .player-name-line strong {
+  display: inline;
+}
+
+.history-meta {
+  display: flex !important;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.history-meta b {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.history-next-match .next-match {
+  max-width: 100%;
+}
+
+.history-next-match {
+  white-space: normal !important;
 }
 
 .market-plan-rivals {
@@ -2656,6 +2737,9 @@ tbody tr.selected .player-cell span {
 }
 
 .position-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 38px;
   width: 38px;
   min-width: 38px;
@@ -2663,6 +2747,8 @@ tbody tr.selected .player-cell span {
   height: 24px;
   min-height: 24px;
   padding: 0;
+  line-height: 1;
+  text-align: center;
   white-space: nowrap;
 }
 
@@ -3336,6 +3422,20 @@ body.sheet-open {
   line-height: 1.25;
 }
 
+.assistant-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.assistant-hero-actions small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .assistant-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
@@ -3364,6 +3464,17 @@ body.sheet-open {
   overflow: hidden;
   color: var(--text);
   font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-metrics small {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

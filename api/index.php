@@ -2651,10 +2651,14 @@ function biwenger_league_overview(array $session, int $timeoutSeconds, array $he
             $seenUsers[$userId] = true;
             $fallbackPosition += 1;
             $finance = biwenger_finance_snapshot(array_merge($entry, $user));
+            $icon = biwenger_entity_media($user, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture'])
+                ?: biwenger_entity_media($entry, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture']);
             $rows[] = [
                 'position' => biwenger_standing_position($entry, $fallbackPosition),
                 'userId' => $userId,
                 'name' => (string)($user['name'] ?? $entry['name'] ?? 'Rival'),
+                'icon' => $icon,
+                'avatar' => $icon,
                 'points' => biwenger_standing_points($entry, $user),
                 'teamValue' => $finance['teamValue'] ?? (isset($entry['teamValue']) ? (int)$entry['teamValue'] : null),
                 'cash' => $finance['cash'] ?? null,
@@ -2670,6 +2674,8 @@ function biwenger_league_overview(array $session, int $timeoutSeconds, array $he
     return [
         'ok' => true,
         'leagueName' => (string)($session['leagueName'] ?? ''),
+        'leagueIcon' => $session['leagueIcon'] ?? null,
+        'leagueCover' => $session['leagueCover'] ?? null,
         'standingsSource' => $standingsSource,
         'standings' => $rows,
         'rivals' => array_values(array_filter($rows, static function ($row) {
@@ -2714,10 +2720,14 @@ function biwenger_league_users(array $session, int $timeoutSeconds, array $heade
         $seenUsers[$userId] = true;
         $fallbackPosition += 1;
         $finance = biwenger_finance_snapshot(array_merge($entry, $user));
+        $icon = biwenger_entity_media($user, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture'])
+            ?: biwenger_entity_media($entry, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture']);
         $rows[] = [
             'position' => biwenger_standing_position($entry, $fallbackPosition),
             'userId' => $userId,
             'name' => (string)($user['name'] ?? $entry['name'] ?? 'Rival'),
+            'icon' => $icon,
+            'avatar' => $icon,
             'points' => biwenger_standing_points($entry, $user),
             'teamValue' => $finance['teamValue'] ?? (isset($entry['teamValue']) ? (int)$entry['teamValue'] : null),
             'cash' => $finance['cash'] ?? null,
@@ -4737,6 +4747,102 @@ function biwenger_entity_name($value, string $fallback = ''): string
     return is_string($value) ? $value : $fallback;
 }
 
+function biwenger_entity_id($value, int $fallback = 0): int
+{
+    if (is_array($value)) return (int)($value['id'] ?? $value['userID'] ?? $value['userId'] ?? $fallback);
+    return $fallback;
+}
+
+function biwenger_is_market_actor(string $name, int $id = 0): bool
+{
+    $normalized = normalize_text($name);
+    if ($normalized === '') return true;
+    return (bool)preg_match('/biwenger|mercado|market|sistema|computer/', $normalized);
+}
+
+function biwenger_activity_actor_payload($value, string $fallbackName = '', int $fallbackId = 0): array
+{
+    $entity = is_array($value) ? $value : [];
+    $name = biwenger_entity_name($value, $fallbackName);
+    $id = biwenger_entity_id($value, $fallbackId);
+    $icon = $entity ? biwenger_entity_media($entity, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image', 'picture']) : null;
+    return [
+        'id' => $id,
+        'name' => $name,
+        'icon' => $icon,
+        'isMarket' => biwenger_is_market_actor($name, $id)
+    ];
+}
+
+function biwenger_activity_player_payload(int $playerId, array $entry, array $catalog): array
+{
+    $player = (array)($catalog['playersById'][$playerId] ?? []);
+    $playerValue = is_array($entry['player'] ?? null) ? (array)$entry['player'] : [];
+    $player = array_merge($player, $playerValue);
+    $teamId = (int)($player['teamID'] ?? ($player['team']['id'] ?? 0));
+    $team = is_array($player['team'] ?? null) ? $player['team'] : (($catalog['teamsById'][$teamId] ?? null) ?: []);
+    $teamName = (string)($team['name'] ?? $player['teamName'] ?? '');
+    $playerImage = biwenger_media_url($player, ['photo', 'image', 'avatar', 'picture', 'img', 'portrait', 'iconHero', 'icon'])
+        ?? ($playerId > 0 ? 'https://cdn.biwenger.com/i/p/' . $playerId . '.png' : null);
+    $teamImage = biwenger_media_url($team, ['shield', 'badge', 'logo', 'image', 'flag', 'crest', 'photo', 'icon'])
+        ?? ($teamId > 0 ? 'https://cdn.biwenger.com/i/t/' . $teamId . '.png' : null);
+    $fitness = array_values(array_filter((array)($player['fitness'] ?? []), 'is_numeric'));
+    $points = (int)($player['points'] ?? 0);
+    $position = biwenger_position((int)($player['position'] ?? 3));
+    return [
+        'id' => $playerId,
+        'biwengerPlayerId' => $playerId,
+        'name' => (string)($player['name'] ?? $entry['playerName'] ?? 'Jugador'),
+        'team' => $teamName,
+        'position' => $position,
+        'price' => biwenger_money_int($player['price'] ?? $entry['amount'] ?? $entry['price'] ?? 0),
+        'biwengerValue' => biwenger_money_int($player['price'] ?? 0),
+        'competitionPoints' => $points,
+        'points' => $points,
+        'media' => [
+            'playerImage' => $playerImage,
+            'emblemImage' => $teamImage,
+            'emblemKind' => 'club'
+        ],
+        'sourceSummary' => [
+            'recentMatches' => biwenger_recent_matches_from_fitness($fitness)
+        ]
+    ];
+}
+
+function biwenger_activity_message(string $type, string $playerName, array $fromActor, array $toActor, int $amount): array
+{
+    $money = $amount > 0 ? ' por ' . number_format($amount, 0, ',', '.') . ' €' : '';
+    $from = trim((string)($fromActor['name'] ?? ''));
+    $to = trim((string)($toActor['name'] ?? ''));
+    $fromIsMarket = !empty($fromActor['isMarket']);
+    $toIsMarket = !empty($toActor['isMarket']);
+    if ($type === 'market') {
+        $seller = !$fromIsMarket && $from !== '' ? $from : (!$toIsMarket && $to !== '' ? $to : 'Un usuario');
+        return ['direction' => 'listed', 'message' => $seller . ' ha puesto a ' . $playerName . ' en venta' . $money];
+    }
+    if ($type === 'clause') {
+        $buyer = !$toIsMarket && $to !== '' ? $to : 'Un rival';
+        return ['direction' => 'clause', 'message' => $buyer . ' ha pagado la cláusula de ' . $playerName . $money];
+    }
+    if (!$fromIsMarket && $from !== '' && $toIsMarket) {
+        return ['direction' => 'sold-to-market', 'message' => $from . ' ha vendido a ' . $playerName . ' al mercado' . $money];
+    }
+    if ($fromIsMarket && !$toIsMarket && $to !== '') {
+        return ['direction' => 'bought-from-market', 'message' => $to . ' ha fichado a ' . $playerName . ' del mercado' . $money];
+    }
+    if (!$fromIsMarket && !$toIsMarket && $from !== '' && $to !== '') {
+        return ['direction' => 'transfer', 'message' => $to . ' ha fichado a ' . $playerName . ' de ' . $from . $money];
+    }
+    if ($to !== '') {
+        return ['direction' => 'bought', 'message' => $to . ' ha fichado a ' . $playerName . $money];
+    }
+    if ($from !== '') {
+        return ['direction' => 'sold', 'message' => $from . ' ha vendido a ' . $playerName . $money];
+    }
+    return ['direction' => $type !== '' ? $type : 'activity', 'message' => 'Movimiento de mercado: ' . $playerName . $money];
+}
+
 function biwenger_activity_rows(array $board, array $catalog): array
 {
     $rows = [];
@@ -4752,11 +4858,20 @@ function biwenger_activity_rows(array $board, array $catalog): array
                 : (int)($entry['playerID'] ?? (is_numeric($playerValue) ? $playerValue : 0));
             $player = (array)($catalog['playersById'][$playerId] ?? []);
             $type = strtolower((string)($entry['type'] ?? 'transfer'));
-            $from = biwenger_entity_name($entry['from'] ?? null, (string)($entry['fromName'] ?? ''));
-            if ($from === '') $from = biwenger_entity_name($entry['seller'] ?? null);
-            $to = biwenger_entity_name($entry['to'] ?? null, (string)($entry['toName'] ?? ''));
-            if ($to === '') $to = biwenger_entity_name($entry['buyer'] ?? null);
-            if ($to === '') $to = biwenger_entity_name($entry['user'] ?? null);
+            $fromValue = $entry['from'] ?? ($entry['seller'] ?? null);
+            $toValue = $entry['to'] ?? ($entry['buyer'] ?? ($entry['user'] ?? null));
+            $fromActor = biwenger_activity_actor_payload(
+                $fromValue,
+                (string)($entry['fromName'] ?? $entry['sellerName'] ?? ''),
+                (int)($entry['fromID'] ?? $entry['fromId'] ?? $entry['sellerID'] ?? $entry['sellerId'] ?? 0)
+            );
+            $toActor = biwenger_activity_actor_payload(
+                $toValue,
+                (string)($entry['toName'] ?? $entry['buyerName'] ?? $entry['userName'] ?? ''),
+                (int)($entry['toID'] ?? $entry['toId'] ?? $entry['buyerID'] ?? $entry['buyerId'] ?? $entry['userID'] ?? $entry['userId'] ?? 0)
+            );
+            $from = (string)($fromActor['name'] ?? '');
+            $to = (string)($toActor['name'] ?? '');
             $amount = (int)($entry['amount'] ?? $entry['price'] ?? 0);
             $playerName = (string)($player['name'] ?? $entry['playerName'] ?? 'Jugador');
             $exactMessage = trim((string)($entry['text'] ?? $entry['message'] ?? $entry['title'] ?? ''));
@@ -4771,13 +4886,24 @@ function biwenger_activity_rows(array $board, array $catalog): array
             } else {
                 $message = (string)($entry['text'] ?? $entry['message'] ?? $entry['title'] ?? ucfirst($type) . ': ' . $playerName);
             }
+            $interpreted = biwenger_activity_message($type, $playerName, $fromActor, $toActor, $amount);
+            $direction = (string)($interpreted['direction'] ?? $type);
+            if (in_array($type, ['market', 'clause', 'transfer', 'purchase'], true)) {
+                $message = (string)$interpreted['message'];
+            }
+            $actor = !empty($toActor['isMarket']) && empty($fromActor['isMarket']) ? $fromActor : $toActor;
             $rows[] = [
                 'type' => $type,
+                'direction' => $direction,
                 'date' => $date,
                 'message' => $message,
                 'playerId' => $playerId,
                 'playerName' => $playerName,
-                'amount' => $amount
+                'amount' => $amount,
+                'from' => $fromActor,
+                'to' => $toActor,
+                'actor' => $actor,
+                'player' => biwenger_activity_player_payload($playerId, $entry, $catalog)
             ];
         }
     }

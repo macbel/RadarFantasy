@@ -3919,8 +3919,7 @@ body.sheet-open {
   color: #ff8585;
 }
 
-.operation-row div span,
-.activity-row span {
+.operation-row div span {
   display: block;
   margin-top: 3px;
   color: var(--muted);
@@ -3951,6 +3950,38 @@ body.sheet-open {
   background: rgba(0, 0, 0, 0.22);
 }
 
+.entity-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  color: #fff5d6;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  font-weight: 900;
+  flex: 0 0 auto;
+}
+
+.entity-avatar.lg {
+  width: 44px;
+  height: 44px;
+}
+
+.entity-avatar.xs {
+  width: 22px;
+  height: 22px;
+  font-size: 9px;
+}
+
+.entity-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .danger-button {
   min-height: 38px;
   padding: 0 12px;
@@ -3967,13 +3998,74 @@ body.sheet-open {
 }
 
 .activity-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
   padding: 10px;
   border-left: 3px solid rgba(37, 201, 197, 0.7);
   background: var(--surface-soft);
 }
 
+.activity-row.activity-sold-to-market {
+  border-left-color: rgba(255, 133, 133, 0.85);
+}
+
+.activity-row.activity-bought-from-market,
+.activity-row.activity-clause {
+  border-left-color: rgba(101, 242, 168, 0.85);
+}
+
 .activity-row strong {
   line-height: 1.4;
+}
+
+.activity-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.activity-main strong,
+.activity-player-line span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-player-line,
+.activity-actors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.activity-actor {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.activity-meta {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  text-align: right;
+}
+
+.activity-meta b {
+  color: #fff2c8;
+  font-size: 11px;
+}
+
+.activity-meta span,
+.activity-meta small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .scoring-badge {
@@ -4052,7 +4144,7 @@ tr.has-rival-bids.has-rival-sale {
 
 .league-standings-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 12px;
 }
@@ -4084,9 +4176,18 @@ tr.has-rival-bids.has-rival-sale {
   white-space: nowrap;
 }
 
+.league-summary-brand {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.league-summary-brand .entity-avatar {
+  grid-row: span 3;
+}
+
 .standing-row {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  grid-template-columns: 44px 38px minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
   width: 100%;
@@ -4111,6 +4212,11 @@ tr.has-rival-bids.has-rival-sale {
   border-radius: 50%;
   background: rgba(255, 255, 255, .08);
   color: #fff8df;
+}
+
+.standing-avatar {
+  width: 34px;
+  height: 34px;
 }
 
 .standing-main {
@@ -4460,18 +4566,28 @@ tr.has-rival-bids.has-rival-sale {
   }
 
   .standing-row {
-    grid-template-columns: 38px minmax(0, 1fr);
+    grid-template-columns: 38px 34px minmax(0, 1fr);
     align-items: start;
   }
 
   .standing-points,
   .standing-action {
-    grid-column: 2;
+    grid-column: 3;
     justify-self: start;
   }
 
   .standing-points {
     justify-items: start;
+  }
+
+  .activity-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .activity-meta {
+    grid-column: 2;
+    justify-items: start;
+    text-align: left;
   }
 
   .rival-metrics {

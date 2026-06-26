@@ -3130,8 +3130,23 @@ const biwengerCompetitionToLocal = (competition) => {
 
 const safeRemoteImageUrl = (value) => /^https?:\/\//i.test(String(value || "")) ? String(value) : "";
 
-const renderLeagueIdentity = () => {
+const entityIconUrl = (entity = {}) => safeRemoteImageUrl(
+  entity.icon || entity.avatar || entity.photo || entity.image || entity.logo || entity.badge || entity.shield || ""
+);
+
+const renderEntityAvatar = (entity = {}, className = "") => {
+  const name = String(entity.name || entity.leagueName || "Liga");
+  const icon = entityIconUrl(entity);
+  const classes = `entity-avatar ${className}`.trim();
+  if (icon) {
+    return `<span class="${escapeHtml(classes)}"><img src="${escapeHtml(icon)}" alt="${escapeHtml(name)}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false" /><b hidden>${escapeHtml(initialsFor(name))}</b></span>`;
+  }
+  return `<span class="${escapeHtml(classes)}"><b>${escapeHtml(initialsFor(name))}</b></span>`;
+};
+
+const activeLeagueVisual = () => {
   const leagueName = activeLeagueName() || state.biwenger.leagueName || "Mi liga";
+  const localLeague = activeLeague() || {};
   const remoteName = normalize(state.biwenger.leagueName);
   const localName = normalize(leagueName);
   const remoteMatches = state.biwenger.connected && Boolean(remoteName) && Boolean(localName)
@@ -3140,8 +3155,20 @@ const renderLeagueIdentity = () => {
     const name = normalize(league.name);
     return name && localName && (name === localName || name.includes(localName) || localName.includes(name));
   });
-  const icon = safeRemoteImageUrl(visualMatch?.icon || (remoteMatches ? state.biwenger.leagueIcon : ""));
-  const cover = safeRemoteImageUrl(visualMatch?.cover || (remoteMatches ? state.biwenger.leagueCover : ""));
+  return {
+    name: leagueName,
+    icon: visualMatch?.icon || state.leagueOverview?.leagueIcon || localLeague.icon || (remoteMatches ? state.biwenger.leagueIcon : ""),
+    cover: visualMatch?.cover || state.leagueOverview?.leagueCover || localLeague.cover || (remoteMatches ? state.biwenger.leagueCover : ""),
+    remoteMatches,
+    visualMatch
+  };
+};
+
+const renderLeagueIdentity = () => {
+  const visual = activeLeagueVisual();
+  const leagueName = visual.name;
+  const icon = safeRemoteImageUrl(visual.icon);
+  const cover = safeRemoteImageUrl(visual.cover);
   const iconElement = qs("#active-league-icon");
   if (iconElement) {
     iconElement.src = icon || "assets/app-icon.png?v=5";
@@ -3154,7 +3181,7 @@ const renderLeagueIdentity = () => {
   const title = qs("#active-league-title");
   const provider = qs("#active-league-provider");
   if (title) title.textContent = leagueName;
-  if (provider) provider.textContent = visualMatch || remoteMatches ? "Liga Biwenger" : "Identidad local";
+  if (provider) provider.textContent = visual.visualMatch || visual.remoteMatches ? "Liga Biwenger" : "Identidad local";
   const topbar = qs(".topbar");
   if (topbar) {
     topbar.style.setProperty("--league-cover", cover ? `url("${cover.replace(/["\\]/g, "\\$&")}")` : "none");
@@ -4305,7 +4332,7 @@ const applyBiwengerOperations = (payload) => {
 
 const operationPlayerData = (entry) => {
   const playerId = Number(entry.playerId || 0);
-  const local = [...state.players, ...state.teamPlayers].find((player) => Number(player.biwengerPlayerId || 0) === playerId) || {};
+  const local = [...state.players, ...state.teamPlayers, ...(state.rivalTeam?.players || [])].find((player) => Number(player.biwengerPlayerId || 0) === playerId) || {};
   return {
     ...local,
     name: entry.playerName || local.name || "Jugador",
@@ -4316,7 +4343,8 @@ const operationPlayerData = (entry) => {
     price: Number(entry.playerValue ?? entry.value ?? local.biwengerValue ?? local.price ?? 0),
     biwengerValue: Number(entry.playerValue ?? entry.value ?? local.biwengerValue ?? local.price ?? 0),
     media: { ...(entry.media || {}), ...(local.media || {}) },
-    sourceLinks: { ...(entry.sourceLinks || {}), ...(local.sourceLinks || {}) }
+    sourceLinks: { ...(entry.sourceLinks || {}), ...(local.sourceLinks || {}) },
+    sourceSummary: { ...(entry.sourceSummary || {}), ...(local.sourceSummary || {}) }
   };
 };
 
@@ -4334,6 +4362,60 @@ const renderOperationIdentity = (entry) => {
         <span>${renderPositionBadge(player.position)} ${renderScoringBadge(player)}</span>
       </div>
     </div>
+  `;
+};
+
+const activityPlayerFromEntry = (entry = {}) => {
+  const payload = entry.player || {};
+  return operationPlayerData({
+    ...payload,
+    playerId: entry.playerId || payload.biwengerPlayerId || payload.id,
+    playerName: entry.playerName || payload.name,
+    playerValue: payload.biwengerValue || payload.price,
+    points: payload.competitionPoints ?? payload.points,
+    media: payload.media,
+    sourceSummary: payload.sourceSummary
+  });
+};
+
+const renderActivityActor = (actor = {}, label = "") => {
+  const name = String(actor.name || "");
+  if (!name || actor.isMarket) return "";
+  return `<span class="activity-actor">${renderEntityAvatar(actor, "xs")}<b>${escapeHtml(label ? `${label}: ${name}` : name)}</b></span>`;
+};
+
+const renderLeagueActivityEntry = (entry = {}) => {
+  const player = activityPlayerFromEntry(entry);
+  const date = formatActivityDate(entry.date);
+  const directionLabel = {
+    listed: "Puesto en venta",
+    "sold-to-market": "Vendido al mercado",
+    "bought-from-market": "Fichaje del mercado",
+    transfer: "Traspaso entre rivales",
+    clause: "Cláusula",
+    bought: "Compra",
+    sold: "Venta"
+  }[entry.direction] || entry.type || "Actividad";
+  return `
+    <article class="activity-row activity-${escapeHtml(entry.direction || entry.type || "event")}">
+      ${renderPlayerMedia(player, "sm", { overlay: "points" })}
+      <div class="activity-main">
+        <strong>${escapeHtml(entry.message || "Actividad de liga")}</strong>
+        <div class="activity-player-line">
+          <span>${renderPositionIcon(player.position)} ${escapeHtml(player.name)}</span>
+          ${renderRecentFormDots(player)}
+        </div>
+        <div class="activity-actors">
+          ${renderActivityActor(entry.from, "Sale")}
+          ${renderActivityActor(entry.to, "Entra")}
+        </div>
+      </div>
+      <div class="activity-meta">
+        <b>${escapeHtml(directionLabel)}</b>
+        ${Number(entry.amount || 0) > 0 ? `<span>${formatFinanceMoney(entry.amount)}</span>` : ""}
+        <small>${escapeHtml(date || "")}</small>
+      </div>
+    </article>
   `;
 };
 
@@ -4581,10 +4663,9 @@ const renderBiwengerOperations = () => {
   `;
 
   const activity = operations.activity || [];
-  activityTarget.innerHTML = activity.length ? activity.map((entry) => {
-    const date = formatActivityDate(entry.date);
-    return `<div class="activity-row"><strong>${escapeHtml(entry.message || "Actividad de liga")}</strong><span>${escapeHtml(date || entry.type || "")}</span></div>`;
-  }).join("") : `<p class="muted-empty">Biwenger no expone actividad visible para esta liga.</p>`;
+  activityTarget.innerHTML = activity.length
+    ? activity.map(renderLeagueActivityEntry).join("")
+    : `<p class="muted-empty">Biwenger no expone actividad visible para esta liga.</p>`;
   bindCurrencyInputs(bidsTarget);
   bindCurrencyInputs(salesTarget);
 
@@ -4719,8 +4800,15 @@ const renderLeagueOverview = () => {
   const leader = rows[0] || null;
   const myRow = rows.find((row) => row.isMe) || null;
   const updatedAt = state.leagueOverview?.updatedAt ? formatActivityDate(state.leagueOverview.updatedAt) : "";
+  const leagueVisual = activeLeagueVisual();
   if (summary) {
     summary.innerHTML = rows.length ? `
+      <div class="league-summary-brand">
+        ${renderEntityAvatar({ name: leagueVisual.name, icon: leagueVisual.icon }, "lg")}
+        <span>Liga activa</span>
+        <strong>${escapeHtml(leagueVisual.name)}</strong>
+        <small>${leagueVisual.icon ? "Icono Biwenger" : "Icono local"}</small>
+      </div>
       <div>
         <span>Líder</span>
         <strong>${escapeHtml(leader?.name || "S/D")}</strong>
@@ -4741,6 +4829,7 @@ const renderLeagueOverview = () => {
   standings.innerHTML = rows.length ? rows.map((row) => `
     <button class="standing-row ${row.isMe ? "is-me" : ""}" type="button" data-standing-action="${row.isMe ? "team" : "rival"}" data-rival-id="${row.isMe ? "" : row.userId}">
       <strong class="standing-rank">#${row.position}</strong>
+      ${renderEntityAvatar(row, "sm standing-avatar")}
       <span class="standing-main">
         <b>${escapeHtml(row.name)}${row.isMe ? " (tú)" : ""}</b>
         <small>

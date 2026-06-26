@@ -1495,11 +1495,13 @@ function biwenger_build_session(string $token, string $version, string $preferre
             : 'Biwenger no ha devuelto una liga util para esta cuenta');
     }
 
-    $leagueIcon = biwenger_entity_media($league, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image']);
+    $leagueIcon = biwenger_entity_media($league, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image'])
+        ?: biwenger_league_icon_fallback((int)($league['id'] ?? 0));
     $leagueCover = biwenger_entity_media($league, ['cover', 'background', 'backgroundImage', 'header', 'banner', 'wallpaper']) ?: $leagueIcon;
     $availableLeagues = array_values(array_filter(array_map(static function ($entry) {
         if (!is_array($entry) || empty($entry['id'])) return null;
-        $icon = biwenger_entity_media($entry, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image']);
+        $icon = biwenger_entity_media($entry, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image'])
+            ?: biwenger_league_icon_fallback((int)($entry['id'] ?? 0));
         return [
             'id' => (int)$entry['id'],
             'name' => (string)($entry['name'] ?? ''),
@@ -2055,9 +2057,16 @@ function sanitize_league_payload(array $payload): array
         'weights' => sanitize_weights_payload($payload['weights'] ?? []),
         'filters' => sanitize_filters_payload($payload['filters'] ?? []),
         'preferences' => sanitize_preferences_payload($payload['preferences'] ?? []),
+        'icon' => sanitize_media_url($payload['icon'] ?? null),
+        'cover' => sanitize_media_url($payload['cover'] ?? null),
         'biwengerLeagueId' => isset($payload['biwengerLeagueId']) ? (int)$payload['biwengerLeagueId'] : null,
         'editableLineup' => sanitize_editable_lineup($payload['editableLineup'] ?? null)
     ];
+}
+
+function sanitize_media_url($value): ?string
+{
+    return is_string($value) ? biwenger_normalize_media_url($value) : null;
 }
 
 function sanitize_weights_payload($weights): array
@@ -5359,14 +5368,28 @@ function biwenger_media_url(array $entity, array $keys): ?string
 {
     foreach ($keys as $key) {
         $value = $entity[$key] ?? null;
-        if (is_string($value) && preg_match('~^https?://~i', $value)) {
-            return $value;
-        }
-        if (is_string($value) && strpos($value, '//') === 0) {
-            return 'https:' . $value;
-        }
+        $url = is_string($value) ? biwenger_normalize_media_url($value) : null;
+        if ($url) return $url;
     }
     return null;
+}
+
+function biwenger_normalize_media_url(string $value): ?string
+{
+    $value = trim($value);
+    if ($value === '') return null;
+    if (preg_match('~^https?://~i', $value)) return $value;
+    if (strpos($value, '//') === 0) return 'https:' . $value;
+    if ($value[0] === '/') return 'https://cf.biwenger.com' . $value;
+    if (preg_match('~^(?:img|images|media|uploads|assets|i)/.+\.(?:png|jpe?g|webp|gif)(?:\?.*)?$~i', $value)) {
+        return 'https://cf.biwenger.com/' . ltrim($value, '/');
+    }
+    return null;
+}
+
+function biwenger_league_icon_fallback(int $leagueId): ?string
+{
+    return $leagueId > 0 ? 'https://cdn.biwenger.com/i/l/' . $leagueId . '.png' : null;
 }
 
 function biwenger_entity_media(array $entity, array $keys, int $depth = 0): ?string
@@ -5375,13 +5398,13 @@ function biwenger_entity_media(array $entity, array $keys, int $depth = 0): ?str
     foreach ($keys as $key) {
         if (!array_key_exists($key, $entity)) continue;
         $value = $entity[$key];
-        if (is_string($value) && preg_match('~^https?://~i', $value)) return $value;
-        if (is_string($value) && strpos($value, '//') === 0) return 'https:' . $value;
+        $url = is_string($value) ? biwenger_normalize_media_url($value) : null;
+        if ($url) return $url;
         if (is_array($value)) {
             foreach (['url', 'src', 'href', 'original', 'large', 'medium'] as $urlKey) {
                 $url = $value[$urlKey] ?? null;
-                if (is_string($url) && preg_match('~^https?://~i', $url)) return $url;
-                if (is_string($url) && strpos($url, '//') === 0) return 'https:' . $url;
+                $normalized = is_string($url) ? biwenger_normalize_media_url($url) : null;
+                if ($normalized) return $normalized;
             }
         }
     }

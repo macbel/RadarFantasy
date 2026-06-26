@@ -16,6 +16,7 @@
     authenticated: false,
     connected: false,
     leagueName: "",
+    leagueId: null,
     leagueIcon: "",
     leagueCover: "",
     availableLeagues: [],
@@ -259,6 +260,7 @@ const saveLocalLeagueSnapshot = () => {
     name: activeLeague()?.name || "Mi liga",
     createdAt: now
   };
+  const visual = activeLeagueVisual();
   db.leagues[state.activeLeagueId] = {
     ...existing,
     updatedAt: now,
@@ -270,6 +272,8 @@ const saveLocalLeagueSnapshot = () => {
     weights: { ...state.weights },
     filters: { ...state.filters },
     preferences: { ...state.preferences },
+    icon: safeRemoteImageUrl(visual.icon) || existing.icon || null,
+    cover: safeRemoteImageUrl(visual.cover) || existing.cover || null,
     biwengerLeagueId: activeLeague()?.biwengerLeagueId || existing.biwengerLeagueId || null,
     editableLineup: state.editableLineup,
     leagueFixtures: state.leagueFixtures,
@@ -3128,7 +3132,21 @@ const biwengerCompetitionToLocal = (competition) => {
   return "club";
 };
 
-const safeRemoteImageUrl = (value) => /^https?:\/\//i.test(String(value || "")) ? String(value) : "";
+const normalizeRemoteImageUrl = (value, base = "https://cf.biwenger.com") => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith("//")) return `https:${raw}`;
+  if (raw.startsWith("/")) return `${base}${raw}`;
+  if (/^(img|images|media|uploads|assets|i)\//i.test(raw)) return `${base}/${raw.replace(/^\/+/, "")}`;
+  return "";
+};
+
+const safeRemoteImageUrl = (value) => normalizeRemoteImageUrl(value);
+const biwengerLeagueIconUrl = (leagueId) => {
+  const id = Number(leagueId || 0);
+  return id > 0 ? `https://cdn.biwenger.com/i/l/${id}.png` : "";
+};
 
 const entityIconUrl = (entity = {}) => safeRemoteImageUrl(
   entity.icon || entity.avatar || entity.photo || entity.image || entity.logo || entity.badge || entity.shield || ""
@@ -3149,16 +3167,19 @@ const activeLeagueVisual = () => {
   const localLeague = activeLeague() || {};
   const remoteName = normalize(state.biwenger.leagueName);
   const localName = normalize(leagueName);
+  const localBiwengerId = Number(localLeague.biwengerLeagueId || 0);
   const remoteMatches = state.biwenger.connected && Boolean(remoteName) && Boolean(localName)
     && (remoteName === localName || remoteName.includes(localName) || localName.includes(remoteName));
   const visualMatch = (state.biwenger.availableLeagues || []).find((league) => {
+    if (localBiwengerId > 0 && Number(league.id || 0) === localBiwengerId) return true;
     const name = normalize(league.name);
     return name && localName && (name === localName || name.includes(localName) || localName.includes(name));
   });
+  const fallbackIcon = biwengerLeagueIconUrl(localBiwengerId || visualMatch?.id || (remoteMatches ? state.biwenger.leagueId : 0));
   return {
     name: leagueName,
-    icon: visualMatch?.icon || state.leagueOverview?.leagueIcon || localLeague.icon || (remoteMatches ? state.biwenger.leagueIcon : ""),
-    cover: visualMatch?.cover || state.leagueOverview?.leagueCover || localLeague.cover || (remoteMatches ? state.biwenger.leagueCover : ""),
+    icon: safeRemoteImageUrl(visualMatch?.icon || state.leagueOverview?.leagueIcon || localLeague.icon || (remoteMatches ? state.biwenger.leagueIcon : "")) || fallbackIcon,
+    cover: safeRemoteImageUrl(visualMatch?.cover || state.leagueOverview?.leagueCover || localLeague.cover || (remoteMatches ? state.biwenger.leagueCover : "")) || fallbackIcon,
     remoteMatches,
     visualMatch
   };
@@ -3205,6 +3226,7 @@ const applyBiwengerSession = (payload) => {
   document.body.classList.toggle("biwenger-connected", state.biwenger.connected);
   state.biwenger.userName = payload?.userName || "";
   state.biwenger.leagueName = payload?.leagueName || "";
+  state.biwenger.leagueId = remoteLeagueId || null;
   state.biwenger.leagueIcon = payload?.leagueIcon || "";
   state.biwenger.leagueCover = payload?.leagueCover || "";
   state.biwenger.availableLeagues = Array.isArray(payload?.availableLeagues)
@@ -3216,8 +3238,12 @@ const applyBiwengerSession = (payload) => {
     teamValue: Number.isFinite(payload?.teamValue) ? payload.teamValue : state.finance.teamValue,
     maximumBid: Number.isFinite(payload?.maximumBid) ? payload.maximumBid : state.finance.maximumBid
   });
-  if (state.biwenger.connected && remoteLeagueId > 0 && activeLeague()) {
-    activeLeague().biwengerLeagueId = remoteLeagueId;
+  if (state.biwenger.authenticated && activeLeague()) {
+    const visual = activeLeagueVisual();
+    const currentLeague = activeLeague();
+    if (state.biwenger.connected && remoteLeagueId > 0) currentLeague.biwengerLeagueId = remoteLeagueId;
+    if (visual.icon) currentLeague.icon = safeRemoteImageUrl(visual.icon);
+    if (visual.cover) currentLeague.cover = safeRemoteImageUrl(visual.cover);
     saveLocalLeagueSnapshot();
   }
   const loginButton = qs("#biwenger-login");
@@ -3346,6 +3372,7 @@ const renderLeagueSelector = () => {
   select.value = state.activeLeagueId || "";
   const deleteButton = qs("#delete-league");
   if (deleteButton) deleteButton.disabled = !state.activeLeagueId;
+  renderLeagueIdentity();
 };
 
 const applyLeaguePayload = (payload) => {
@@ -3369,6 +3396,9 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
       weights: { ...(remote.weights || {}), ...(league.weights || {}) },
       filters: { ...(remote.filters || {}), ...(league.filters || {}) },
       preferences: { ...(remote.preferences || {}), ...(league.preferences || {}) },
+      icon: safeRemoteImageUrl(league.icon) || safeRemoteImageUrl(remote.icon) || null,
+      cover: safeRemoteImageUrl(league.cover) || safeRemoteImageUrl(remote.cover) || null,
+      biwengerLeagueId: league.biwengerLeagueId || remote.biwengerLeagueId || null,
       leagueFixtures: league.leagueFixtures || remote.leagueFixtures || null,
       leagueFixturesSavedAt: league.leagueFixturesSavedAt || remote.leagueFixturesSavedAt || null,
       leagueOverview: league.leagueOverview || remote.leagueOverview || null
@@ -3433,6 +3463,8 @@ const saveActiveLeague = async () => {
         weights: state.weights,
         filters: state.filters,
         preferences: state.preferences,
+        icon: activeLeague()?.icon || activeLeagueVisual().icon || null,
+        cover: activeLeague()?.cover || activeLeagueVisual().cover || null,
         biwengerLeagueId: activeLeague()?.biwengerLeagueId || null,
         editableLineup: state.editableLineup
       })
@@ -5313,6 +5345,13 @@ const loadLeagueOverview = async () => {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "No se pudo cargar la clasificación");
     state.leagueOverview = payload;
+    if (activeLeague()) {
+      const currentLeague = activeLeague();
+      if (payload.leagueIcon) currentLeague.icon = safeRemoteImageUrl(payload.leagueIcon);
+      if (payload.leagueCover) currentLeague.cover = safeRemoteImageUrl(payload.leagueCover);
+      saveLocalLeagueSnapshot();
+      renderLeagueIdentity();
+    }
     renderLeagueOverview();
     await loadBiwengerOperations();
     setLeagueOperationStatus("Clasificacion y centro operativo actualizados.", "ready");

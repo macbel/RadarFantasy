@@ -1270,6 +1270,33 @@ const estimatedRoundReward = () => {
   const mvpPlayers = Array.isArray(team?.players)
     ? team.players.filter((player) => player.isMvp || player.mvp || player.roundMvp)
     : [];
+  const officialReward = state.liveRound?.officialReward || state.liveRound?.roundReward || null;
+  const officialAmount = moneyAmount(officialReward?.amount);
+  const hasOfficialReward = Boolean(officialReward?.available && Number.isFinite(officialAmount) && officialAmount > 0);
+  if (hasOfficialReward) {
+    const details = [
+      `Biwenger: ${formatFinanceMoney(officialAmount)}`,
+      officialReward.confidence ? `confianza ${officialReward.confidence}` : null,
+      officialReward.path ? `campo ${officialReward.path}` : null
+    ].filter(Boolean);
+    return {
+      amount: officialAmount,
+      pointsReward: 0,
+      positionReward: 0,
+      mvpReward: 0,
+      mvpCount: mvpPlayers.length,
+      points: Number.isFinite(points) ? Math.round(points) : 0,
+      rank: rank || null,
+      configured: true,
+      reliable: true,
+      official: true,
+      hasRoundData: true,
+      source: "Recompensa oficial Biwenger",
+      teamName: team?.name || "",
+      updatedAt: state.liveRound?.updatedAt || "",
+      details
+    };
+  }
   const mvpReward = mvpPlayers.length * rewards.mvp;
   const configured = Object.values(rewards).some((value) => value > 0);
   const source = !state.biwenger.connected

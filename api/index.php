@@ -2915,6 +2915,151 @@ function biwenger_first_money_path(array $node, array $paths, bool $signed = fal
     return null;
 }
 
+function biwenger_reward_amount_from_value($value): ?int
+{
+    if ($value === null || $value === '') return null;
+    if (is_scalar($value)) {
+        $money = biwenger_money_int($value);
+        return $money > 0 ? $money : null;
+    }
+    if (!is_array($value)) return null;
+    foreach (['total', 'amount', 'money', 'cash', 'reward', 'rewards', 'prize', 'bonus', 'income', 'earnings', 'value'] as $key) {
+        if (!array_key_exists($key, $value) || is_array($value[$key])) continue;
+        $money = biwenger_money_int($value[$key]);
+        if ($money > 0) return $money;
+    }
+    $sum = 0;
+    $count = 0;
+    foreach ($value as $key => $child) {
+        if (!is_numeric($key) && !preg_match('/reward|recomp|premio|prize|bonus|income|earning|amount|money|cash|total/i', (string)$key)) continue;
+        $amount = biwenger_reward_amount_from_value($child);
+        if ($amount !== null && $amount > 0) {
+            $sum += $amount;
+            $count++;
+        }
+    }
+    return $count > 0 ? $sum : null;
+}
+
+function biwenger_reward_path_is_blocked(string $path): bool
+{
+    $normalized = strtolower($path);
+    return (bool)preg_match(
+        '/player|players|market|price|clause|bid|offer|sale|transfer|wallet|balance|budget|funds|maximumbid|maxbid|teamvalue|squadvalue|playersvalue|lineup\.players|playersid|pointvalue|marketvalue/i',
+        $normalized
+    );
+}
+
+function biwenger_collect_round_reward_candidates($node, array &$candidates, string $source, string $path, int $userId, int $depth = 0, bool $userMatched = false): void
+{
+    if ($depth > 8 || !is_array($node)) return;
+    $nodeUserId = biwenger_entity_id_path($node, ['user', 'user.id', 'userID', 'userId', 'owner', 'owner.id']);
+    $localUserMatched = $userMatched || ($userId > 0 && $nodeUserId === $userId);
+    foreach ($node as $key => $child) {
+        $keyText = (string)$key;
+        $childPath = $path === '' ? $keyText : $path . '.' . $keyText;
+        if (biwenger_reward_path_is_blocked($childPath)) {
+            if (is_array($child) && preg_match('/user|owner/i', $keyText)) {
+                biwenger_collect_round_reward_candidates($child, $candidates, $source, $childPath, $userId, $depth + 1, $localUserMatched);
+            }
+            continue;
+        }
+        $strictRewardish = preg_match('/reward|recomp|premio|prize|bonus|premium|income|earning|payout/i', $keyText);
+        $moneyInRoundContext = preg_match('/cash|money/i', $keyText)
+            && preg_match('/currentround|round|jornada|reward|recomp|premio|prize|bonus|income|earning/i', $childPath);
+        $rewardish = $strictRewardish || $moneyInRoundContext;
+        if ($rewardish) {
+            $amount = biwenger_reward_amount_from_value($child);
+            if ($amount !== null && $amount > 0) {
+                $score = 20;
+                if (preg_match('/currentround|active|round|jornada/i', $childPath)) $score += 20;
+                if (preg_match('/reward|recomp|premio|prize|bonus|income|earning/i', $childPath)) $score += 20;
+                if (preg_match('/total|amount|money|cash/i', $childPath)) $score += 8;
+                if ($localUserMatched) $score += 16;
+                if ($source === 'ownData' || $source === 'ownEntry') $score += 10;
+                $candidates[] = [
+                    'amount' => $amount,
+                    'path' => trim($source . '.' . $childPath, '.'),
+                    'score' => $score,
+                    'confidence' => $score >= 64 ? 'alta' : 'media'
+                ];
+            }
+        }
+        if (is_array($child)) {
+            biwenger_collect_round_reward_candidates($child, $candidates, $source, $childPath, $userId, $depth + 1, $localUserMatched);
+        }
+    }
+}
+
+function biwenger_extract_live_round_reward(array $sources, int $userId): array
+{
+    $directPaths = [
+        'currentRound.rewards.total', 'currentRound.reward.total', 'currentRound.prizes.total',
+        'currentRound.bonuses.total', 'currentRound.income.total', 'currentRound.earnings.total',
+        'currentRound.totalReward', 'currentRound.rewardTotal', 'currentRound.totalRewards',
+        'currentRound.roundReward', 'currentRound.roundRewards', 'currentRound.reward',
+        'currentRound.rewards', 'currentRound.prize', 'currentRound.prizes', 'currentRound.bonus',
+        'currentRound.bonuses', 'currentRound.income', 'currentRound.earnings',
+        'lineup.rewards.total', 'lineup.reward.total', 'lineup.income.total', 'lineup.reward',
+        'lineup.rewards', 'lineup.prize', 'lineup.bonus', 'lineup.income',
+        'round.reward.total', 'round.rewards.total', 'round.income.total', 'round.reward',
+        'round.rewards', 'round.prize', 'round.bonus', 'round.income',
+        'rewardTotal', 'totalReward', 'totalRewards', 'roundReward', 'roundRewards',
+        'roundIncome', 'currentReward', 'currentRewards', 'income', 'earnings', 'reward', 'rewards'
+    ];
+    $candidates = [];
+    foreach ($sources as $source => $node) {
+        if (!is_array($node) || !$node) continue;
+        foreach ($directPaths as $path) {
+            if (biwenger_reward_path_is_blocked($path)) continue;
+            $value = biwenger_path_value($node, $path);
+            $amount = biwenger_reward_amount_from_value($value);
+            if ($amount !== null && $amount > 0) {
+                $score = 76 + (($source === 'ownData' || $source === 'ownEntry') ? 10 : 0);
+                if (preg_match('/currentRound|round|lineup/i', $path)) $score += 18;
+                if (preg_match('/total|rewardTotal|totalReward|totalRewards/i', $path)) $score += 8;
+                $candidates[] = [
+                    'amount' => $amount,
+                    'path' => $source . '.' . $path,
+                    'score' => $score,
+                    'confidence' => 'directa'
+                ];
+            }
+        }
+        biwenger_collect_round_reward_candidates($node, $candidates, (string)$source, '', $userId);
+    }
+    if (!$candidates) {
+        return [
+            'available' => false,
+            'amount' => 0,
+            'source' => 'Biwenger',
+            'confidence' => 'sin-dato',
+            'path' => '',
+            'label' => 'Biwenger no expone el total a cobrar en esta respuesta'
+        ];
+    }
+    usort($candidates, static function ($a, $b) {
+        if ((int)$a['score'] !== (int)$b['score']) return (int)$b['score'] <=> (int)$a['score'];
+        return (int)$b['amount'] <=> (int)$a['amount'];
+    });
+    $best = $candidates[0];
+    return [
+        'available' => true,
+        'amount' => (int)$best['amount'],
+        'source' => 'Biwenger',
+        'confidence' => (string)$best['confidence'],
+        'path' => (string)$best['path'],
+        'label' => 'Total a cobrar detectado en Biwenger',
+        'candidates' => array_slice(array_map(static function ($candidate) {
+            return [
+                'amount' => (int)$candidate['amount'],
+                'path' => (string)$candidate['path'],
+                'confidence' => (string)$candidate['confidence']
+            ];
+        }, $candidates), 0, 5)
+    ];
+}
+
 function biwenger_first_value_path(array $node, array $paths)
 {
     foreach ($paths as $path) {
@@ -3159,6 +3304,7 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
         }
     }
     $ownUserId = (int)($session['userId'] ?? 0);
+    $ownData = [];
     try {
         $ownResponse = biwenger_private_get_json(
             'https://biwenger.as.com/api/v2/user?fields=*,players(*,fitness,team,owner),lineup(*),lineups(*),rounds(*),currentRound(*)',
@@ -3176,6 +3322,13 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
     } catch (Throwable $error) {
         // The league-round payload can still expose the current user's score.
     }
+    $ownEntry = $ownUserId > 0 ? (array)($entriesByUser[$ownUserId]['entry'] ?? []) : [];
+    $officialReward = biwenger_extract_live_round_reward([
+        'ownData' => $ownData,
+        'ownEntry' => $ownEntry,
+        'roundsLeague' => (array)$roundData,
+        'leagueOverview' => (array)$overview
+    ], $ownUserId);
     $teams = [];
     foreach ($standings as $standing) {
         $userId = (int)($standing['userId'] ?? 0);
@@ -3232,6 +3385,8 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
         'lineupsVisible' => count(array_filter($teams, static fn($team) => !empty($team['lineupVisible']))),
         'reliablePointsTeams' => $reliableTeams,
         'hasReliablePoints' => $reliableTeams > 0,
+        'officialReward' => $officialReward,
+        'roundReward' => $officialReward,
         'standingsImageUrl' => 'https://cf.biwenger.com/draw/standings.jpg?league=' . (int)($session['leagueId'] ?? 0) . '&round=active',
         'updatedAt' => gmdate('c')
     ];
@@ -3243,7 +3398,30 @@ function biwenger_live_round_debug(array $session, int $timeoutSeconds, array $h
     $data = is_array($response['data'] ?? null) ? $response['data'] : $response;
     $entries = [];
     biwenger_collect_live_round_entries((array)$data, $entries);
-    return ['ok' => true, 'roundEntryCount' => count($entries), 'sample' => array_slice($entries, 0, 3)];
+    $ownUserId = (int)($session['userId'] ?? 0);
+    $ownResponse = [];
+    try {
+        $ownRaw = biwenger_private_get_json(
+            'https://biwenger.as.com/api/v2/user?fields=*,players(*,fitness,team,owner),lineup(*),lineups(*),rounds(*),currentRound(*)',
+            $session,
+            $timeoutSeconds,
+            $headers,
+            $strictTls
+        );
+        $ownResponse = is_array($ownRaw['data'] ?? null) ? $ownRaw['data'] : $ownRaw;
+        if (is_array($ownResponse['user'] ?? null)) $ownResponse = array_merge($ownResponse, $ownResponse['user']);
+    } catch (Throwable $error) {
+        $ownResponse = ['debugError' => $error->getMessage()];
+    }
+    return [
+        'ok' => true,
+        'roundEntryCount' => count($entries),
+        'officialReward' => biwenger_extract_live_round_reward([
+            'ownData' => (array)$ownResponse,
+            'roundsLeague' => (array)$data
+        ], $ownUserId),
+        'sample' => array_slice($entries, 0, 3)
+    ];
 }
 
 function biwenger_collect_live_round_entries(array $node, array &$entries, int $depth = 0, $keyHint = null, string $path = ''): void

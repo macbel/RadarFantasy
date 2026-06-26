@@ -3579,6 +3579,20 @@ body.sheet-open {
   opacity: .72;
 }
 
+.assistant-sale-form.listed {
+  border-color: rgba(50, 230, 143, 0.48);
+  background: linear-gradient(90deg, rgba(50, 230, 143, 0.14), rgba(255, 255, 255, 0.045));
+  box-shadow: inset 4px 0 0 #32e68f;
+}
+
+.assistant-sale-form.listed .assistant-action-copy strong {
+  color: #a7ffd5;
+}
+
+.assistant-sale-form.listed input:disabled {
+  opacity: .78;
+}
+
 .assistant-player {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

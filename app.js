@@ -1206,6 +1206,12 @@ const assistantTeamPlayers = () => {
     .sort((a, b) => (POSITION_ORDER[a.position] ?? 99) - (POSITION_ORDER[b.position] ?? 99) || b.lineupScore - a.lineupScore);
 };
 
+const activeSaleForPlayer = (player) => {
+  const playerId = Number(player?.biwengerPlayerId || player?.playerId || 0);
+  if (playerId <= 0) return null;
+  return (state.biwengerOperations?.sales || []).find((sale) => Number(sale.playerId || 0) === playerId) || null;
+};
+
 const assistantBidBudget = () => {
   const maximumBid = Number(state.finance.maximumBid);
   return Number.isFinite(maximumBid) && maximumBid > 0 ? maximumBid : Infinity;
@@ -1495,7 +1501,7 @@ const saleUrgencyForPlayer = (player, context = {}) => {
 };
 
 const assistantSaleRows = (players = assistantTeamPlayers(), context = {}) => players
-  .map((player) => ({ player, sale: saleUrgencyForPlayer(player, context) }))
+  .map((player) => ({ player, sale: saleUrgencyForPlayer(player, context), existingSale: activeSaleForPlayer(player) }))
   .filter((row) => row.sale.action !== "Mantener" && row.sale.score >= 54 && Number(row.sale.value || 0) > 0)
   .sort((a, b) => b.sale.score - a.sale.score || b.sale.value - a.sale.value)
   .slice(0, 6);
@@ -1619,7 +1625,7 @@ const renderBidSaleAssistant = () => {
   const projectedWithSales = plan.projectedWithSales;
   const planBalance = plan.planBalance;
   const actionCount = bids.filter((row) => row.action !== "Mantener puja" && Number(row.delta || 0) > 0).length
-    + sales.filter((row) => row.sale.action !== "Mantener").length
+    + sales.filter((row) => row.sale.action !== "Mantener" && !row.existingSale).length
     + offerRows.filter((row) => row.action === "Aceptar" || row.action === "Rechazar").length;
   const mainAdvice = !state.biwenger.connected
     ? "Conecta Biwenger para que el asistente use saldo, puja maxima y ofertas reales."
@@ -1689,17 +1695,20 @@ const renderBidSaleAssistant = () => {
       </section>
       <section class="assistant-card">
         <header><strong>Jugadores a vender</strong><small>${sales.length ? "Precio de salida sugerido." : "Plantilla sin ventas urgentes."}</small></header>
-        ${sales.length ? sales.map((row) => `
-          <form class="assistant-action-row assistant-sale-form ${row.sale.action === "Mantener" ? "muted" : ""}" data-player-id="${row.player.biwengerPlayerId || ""}">
+        ${sales.length ? sales.map((row) => {
+          const listed = Boolean(row.existingSale);
+          const activeSalePrice = moneyAmount(row.existingSale?.price || row.sale.suggestedPrice);
+          return `
+          <form class="assistant-action-row assistant-sale-form ${row.sale.action === "Mantener" ? "muted" : ""} ${listed ? "listed" : ""}" data-player-id="${row.player.biwengerPlayerId || ""}">
             ${renderAssistantPlayerRow(row.player, `${row.sale.score}/100 venta`)}
             <div class="assistant-action-copy">
-              <strong>${escapeHtml(row.sale.action)} · ${formatFinanceMoney(row.sale.suggestedPrice)}</strong>
-              <small>${escapeHtml(row.sale.reason || "sin alerta fuerte")}</small>
+              <strong>${listed ? "Ya en venta" : escapeHtml(row.sale.action)} · ${formatFinanceMoney(activeSalePrice)}</strong>
+              <small>${listed ? `Puesto en venta en Biwenger${row.existingSale?.priceSource ? ` · ${escapeHtml(row.existingSale.priceSource)}` : ""}` : escapeHtml(row.sale.reason || "sin alerta fuerte")}</small>
             </div>
-            <input class="operation-amount currency-input" type="text" inputmode="numeric" value="${formatCurrencyInput(row.sale.suggestedPrice)}" aria-label="Precio de venta sugerido" />
-            <button class="ghost-button" type="submit" ${!state.biwenger.connected || !row.player.biwengerPlayerId || row.sale.action === "Mantener" ? "disabled" : ""}>Vender</button>
+            <input class="operation-amount currency-input" type="text" inputmode="numeric" value="${formatCurrencyInput(activeSalePrice)}" aria-label="Precio de venta sugerido" ${listed ? "disabled" : ""} />
+            <button class="${listed ? "primary-button" : "ghost-button"}" type="submit" ${!state.biwenger.connected || !row.player.biwengerPlayerId || row.sale.action === "Mantener" || listed ? "disabled" : ""}>${listed ? "Ya en venta" : "Vender"}</button>
           </form>
-        `).join("") : `<p class="muted-empty compact">No venderia por vender; no hay candidatos claros con los datos actuales.</p>`}
+        `; }).join("") : `<p class="muted-empty compact">No venderia por vender; no hay candidatos claros con los datos actuales.</p>`}
       </section>
       <section class="assistant-card assistant-card-wide">
         <header><strong>Ofertas recibidas</strong><small>${offerRows.length ? "Decision sugerida segun saldo y coste deportivo." : "Sin ofertas recibidas cargadas."}</small></header>
@@ -1747,6 +1756,7 @@ const executeAssistantPlan = async () => {
   );
   const saleActions = plan.sales.filter((row) =>
     row.sale.action !== "Mantener"
+    && !row.existingSale
     && Number(row.sale.suggestedPrice || 0) > 0
     && Number(row.player?.biwengerPlayerId || 0) > 0
   );
@@ -1850,6 +1860,16 @@ const bindAssistantActions = (target) => {
       const price = parseCurrencyInput(form.querySelector(".operation-amount").value);
       if (price <= 0) throw new Error("Introduce un precio de venta valido.");
       await biwengerOperation("/api/biwenger/sale", { playerId: Number(form.dataset.playerId), price }, `Jugador puesto a la venta por ${formatFinanceMoney(price)}.`);
+      form.classList.add("listed");
+      const button = form.querySelector("button[type='submit']");
+      if (button) {
+        button.textContent = "Ya en venta";
+        button.disabled = true;
+        button.classList.remove("ghost-button");
+        button.classList.add("primary-button");
+      }
+      const input = form.querySelector(".operation-amount");
+      if (input) input.disabled = true;
       await loadBiwengerOperations(false);
     } catch (error) {
       setLeagueOperationStatus(error.message, "error");

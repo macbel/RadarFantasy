@@ -3169,15 +3169,15 @@ const renderLeagueIdentity = () => {
   const leagueName = visual.name;
   const icon = safeRemoteImageUrl(visual.icon);
   const cover = safeRemoteImageUrl(visual.cover);
-  const iconElement = qs("#active-league-icon");
-  if (iconElement) {
+  const iconElements = [qs("#active-league-icon"), qs("#league-select-icon")].filter(Boolean);
+  iconElements.forEach((iconElement) => {
     iconElement.src = icon || "assets/app-icon.png?v=5";
     iconElement.alt = icon ? `Icono de ${leagueName}` : "";
     iconElement.onerror = () => {
       iconElement.onerror = null;
       iconElement.src = "assets/app-icon.png?v=5";
     };
-  }
+  });
   const title = qs("#active-league-title");
   const provider = qs("#active-league-provider");
   if (title) title.textContent = leagueName;

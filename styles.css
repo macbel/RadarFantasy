@@ -225,6 +225,27 @@ button:disabled {
   font-size: 11px;
 }
 
+.league-select-shell {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.league-select-shell img {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  object-fit: cover;
+  background: #071318;
+}
+
+.league-select-shell select {
+  min-width: 0;
+}
+
 .league-create {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 42px;

@@ -61,9 +61,12 @@
               <span id="active-league-provider">Identidad local</span>
             </div>
           </div>
-          <select id="league-select">
-            <option value="">Cargando ligas...</option>
-          </select>
+          <div class="league-select-shell">
+            <img id="league-select-icon" src="assets/app-icon.png?v=5" alt="" />
+            <select id="league-select">
+              <option value="">Cargando ligas...</option>
+            </select>
+          </div>
           <div class="league-create">
             <input id="league-name" type="text" maxlength="60" placeholder="Nombre de liga" />
             <button class="icon-button" type="button" id="create-league" aria-label="Crear liga" title="Crear liga">+</button>

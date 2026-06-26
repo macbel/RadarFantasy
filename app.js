@@ -5448,6 +5448,7 @@ const renderLeagueFixtures = () => {
               : (event.videoUrl
                 ? `<a class="ghost-button fixture-link video" href="${escapeHtml(event.videoUrl)}" target="_blank" rel="noopener">Ver vídeo</a>`
                 : `<button class="ghost-button fixture-link video pending open-videos-view" type="button">Vídeos</button>`)}
+            <button class="ghost-button fixture-link live-search" type="button" data-home="${escapeHtml(event.home?.name || "Local")}" data-away="${escapeHtml(event.away?.name || "Visitante")}" data-date="${escapeHtml(dateText)}" data-time="${escapeHtml(timeText)}">Buscar directo</button>
           </div>
         </article>
       `;
@@ -5459,6 +5460,14 @@ const renderLeagueFixtures = () => {
     openFixtureVideo(button.dataset.videoUrl, button.dataset.videoTitle || "Resumen del partido");
   }));
   target.querySelectorAll(".open-videos-view").forEach((button) => button.addEventListener("click", () => openView("videos")));
+  target.querySelectorAll(".fixture-link.live-search").forEach((button) => button.addEventListener("click", () => {
+    openFixtureLiveSearch({
+      home: button.dataset.home || "Local",
+      away: button.dataset.away || "Visitante",
+      date: button.dataset.date || "",
+      time: button.dataset.time || ""
+    });
+  }));
 };
 
 const openFixtureVideo = (url, title = "Resumen del partido") => {
@@ -5469,14 +5478,117 @@ const openFixtureVideo = (url, title = "Resumen del partido") => {
   const modal = qs("#fixture-video-modal");
   const frame = qs("#fixture-video-frame");
   const titleEl = qs("#fixture-video-title");
+  const eyebrow = qs("#fixture-video-eyebrow");
   const external = qs("#fixture-video-external");
   if (!modal || !frame) {
     window.open(url, "_blank", "noopener");
     return;
   }
   if (titleEl) titleEl.textContent = title || "Resumen del partido";
+  if (eyebrow) eyebrow.textContent = "Video resumen";
+  frame.removeAttribute("srcdoc");
   frame.src = url;
-  if (external) external.href = url;
+  if (external) {
+    external.href = url;
+    external.textContent = "Abrir fuera";
+  }
+  modal.classList.remove("live-search-mode");
+  modal.hidden = false;
+  document.body.classList.add("modal-open");
+};
+
+const fixtureLiveSearchSources = ({ home, away }) => {
+  const teams = `${home} ${away}`.replace(/\s+/g, " ").trim();
+  const liveQuery = `${teams} en directo oficial fútbol`;
+  const highlightQuery = `${teams} live official football`;
+  return [
+    {
+      label: "YouTube directo",
+      description: "Busca directos y canales oficiales relacionados con el partido.",
+      url: `https://www.youtube.com/results?search_query=${encodeURIComponent(liveQuery)}`
+    },
+    {
+      label: "YouTube oficial",
+      description: "Consulta resultados con foco en fuentes oficiales y emisiones verificadas.",
+      url: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${highlightQuery} official live`)}`
+    },
+    {
+      label: "Vimeo",
+      description: "Alternativa para vídeos publicados o retransmisiones autorizadas.",
+      url: `https://vimeo.com/search?q=${encodeURIComponent(liveQuery)}`
+    },
+    {
+      label: "Twitch",
+      description: "Busca canales en directo relacionados con el encuentro.",
+      url: `https://www.twitch.tv/search?term=${encodeURIComponent(liveQuery)}`
+    }
+  ];
+};
+
+const fixtureLiveSearchHtml = (fixture) => {
+  const title = `${fixture.home} - ${fixture.away}`;
+  const sources = fixtureLiveSearchSources(fixture);
+  return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #061f21; color: #effffb; }
+    body { margin: 0; padding: 22px; background: radial-gradient(circle at top left, rgba(37,201,197,.18), transparent 34%), #061f21; }
+    main { display: grid; gap: 16px; max-width: 920px; margin: 0 auto; }
+    h1 { margin: 0; font-size: clamp(22px, 5vw, 34px); color: #fff3c4; }
+    p { margin: 0; color: #b9d3d0; line-height: 1.45; }
+    .match { display: grid; gap: 6px; padding: 16px; border: 1px solid rgba(255,190,63,.28); border-radius: 12px; background: rgba(255,255,255,.055); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    a { display: grid; gap: 8px; min-height: 112px; padding: 14px; border: 1px solid rgba(37,201,197,.34); border-radius: 12px; color: #effffb; text-decoration: none; background: rgba(2, 35, 38, .76); }
+    a:hover { border-color: rgba(255,190,63,.72); transform: translateY(-1px); }
+    b { color: #80fff2; font-size: 15px; }
+    small { color: #bdd9d6; line-height: 1.35; }
+    .note { padding: 12px 14px; border-left: 4px solid #ffbe3f; border-radius: 8px; background: rgba(255,190,63,.1); color: #ffe8aa; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="match">
+      <p>Buscar retransmisiones o vídeos autorizados</p>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml([fixture.date, fixture.time].filter(Boolean).join(" · "))}</p>
+    </section>
+    <p class="note">YouTube, Vimeo y Twitch suelen bloquear sus resultados dentro de iframes. Por eso estos accesos abren la búsqueda fuera del popup. Revisa siempre que la fuente sea oficial o autorizada.</p>
+    <section class="grid">
+      ${sources.map((source) => `
+        <a href="${escapeHtml(source.url)}" target="_blank" rel="noopener">
+          <b>${escapeHtml(source.label)}</b>
+          <small>${escapeHtml(source.description)}</small>
+        </a>
+      `).join("")}
+    </section>
+  </main>
+</body>
+</html>`;
+};
+
+const openFixtureLiveSearch = (fixture) => {
+  const modal = qs("#fixture-video-modal");
+  const frame = qs("#fixture-video-frame");
+  const titleEl = qs("#fixture-video-title");
+  const eyebrow = qs("#fixture-video-eyebrow");
+  const external = qs("#fixture-video-external");
+  const sources = fixtureLiveSearchSources(fixture);
+  if (!modal || !frame) {
+    window.open(sources[0]?.url || "https://www.youtube.com/", "_blank", "noopener");
+    return;
+  }
+  if (titleEl) titleEl.textContent = `${fixture.home} - ${fixture.away}`;
+  if (eyebrow) eyebrow.textContent = "Buscar directo";
+  if (external) {
+    external.href = sources[0]?.url || "https://www.youtube.com/";
+    external.textContent = "Abrir YouTube";
+  }
+  frame.src = "about:blank";
+  frame.srcdoc = fixtureLiveSearchHtml(fixture);
+  modal.classList.add("live-search-mode");
   modal.hidden = false;
   document.body.classList.add("modal-open");
 };
@@ -5484,8 +5596,21 @@ const openFixtureVideo = (url, title = "Resumen del partido") => {
 const closeFixtureVideo = () => {
   const modal = qs("#fixture-video-modal");
   const frame = qs("#fixture-video-frame");
-  if (frame) frame.src = "about:blank";
-  if (modal) modal.hidden = true;
+  const eyebrow = qs("#fixture-video-eyebrow");
+  const external = qs("#fixture-video-external");
+  if (frame) {
+    frame.removeAttribute("srcdoc");
+    frame.src = "about:blank";
+  }
+  if (eyebrow) eyebrow.textContent = "Video resumen";
+  if (external) {
+    external.href = "https://www.scorebat.com/";
+    external.textContent = "Abrir fuera";
+  }
+  if (modal) {
+    modal.hidden = true;
+    modal.classList.remove("live-search-mode");
+  }
   document.body.classList.remove("modal-open");
 };
 

@@ -3507,6 +3507,11 @@ body.sheet-open {
   color: #ffabb1;
 }
 
+.assistant-plan-summary.reward-breakdown {
+  border-color: rgba(37, 201, 197, 0.22);
+  background: rgba(37, 201, 197, 0.07);
+}
+
 .assistant-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

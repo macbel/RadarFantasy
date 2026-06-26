@@ -43,6 +43,8 @@
   leagueFixtures: null,
   liveRound: null,
   liveRoundDebug: null,
+  liveRoundFetchedAt: 0,
+  liveRoundLoading: null,
   selectedLiveRoundUserId: null,
   rivalTeam: null,
   biwengerOperations: null,
@@ -1252,30 +1254,66 @@ const estimatedRoundReward = () => {
   const derivedPoints = Array.isArray(team?.players)
     ? team.players.reduce((sum, player) => sum + (Number.isFinite(Number(player.roundPoints)) ? Number(player.roundPoints) : 0), 0)
     : 0;
-  const points = Number.isFinite(reliablePoints) ? reliablePoints : derivedPoints;
+  const hasReliablePoints = Boolean(team?.pointsReliable && Number.isFinite(reliablePoints));
+  const hasDerivedPoints = derivedPoints !== 0;
+  const points = hasReliablePoints ? reliablePoints : (hasDerivedPoints ? derivedPoints : (Number.isFinite(reliablePoints) ? reliablePoints : 0));
   const rank = Number(team?.provisionalRank || team?.rank || 0);
+  const hasRoundData = Boolean(team && (hasReliablePoints || hasDerivedPoints || Number(points) !== 0));
   const pointsReward = Math.max(0, Math.round((Number.isFinite(points) ? points : 0) * rewards.pointValue));
-  const positionReward = rank === 1
+  const positionReward = !hasRoundData ? 0 : rank === 1
     ? rewards.rank1
     : rank === 2
       ? rewards.rank2
       : rank === 3
         ? rewards.rank3
         : 0;
-  const mvpReward = Array.isArray(team?.players) && team.players.some((player) => player.isMvp || player.mvp || player.roundMvp)
-    ? rewards.mvp
-    : 0;
+  const mvpPlayers = Array.isArray(team?.players)
+    ? team.players.filter((player) => player.isMvp || player.mvp || player.roundMvp)
+    : [];
+  const mvpReward = mvpPlayers.length * rewards.mvp;
+  const configured = Object.values(rewards).some((value) => value > 0);
+  const source = !state.biwenger.connected
+    ? "Conecta Biwenger"
+    : !team
+      ? "Jornada no cargada"
+      : hasReliablePoints
+        ? "Puntos confirmados"
+        : hasDerivedPoints
+          ? "Suma de jugadores"
+          : "Sin puntos expuestos";
   return {
     amount: pointsReward + positionReward + mvpReward,
     pointsReward,
     positionReward,
     mvpReward,
+    mvpCount: mvpPlayers.length,
     points: Number.isFinite(points) ? Math.round(points) : 0,
     rank: rank || null,
-    configured: Object.values(rewards).some((value) => value > 0),
-    reliable: Boolean(team?.pointsReliable && Number.isFinite(reliablePoints)),
-    teamName: team?.name || ""
+    configured,
+    reliable: hasReliablePoints,
+    hasRoundData,
+    source,
+    teamName: team?.name || "",
+    updatedAt: state.liveRound?.updatedAt || "",
+    details: [
+      rewards.pointValue > 0 ? `${Math.round(points)} pts x ${formatFinanceMoney(rewards.pointValue)} = ${formatFinanceMoney(pointsReward)}` : null,
+      positionReward > 0 ? `puesto #${rank}: ${formatFinanceMoney(positionReward)}` : null,
+      mvpReward > 0 ? `${mvpPlayers.length} MVP x ${formatFinanceMoney(rewards.mvp)} = ${formatFinanceMoney(mvpReward)}` : null,
+      configured && !hasRoundData ? "pendiente de puntos de jornada" : null
+    ].filter(Boolean)
   };
+};
+
+const renderRoundRewardDetail = (reward, options = {}) => {
+  const compact = options.compact === true;
+  if (!reward.configured) return "Configura premios en Ajustes";
+  const base = [
+    reward.source,
+    reward.points ? `${reward.points} pts` : null,
+    reward.rank ? `#${reward.rank}` : null
+  ].filter(Boolean).join(" · ");
+  const details = reward.details?.length ? reward.details.join(" · ") : base;
+  return compact ? base : details;
 };
 
 const incomingOfferSummary = (incoming = activeIncomingOffers()) => {
@@ -1375,7 +1413,14 @@ const saleUrgencyForPlayer = (player, context = {}) => {
   const balance = Number.isFinite(Number(context.balanceAfterRoundAndOffers))
     ? Number(context.balanceAfterRoundAndOffers)
     : Number(state.finance.balance);
-  const negativePressure = Number.isFinite(balance) && balance < 0 ? 14 : 0;
+  const baseBalance = Number.isFinite(Number(context.baseBalance)) ? Number(context.baseBalance) : Number(state.finance.balance);
+  const rewardAmount = Math.max(0, Number(context.roundRewardAmount || 0));
+  const debtBefore = Number.isFinite(baseBalance) ? Math.max(0, -baseBalance) : 0;
+  const debtAfter = Number.isFinite(balance) ? Math.max(0, -balance) : 0;
+  const rewardRelief = debtBefore > 0 ? clamp((debtBefore - debtAfter) / debtBefore, 0, 1) : 0;
+  const negativePressure = Number.isFinite(balance) && balance < 0 ? Math.round(14 * (1 - rewardRelief * 0.75)) : 0;
+  const roundCoversDebt = Number.isFinite(baseBalance) && baseBalance < 0 && Number.isFinite(balance) && balance >= 0 && rewardAmount > 0;
+  const roundAlmostCoversDebt = rewardRelief >= 0.55 && rewardAmount > 0;
   const immediateRisk = noNextMatch || player.health?.status === "suspended" || player.health?.status === "injured";
   const protectHotStreak = recent.hot && !immediateRisk;
   let score = 18 + negativePressure;
@@ -1390,6 +1435,10 @@ const saleUrgencyForPlayer = (player, context = {}) => {
   if (valueDiff < 0) score += Math.min(14, Math.abs(valueDiff) / Math.max(value, 1) * 120);
   if (positionCount <= target && quality >= 72) score -= 18;
   if (recent.hot && quality >= 76) score -= 14;
+  if (roundCoversDebt && quality >= 66) score -= 16;
+  if (roundCoversDebt && protectHotStreak) score -= 12;
+  if (roundAlmostCoversDebt && protectHotStreak) score -= 10;
+  if (debtAfter > 0 && value > debtAfter * 2.2 && quality >= 70 && !immediateRisk) score -= 14;
   if (protectHotStreak) score = Math.min(score - 28, 46);
   const multiplier = score >= 74
     ? (negativePressure ? 1 : 1.04)
@@ -1411,6 +1460,8 @@ const saleUrgencyForPlayer = (player, context = {}) => {
       protectHotStreak ? `${recent.label}: proteger` : recent.label,
       noNextMatch ? "sin proximo partido" : null,
       valueDiff < 0 ? `valor ${formatSignedMoney(valueDiff)}` : null,
+      roundCoversDebt ? "la jornada cubre el negativo" : null,
+      !roundCoversDebt && roundAlmostCoversDebt ? `solo faltan ${formatFinanceMoney(debtAfter)} tras jornada/ofertas` : null,
       negativePressure ? "necesitas liquidez" : null
     ].filter(Boolean).join(" · ")
   };
@@ -1471,6 +1522,8 @@ const assistantPlanSnapshot = () => {
     .reduce((sum, row) => sum + moneyAmount(row.amount), 0);
   const allOfferAmount = incoming.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const saleContext = {
+    baseBalance: balance,
+    roundRewardAmount: roundReward.amount,
     balanceAfterRoundAndOffers: Number.isFinite(balance)
       ? balance + roundReward.amount + recommendedOfferAmount
       : null
@@ -1534,6 +1587,8 @@ const renderBidSaleAssistant = () => {
   const bidBudgetMeta = bids.meta || {};
   const projected = plan.balanceAfterRecommendedOffers;
   const projectedAllOffers = plan.balanceAfterAllOffers;
+  const projectedRound = plan.balanceAfterRound;
+  const projectedAllOffersRound = Number.isFinite(projectedAllOffers) ? projectedAllOffers + roundReward.amount : null;
   const projectedWithSales = plan.projectedWithSales;
   const planBalance = plan.planBalance;
   const actionCount = bids.filter((row) => row.action !== "Mantener puja" && Number(row.delta || 0) > 0).length
@@ -1569,7 +1624,9 @@ const renderBidSaleAssistant = () => {
         <div><span>Ofertas recibidas</span><strong>${incoming.length} · ${formatFinanceMoney(allOfferAmount)}</strong></div>
         <div><span>Si aceptas todas</span><strong class="${projectedAllOffers < 0 ? "negative" : "positive"}">${formatFinanceMoney(projectedAllOffers)}</strong></div>
         <div><span>Ofertas recomendadas</span><strong class="${projected < 0 ? "negative" : "positive"}">${formatFinanceMoney(projected)}</strong><small>${formatFinanceMoney(recommendedOfferAmount)}</small></div>
-        <div><span>Recompensa jornada</span><strong class="${roundReward.amount > 0 ? "positive" : ""}">${formatFinanceMoney(roundReward.amount)}</strong><small>${roundReward.configured ? `${roundReward.points} pts${roundReward.rank ? ` · #${roundReward.rank}` : ""}` : "Configura premios en ajustes"}</small></div>
+        <div><span>Recompensa jornada</span><strong class="${roundReward.amount > 0 ? "positive" : ""}">${formatFinanceMoney(roundReward.amount)}</strong><small>${escapeHtml(renderRoundRewardDetail(roundReward, { compact: true }))}</small></div>
+        <div><span>Saldo fin jornada</span><strong class="${projectedRound < 0 ? "negative" : "positive"}">${formatFinanceMoney(projectedRound)}</strong><small>${escapeHtml(roundReward.source)}</small></div>
+        <div><span>Ofertas + jornada</span><strong class="${projectedAllOffersRound < 0 ? "negative" : "positive"}">${formatFinanceMoney(projectedAllOffersRound)}</strong></div>
         <div><span>Si ganas pujas</span><strong class="${planBalance < 0 ? "negative" : "positive"}">${formatFinanceMoney(planBalance)}</strong></div>
         <div><span>Con ventas sugeridas</span><strong class="${projectedWithSales < 0 ? "negative" : "positive"}">${formatFinanceMoney(projectedWithSales)}</strong></div>
       </div>
@@ -1579,6 +1636,12 @@ const renderBidSaleAssistant = () => {
           - ${formatFinanceMoney(bidWinCost)} + ofertas recomendadas ${formatFinanceMoney(recommendedOfferAmount)}
           + ventas ${formatFinanceMoney(salePotential)} + jornada ${formatFinanceMoney(roundReward.amount)}
           = <strong class="${planBalance < 0 ? "negative" : "positive"}">${formatFinanceMoney(planBalance)}</strong>
+        </p>
+      ` : ""}
+      ${roundReward.configured ? `
+        <p class="assistant-plan-summary reward-breakdown">
+          Premios previstos: <strong class="${roundReward.amount > 0 ? "positive" : ""}">${formatFinanceMoney(roundReward.amount)}</strong>
+          · ${escapeHtml(renderRoundRewardDetail(roundReward))}
         </p>
       ` : ""}
     </div>
@@ -4933,17 +4996,20 @@ const renderOfferSimulation = (incoming, myOffers) => {
   const simulatedProjected = Number.isFinite(balance) ? balance + selectedAmount - committed : null;
   const simulatedMaximumBid = Number.isFinite(maximumBid) ? maximumBid + selectedAmount : null;
   const incomingSummary = incomingOfferSummary(incoming);
-  const targetAmount = Number.isFinite(balance) ? Math.max(0, -balance, -(balance - committed)) : 0;
+  const roundReward = estimatedRoundReward();
+  const simulatedRoundBalance = Number.isFinite(simulatedProjected) ? simulatedProjected + roundReward.amount : null;
+  const adjustedBalance = Number.isFinite(balance) ? balance + roundReward.amount : balance;
+  const targetAmount = Number.isFinite(adjustedBalance) ? Math.max(0, -adjustedBalance, -(adjustedBalance - committed)) : 0;
   const recommended = chooseRecommendedOfferSet(incoming, targetAmount);
   const recommendedIds = new Set(recommended.map(offerIdKey));
   const recommendedAmount = recommended.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const selectedCost = selectedOffers.reduce((sum, offer) => sum + offerSportCost(offer).cost, 0);
   const recommendedCost = recommended.reduce((sum, offer) => sum + offerSportCost(offer).cost, 0);
   const recommendationText = targetAmount <= 0
-    ? "No necesitas aceptar ofertas para evitar saldo negativo. Si quieres generar margen, prioriza ofertas por encima de valor y de coste deportivo bajo."
+    ? "Con saldo, pujas y jornada estimada no necesitas aceptar ofertas para evitar negativo. Si quieres generar margen, prioriza ofertas por encima de valor y coste deportivo bajo."
     : recommended.length
-      ? `Propuesta: aceptar ${recommended.length} oferta${recommended.length === 1 ? "" : "s"} por ${formatFinanceMoney(recommendedAmount)}. Objetivo conservador: cubrir ${formatFinanceMoney(targetAmount)} con el menor coste deportivo estimado.`
-      : `Ni aceptando las ofertas actuales se cubre el objetivo conservador de ${formatFinanceMoney(targetAmount)}.`;
+      ? `Propuesta: aceptar ${recommended.length} oferta${recommended.length === 1 ? "" : "s"} por ${formatFinanceMoney(recommendedAmount)}. Objetivo tras jornada: cubrir ${formatFinanceMoney(targetAmount)} con el menor coste deportivo estimado.`
+      : `Ni aceptando las ofertas actuales se cubre el objetivo conservador tras jornada de ${formatFinanceMoney(targetAmount)}.`;
 
   return `
     <section class="offer-simulator">
@@ -4963,6 +5029,7 @@ const renderOfferSimulation = (incoming, myOffers) => {
         <div><span>Seleccionado</span><strong>${formatFinanceMoney(selectedAmount)}</strong></div>
         <div class="${simulatedBalance < 0 ? "danger" : ""}"><span>Saldo simulado</span><strong>${formatFinanceMoney(simulatedBalance)}</strong></div>
         <div class="${simulatedProjected < 0 ? "danger" : ""}"><span>Saldo con pujas</span><strong>${formatFinanceMoney(simulatedProjected)}</strong></div>
+        <div class="${simulatedRoundBalance < 0 ? "danger" : ""}"><span>Fin jornada sim.</span><strong>${formatFinanceMoney(simulatedRoundBalance)}</strong><small>${escapeHtml(renderRoundRewardDetail(roundReward, { compact: true }))}</small></div>
         <div><span>Puja max. si aceptas</span><strong>${formatFinanceMoney(simulatedMaximumBid)}</strong><small>Ahora ${formatFinanceMoney(maximumBid)}${selectedAmount > 0 ? ` · +${formatFinanceMoney(selectedAmount)}` : ""}</small></div>
       </div>
       <div class="offer-simulator-advice ${targetAmount > 0 && recommended.length ? "ready" : ""}">
@@ -5007,6 +5074,9 @@ const renderBiwengerOperations = () => {
   const incomingSummary = incomingOfferSummary(incoming);
   const roundReward = estimatedRoundReward();
   const futureWithRound = Number.isFinite(future) ? future + roundReward.amount : null;
+  const futureWithAllOffersAndRound = Number.isFinite(balance)
+    ? balance + incomingSummary.total - committed + roundReward.amount
+    : null;
 
   bidsTarget.innerHTML = `
     <div class="operation-metrics">
@@ -5015,8 +5085,9 @@ const renderBiwengerOperations = () => {
       <div><span>Ofertas recibidas</span><strong>${incoming.length} · ${formatFinanceMoney(incomingSummary.total)}</strong></div>
       <div class="${incomingSummary.balanceAfterAll < 0 ? "danger" : ""}"><span>Si aceptas todas</span><strong>${formatFinanceMoney(incomingSummary.balanceAfterAll)}</strong></div>
       <div class="${future < 0 ? "danger" : ""}"><span>Saldo si ganas todo</span><strong>${formatFinanceMoney(future)}</strong></div>
-      <div><span>Recompensa jornada</span><strong>${formatFinanceMoney(roundReward.amount)}</strong></div>
+      <div><span>Recompensa jornada</span><strong>${formatFinanceMoney(roundReward.amount)}</strong><small>${escapeHtml(renderRoundRewardDetail(roundReward, { compact: true }))}</small></div>
       <div class="${futureWithRound < 0 ? "danger" : ""}"><span>Saldo fin jornada</span><strong>${formatFinanceMoney(futureWithRound)}</strong></div>
+      <div class="${futureWithAllOffersAndRound < 0 ? "danger" : ""}"><span>Ofertas + jornada</span><strong>${formatFinanceMoney(futureWithAllOffersAndRound)}</strong><small>Aceptando todas y ganando pujas</small></div>
     </div>
     ${myOffers.length ? myOffers.map((offer) => `
       <form class="operation-row bid-edit-form" data-offer-id="${offer.offerId}" data-player-id="${offer.playerId}" data-owner-id="${offer.toId}">
@@ -5627,6 +5698,7 @@ const loadLeagueFixtures = async (showFeedback = true) => {
 
 const renderLiveRound = () => {
   const target = qs("#live-round-ranking");
+  if (!target) return;
   const teams = state.liveRound?.teams || [];
   if (!teams.length) {
     const debug = state.liveRoundDebug?.teams || [];
@@ -5687,29 +5759,44 @@ const renderLiveRound = () => {
 const loadLiveRound = async (showFeedback = true) => {
   const target = qs("#live-round-ranking");
   if (!state.biwenger.connected) {
-    target.innerHTML = `<p class="muted-empty">Conecta Biwenger para consultar la jornada fantasy.</p>`;
-    return;
+    if (target) target.innerHTML = `<p class="muted-empty">Conecta Biwenger para consultar la jornada fantasy.</p>`;
+    return null;
   }
   if (showFeedback) setLeagueOperationStatus("Consultando alineaciones y puntos actuales...", "busy");
-  target.innerHTML = `<p class="muted-empty">Cargando jornada fantasy...</p>`;
+  if (target) target.innerHTML = `<p class="muted-empty">Cargando jornada fantasy...</p>`;
   try {
     const response = await apiFetch("/api/biwenger/live-round");
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "No se pudo cargar la jornada fantasy");
     state.liveRound = payload;
+    state.liveRoundFetchedAt = Date.now();
     state.selectedLiveRoundUserId = Number((payload.teams || [])[0]?.userId || 0);
     state.liveRoundDebug = null;
     renderLiveRound();
+    renderBidSaleAssistant();
+    if (state.biwengerOperations) renderBiwengerOperations();
     if (showFeedback) {
       const pointsText = payload.hasReliablePoints
         ? `${payload.reliablePointsTeams || 0} equipos con puntos confirmados`
         : "Biwenger no expone los puntos de rivales en JSON; se muestra la clasificacion oficial";
       setLeagueOperationStatus(`Ranking provisional actualizado: ${(payload.teams || []).length} equipos, ${payload.lineupsVisible || 0} onces visibles, ${pointsText}.`, "ready");
     }
+    return payload;
   } catch (error) {
-    target.innerHTML = `<p class="muted-empty">${escapeHtml(error.message)}</p>`;
+    if (target) target.innerHTML = `<p class="muted-empty">${escapeHtml(error.message)}</p>`;
     if (showFeedback) setLeagueOperationStatus(error.message, "error");
+    return null;
   }
+};
+
+const ensureLiveRoundForFinance = async (showFeedback = false) => {
+  if (!state.biwenger.connected) return null;
+  if (state.liveRound && Date.now() - Number(state.liveRoundFetchedAt || 0) < 90 * 1000) return state.liveRound;
+  if (state.liveRoundLoading) return state.liveRoundLoading;
+  state.liveRoundLoading = loadLiveRound(showFeedback).finally(() => {
+    state.liveRoundLoading = null;
+  });
+  return state.liveRoundLoading;
 };
 
 const loadLeagueOverview = async () => {
@@ -7714,6 +7801,19 @@ const openLeaguePanel = (panelName) => {
   if (panelName === "assistant") {
     renderBidSaleAssistant();
     if (state.biwenger.connected && !state.biwengerOperations) loadBiwengerOperations(false);
+    if (state.biwenger.connected) {
+      ensureLiveRoundForFinance(false).then(() => {
+        renderBidSaleAssistant();
+      });
+    }
+  }
+  if (panelName === "bids") {
+    if (state.biwenger.connected && !state.biwengerOperations) loadBiwengerOperations(false);
+    if (state.biwenger.connected) {
+      ensureLiveRoundForFinance(false).then(() => {
+        renderBiwengerOperations();
+      });
+    }
   }
   if (panelName === "fixtures" && !state.leagueFixtures) loadLeagueFixtures(false);
   if (panelName === "live-round" && !state.liveRound) loadLiveRound(false);
@@ -8211,6 +8311,7 @@ const initEvents = () => {
     setLeagueOperationStatus("Recalculando asistente diario...", "busy");
     if (state.biwenger.connected) {
       await loadBiwengerOperations(false);
+      await ensureLiveRoundForFinance(false);
       await refreshBiwengerStatus("Asistente sincronizado con Biwenger.");
     }
     renderBidSaleAssistant();

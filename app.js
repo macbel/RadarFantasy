@@ -411,6 +411,12 @@ const parseCurrencyInput = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const moneyAmount = (value) => {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return numeric;
+  return parseCurrencyInput(value);
+};
+
 const formatActivityDate = (value) => {
   if (!value) return "";
   const numeric = Number(value);
@@ -1150,7 +1156,7 @@ const renderMarketPlan = (players) => {
   const limited = players.filter((player) => player.marketDecision?.type === "limited" && !player.exceedsMaximumBid).slice(0, 3);
   const avoid = players.filter((player) => player.marketDecision?.type === "avoid").slice(0, 3);
   const needs = teamNeedPositions().slice(0, 2);
-  const incomingOffers = (state.biwengerOperations?.offers || []).filter((offer) => offer.isIncoming);
+  const incomingOffers = activeIncomingOffers(state.biwengerOperations?.offers || []);
   const balance = Number(state.finance.balance);
   const maximumBid = Number(state.finance.maximumBid);
   const futureBalanceText = Number.isFinite(balance)
@@ -1203,8 +1209,23 @@ const assistantBidBudget = () => {
   return Number.isFinite(maximumBid) && maximumBid > 0 ? maximumBid : Infinity;
 };
 
+const isIncomingOffer = (offer) => {
+  if (!offer || terminalOfferStatuses.has(String(offer.status || "").toLowerCase())) return false;
+  if (offer.isIncoming) return moneyAmount(offer.amount) > 0;
+  if (offer.isMine) return false;
+  const userId = Number(state.biwenger.userId || 0);
+  const fromId = Number(offer.fromId || 0);
+  const toId = Number(offer.toId || 0);
+  if (userId > 0 && toId === userId && fromId !== userId) return moneyAmount(offer.amount) > 0;
+  const source = normalize(`${offer.source || ""} ${offer.offerSource || ""} ${offer.direction || ""} ${offer.type || ""}`);
+  if (/incoming|received|recib|owner/.test(source) && !/outgoing|sent|own-check/.test(source)) return moneyAmount(offer.amount) > 0;
+  const playerId = Number(offer.playerId || 0);
+  if (playerId > 0 && teamPlayerByBiwengerId(playerId)) return moneyAmount(offer.amount) > 0;
+  return false;
+};
+
 const activeIncomingOffers = (offers = state.biwengerOperations?.offers || []) =>
-  offers.filter((offer) => offer.isIncoming && !terminalOfferStatuses.has(String(offer.status || "").toLowerCase()));
+  offers.filter(isIncomingOffer);
 
 const currentLiveRoundOwnTeam = () => {
   const teams = state.liveRound?.teams || [];
@@ -1259,7 +1280,7 @@ const estimatedRoundReward = () => {
 
 const incomingOfferSummary = (incoming = activeIncomingOffers()) => {
   const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
-  const total = incoming.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+  const total = incoming.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   return {
     count: incoming.length,
     total,
@@ -1403,7 +1424,7 @@ const assistantSaleRows = (players = assistantTeamPlayers(), context = {}) => pl
 
 const assistantOfferRows = (incoming, myOffers, futureIncome = 0) => {
   const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
-  const committed = myOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+  const committed = myOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const adjustedBalance = Number.isFinite(balance) ? balance + Number(futureIncome || 0) : balance;
   const targetAmount = Number.isFinite(adjustedBalance) ? Math.max(0, -adjustedBalance, -(adjustedBalance - committed)) : 0;
   const recommended = chooseRecommendedOfferSet(incoming, targetAmount);
@@ -1411,7 +1432,7 @@ const assistantOfferRows = (incoming, myOffers, futureIncome = 0) => {
   return incoming.map((offer) => {
     const metrics = offerSportCost(offer);
     const value = operationCurrentValue(offer);
-    const amount = Number(offer.amount || 0);
+    const amount = moneyAmount(offer.amount);
     const overValueRatio = value > 0 ? (amount - value) / value : 0;
     let action = "Valorar";
     if (recommendedIds.has(offerIdKey(offer)) || (metrics.cost <= 42 && overValueRatio >= 0.03)) action = "Aceptar";
@@ -1447,8 +1468,8 @@ const assistantPlanSnapshot = () => {
   const offerRows = assistantOfferRows(incoming, myOffers, roundReward.amount);
   const recommendedOfferAmount = offerRows
     .filter((row) => row.action === "Aceptar")
-    .reduce((sum, row) => sum + Number(row.amount || 0), 0);
-  const allOfferAmount = incoming.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+    .reduce((sum, row) => sum + moneyAmount(row.amount), 0);
+  const allOfferAmount = incoming.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const saleContext = {
     balanceAfterRoundAndOffers: Number.isFinite(balance)
       ? balance + roundReward.amount + recommendedOfferAmount
@@ -1459,8 +1480,8 @@ const assistantPlanSnapshot = () => {
     .filter((row) => row.sale.action !== "Mantener")
     .reduce((sum, row) => sum + Number(row.sale.suggestedPrice || 0), 0);
   const bidDelta = bids.reduce((sum, row) => sum + Number(row.delta || 0), 0);
-  const bidWinCost = bids.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-  const committedNow = myOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+  const bidWinCost = bids.reduce((sum, row) => sum + moneyAmount(row.amount), 0);
+  const committedNow = myOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   return {
     operations,
     offers,
@@ -1630,7 +1651,7 @@ const executeAssistantPlan = async () => {
   const bidActions = plan.bids.filter((row) =>
     row.action !== "Mantener puja"
     && Number(row.delta || 0) > 0
-    && Number(row.amount || 0) > 0
+    && moneyAmount(row.amount) > 0
     && Number(row.player?.biwengerPlayerId || 0) > 0
     && (!row.plan.blocked || row.plan.hasOwnBid)
   );
@@ -1648,11 +1669,11 @@ const executeAssistantPlan = async () => {
     setLeagueOperationStatus("No hay acciones sugeridas ejecutables en este momento.", "");
     return;
   }
-  const bidTotal = bidActions.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const bidTotal = bidActions.reduce((sum, row) => sum + moneyAmount(row.amount), 0);
   const saleTotal = saleActions.reduce((sum, row) => sum + Number(row.sale.suggestedPrice || 0), 0);
   const acceptTotal = offerActions
     .filter((row) => row.action === "Aceptar")
-    .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    .reduce((sum, row) => sum + moneyAmount(row.amount), 0);
   const rejectCount = offerActions.filter((row) => row.action === "Rechazar").length;
   const warning = [
     "Vas a ejecutar acciones reales en Biwenger.",
@@ -1691,7 +1712,7 @@ const executeAssistantPlan = async () => {
   for (const row of bidActions) {
     await runStep(`puja por ${row.player.name}`, () => postBiwengerAssistantAction("/api/biwenger/bid", {
       playerId: Number(row.player.biwengerPlayerId),
-      amount: Number(row.amount || 0),
+      amount: moneyAmount(row.amount),
       toUserId: Number(row.player.marketOwnerId || 0)
     }));
   }
@@ -2653,7 +2674,7 @@ const teamPlayerByBiwengerId = (playerId) =>
 const isActiveOwnBidOffer = (offer) => {
   if (!offer?.isMine || offer?.isIncoming) return false;
   if (isTerminalOwnBidStatus(offer.status)) return false;
-  if (Number(offer.amount || 0) <= 0) return false;
+  if (moneyAmount(offer.amount) <= 0) return false;
   const playerId = Number(offer.playerId || 0);
   if (playerId <= 0) return false;
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -2714,10 +2735,10 @@ const activeOwnOfferForPlayer = (player) => {
 
 const playerOwnBidAmount = (player) => {
   const activeOffer = activeOwnOfferForPlayer(player);
-  if (activeOffer) return Number(activeOffer.amount || 0);
+  if (activeOffer) return moneyAmount(activeOffer.amount);
   if (Array.isArray(state.biwengerOperations?.offers)) return null;
   if (!player?.hasBid && Number(player?.offerId || 0) <= 0) return null;
-  const amount = Number(player?.myBidAmount ?? player?.bidAmount);
+  const amount = moneyAmount(player?.myBidAmount ?? player?.bidAmount);
   return Number.isFinite(amount) && amount > 0 ? amount : null;
 };
 
@@ -4675,7 +4696,7 @@ const applyBiwengerOperations = (payload) => {
   mergeFinance({
     ...(payload.finance || {}),
     activeBids: activeOffers.length,
-    bidTotal: activeOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0)
+    bidTotal: activeOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0)
   });
   const countMap = payload.marketBidCounts || {};
   const rivalCountMap = payload.marketRivalBidCounts || {};
@@ -4689,8 +4710,8 @@ const applyBiwengerOperations = (payload) => {
       ...player,
       hasBid: Boolean(ownOffer),
       offerId: ownOffer?.offerId || null,
-      myBidAmount: ownOffer ? Number(ownOffer.amount || 0) : null,
-      bidAmount: ownOffer ? Number(ownOffer.amount || 0) : null,
+      myBidAmount: ownOffer ? moneyAmount(ownOffer.amount) : null,
+      bidAmount: ownOffer ? moneyAmount(ownOffer.amount) : null,
       bidCount: count === null || count === undefined ? player.bidCount : Number(count || 0),
       bidCountSource: countSourceMap[playerId] || player.bidCountSource || "",
       myBidStatus: ownOffer?.status || null,
@@ -4789,7 +4810,7 @@ const renderLeagueActivityEntry = (entry = {}) => {
       </div>
       <div class="activity-meta">
         <b>${escapeHtml(directionLabel)}</b>
-        ${Number(entry.amount || 0) > 0 ? `<span>${formatFinanceMoney(entry.amount)}</span>` : ""}
+        ${moneyAmount(entry.amount) > 0 ? `<span>${formatFinanceMoney(moneyAmount(entry.amount))}</span>` : ""}
         <small>${escapeHtml(date || "")}</small>
       </div>
     </article>
@@ -4808,7 +4829,7 @@ const operationCurrentValue = (entry) => {
 };
 
 const renderBidValueComparison = (offer) => {
-  const amount = Number(offer.amount || 0);
+  const amount = moneyAmount(offer.amount);
   const value = operationCurrentValue(offer);
   const difference = amount - value;
   const differenceLabel = difference > 0
@@ -4837,7 +4858,7 @@ const operationPlayerQuality = (entry) => {
 
 const offerSportCost = (offer) => {
   const player = operationPlayerData(offer);
-  const amount = Number(offer.amount || 0);
+  const amount = moneyAmount(offer.amount);
   const value = operationCurrentValue(offer);
   const overValue = amount - value;
   const quality = operationPlayerQuality(offer);
@@ -4862,7 +4883,7 @@ const offerSportCost = (offer) => {
 
 const chooseRecommendedOfferSet = (incoming, targetAmount) => {
   if (!incoming.length || targetAmount <= 0) return [];
-  const decorated = incoming.map((offer) => ({ offer, metrics: offerSportCost(offer), amount: Number(offer.amount || 0) }));
+  const decorated = incoming.map((offer) => ({ offer, metrics: offerSportCost(offer), amount: moneyAmount(offer.amount) }));
   if (decorated.length <= 14) {
     let best = null;
     const totalMasks = 1 << decorated.length;
@@ -4904,8 +4925,8 @@ const renderOfferSimulation = (incoming, myOffers) => {
   state.offerSimulation.selectedOfferIds = state.offerSimulation.selectedOfferIds.filter((id) => validIds.has(id));
   const selectedIds = new Set(state.offerSimulation.selectedOfferIds);
   const selectedOffers = incoming.filter((offer) => selectedIds.has(offerIdKey(offer)));
-  const selectedAmount = selectedOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
-  const committed = myOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+  const selectedAmount = selectedOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
+  const committed = myOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
   const maximumBid = Number(state.biwengerOperations?.finance?.maximumBid ?? state.finance.maximumBid);
   const simulatedBalance = Number.isFinite(balance) ? balance + selectedAmount : null;
@@ -4915,7 +4936,7 @@ const renderOfferSimulation = (incoming, myOffers) => {
   const targetAmount = Number.isFinite(balance) ? Math.max(0, -balance, -(balance - committed)) : 0;
   const recommended = chooseRecommendedOfferSet(incoming, targetAmount);
   const recommendedIds = new Set(recommended.map(offerIdKey));
-  const recommendedAmount = recommended.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+  const recommendedAmount = recommended.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const selectedCost = selectedOffers.reduce((sum, offer) => sum + offerSportCost(offer).cost, 0);
   const recommendedCost = recommended.reduce((sum, offer) => sum + offerSportCost(offer).cost, 0);
   const recommendationText = targetAmount <= 0
@@ -4958,7 +4979,7 @@ const renderOfferSimulation = (incoming, myOffers) => {
               <input class="offer-sim-checkbox" type="checkbox" value="${escapeHtml(id)}" ${selected ? "checked" : ""} />
               ${renderOperationIdentity(offer)}
               <span class="offer-simulation-copy">
-                <small>${formatFinanceMoney(offer.amount)} · ${metrics.overValue >= 0 ? "sobre valor" : "bajo valor"} ${formatSignedMoney(metrics.overValue)} · ${POSITION_NAMES[metrics.position] || metrics.position} · ${metrics.label}${recommendedIds.has(id) ? " · propuesta" : ""}</small>
+                <small>${formatFinanceMoney(moneyAmount(offer.amount))} · ${metrics.overValue >= 0 ? "sobre valor" : "bajo valor"} ${formatSignedMoney(metrics.overValue)} · ${POSITION_NAMES[metrics.position] || metrics.position} · ${metrics.label}${recommendedIds.has(id) ? " · propuesta" : ""}</small>
               </span>
             </label>
           `;
@@ -4980,7 +5001,7 @@ const renderBiwengerOperations = () => {
   const offers = operations.offers || [];
   const myOffers = activeOwnBidOffers(offers);
   const incoming = activeIncomingOffers(offers);
-  const committed = myOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+  const committed = myOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const balance = Number(operations.finance?.balance ?? state.finance.balance);
   const future = Number.isFinite(balance) ? balance - committed : null;
   const incomingSummary = incomingOfferSummary(incoming);
@@ -5013,8 +5034,13 @@ const renderBiwengerOperations = () => {
         ${renderOperationIdentity(offer)}
         <div class="operation-comparison">
           <span>${escapeHtml(offer.fromName || "Rival")} ofrece</span>
-          <strong>${formatFinanceMoney(offer.amount)}</strong>
-          <small>Valor actual ${formatFinanceMoney(operationCurrentValue(offer))} · <b class="${offer.amount - operationCurrentValue(offer) >= 0 ? "positive" : "negative"}">${offer.amount - operationCurrentValue(offer) > 0 ? `Sobre valor ${formatFinanceMoney(offer.amount - operationCurrentValue(offer))}` : (offer.amount - operationCurrentValue(offer) < 0 ? `Bajo valor ${formatFinanceMoney(Math.abs(offer.amount - operationCurrentValue(offer)))}` : "Igual al valor")}</b></small>
+          <strong>${formatFinanceMoney(moneyAmount(offer.amount))}</strong>
+          ${(() => {
+            const amount = moneyAmount(offer.amount);
+            const value = operationCurrentValue(offer);
+            const diff = amount - value;
+            return `<small>Valor actual ${formatFinanceMoney(value)} · <b class="${diff >= 0 ? "positive" : "negative"}">${diff > 0 ? `Sobre valor ${formatFinanceMoney(diff)}` : (diff < 0 ? `Bajo valor ${formatFinanceMoney(Math.abs(diff))}` : "Igual al valor")}</b></small>`;
+          })()}
         </div>
         <label class="offer-row-sim"><input class="offer-sim-checkbox" type="checkbox" value="${escapeHtml(offerIdKey(offer))}" ${state.offerSimulation.selectedOfferIds.includes(offerIdKey(offer)) ? "checked" : ""} /> Simular</label>
         <button class="ghost-button offer-response" type="button" data-offer-id="${offer.offerId}" data-status="accepted">Aceptar</button>
@@ -5095,7 +5121,7 @@ const renderBiwengerOperations = () => {
     const incomingNow = activeIncomingOffers(state.biwengerOperations?.offers || []);
     const myOffersNow = activeOwnBidOffers(state.biwengerOperations?.offers || []);
     const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
-    const committed = myOffersNow.reduce((sum, offer) => sum + Number(offer.amount || 0), 0);
+    const committed = myOffersNow.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
     const reward = estimatedRoundReward().amount;
     const targetAmount = Number.isFinite(balance) ? Math.max(0, -(balance + reward), -(balance + reward - committed)) : 0;
     state.offerSimulation.selectedOfferIds = chooseRecommendedOfferSet(incomingNow, targetAmount).map(offerIdKey);
@@ -5984,7 +6010,7 @@ const renderRivalAnalysis = (analysis) => `
         ${analysis.tradeSummary.transactions.slice(0, 5).map((trade) => `
           <span>
             ${trade.direction === "buy" ? "Compra" : "Venta"} · ${escapeHtml(trade.playerName || "Jugador")}
-            <b>${formatFinanceMoney(Number(trade.amount || 0))}</b>
+            <b>${formatFinanceMoney(moneyAmount(trade.amount))}</b>
             ${Number.isFinite(Number(trade.overbid)) ? `<em>${Number(trade.overbid) >= 0 ? "+" : ""}${formatFinanceMoney(Number(trade.overbid))} vs valor</em>` : ""}
           </span>
         `).join("")}
@@ -6858,7 +6884,7 @@ const renderFinance = () => {
   const ownBids = authoritativeOffers || state.players.filter((player) => playerHasOwnBid(player));
   const activeBids = ownBids.length;
   const bidTotal = authoritativeOffers
-    ? authoritativeOffers.reduce((sum, offer) => sum + Number(offer.amount || 0), 0)
+    ? authoritativeOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0)
     : ownBids.reduce((sum, player) => sum + Number(playerOwnBidAmount(player) || 0), 0);
   const futureBalance = Number.isFinite(state.finance.balance) ? state.finance.balance - bidTotal : null;
   const teamRevaluation = state.teamPlayers.reduce((sum, player) => {
@@ -7439,7 +7465,7 @@ const renderTeam = () => {
   if (!roster || !countsEl) return;
   renderFinance();
   applyFutbolFantasySession(state.futbolFantasy);
-  const incomingOffers = (state.biwengerOperations?.offers || []).filter((offer) => offer.isIncoming);
+  const incomingOffers = activeIncomingOffers(state.biwengerOperations?.offers || []);
 
   const counts = teamPositionCounts();
   countsEl.innerHTML = Object.entries(SQUAD_TARGETS).map(([position, target]) => {

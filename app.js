@@ -1260,6 +1260,8 @@ const saleUrgencyForPlayer = (player) => {
   const valueDiff = Number(player.biwengerDiff ?? player.sourceSummary?.fantasy?.biwengerDiff ?? 0);
   const balance = Number(state.finance.balance);
   const negativePressure = Number.isFinite(balance) && balance < 0 ? 14 : 0;
+  const immediateRisk = noNextMatch || player.health?.status === "suspended" || player.health?.status === "injured";
+  const protectHotStreak = recent.hot && !immediateRisk;
   let score = 18 + negativePressure;
   score += surplus * 14;
   score += Math.max(0, 72 - quality) * 0.55;
@@ -1272,12 +1274,13 @@ const saleUrgencyForPlayer = (player) => {
   if (valueDiff < 0) score += Math.min(14, Math.abs(valueDiff) / Math.max(value, 1) * 120);
   if (positionCount <= target && quality >= 72) score -= 18;
   if (recent.hot && quality >= 76) score -= 14;
+  if (protectHotStreak) score = Math.min(score - 28, 46);
   const multiplier = score >= 74
-    ? (negativePressure ? 0.98 : 1.02)
+    ? (negativePressure ? 1 : 1.04)
     : score >= 58
-      ? 1.06
+      ? 1.08
       : 1.12;
-  const suggestedPrice = roundBidAmount(Math.max(value * 0.9, value * multiplier));
+  const suggestedPrice = roundSaleAmount(Math.max(value, value * multiplier));
   return {
     score: Math.round(clamp(score)),
     value,
@@ -1289,7 +1292,7 @@ const saleUrgencyForPlayer = (player) => {
     reason: [
       surplus > 0 ? `sobran ${surplus} en ${player.position}` : null,
       `${Math.round(quality)}/100 once`,
-      recent.label,
+      protectHotStreak ? `${recent.label}: proteger` : recent.label,
       noNextMatch ? "sin proximo partido" : null,
       valueDiff < 0 ? `valor ${formatSignedMoney(valueDiff)}` : null,
       negativePressure ? "necesitas liquidez" : null
@@ -1299,7 +1302,7 @@ const saleUrgencyForPlayer = (player) => {
 
 const assistantSaleRows = (players = assistantTeamPlayers()) => players
   .map((player) => ({ player, sale: saleUrgencyForPlayer(player) }))
-  .filter((row) => row.sale.score >= 48 && Number(row.sale.value || 0) > 0)
+  .filter((row) => row.sale.action !== "Mantener" && row.sale.score >= 54 && Number(row.sale.value || 0) > 0)
   .sort((a, b) => b.sale.score - a.sale.score || b.sale.value - a.sale.value)
   .slice(0, 6);
 
@@ -2462,6 +2465,12 @@ const roundBidAmount = (value) => {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric) || numeric <= 0) return 0;
   return Math.max(0, Math.round(numeric / 10000) * 10000);
+};
+
+const roundSaleAmount = (value) => {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.max(0, Math.ceil(numeric / 10000) * 10000);
 };
 
 const decisionLabels = {

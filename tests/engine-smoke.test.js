@@ -280,6 +280,67 @@ if (safeOwnOffers.length !== 1 || safeOwnOffers[0].playerId !== 501 || safeOwnOf
   throw new Error("Own bid filter must drop expired, owned-player and duplicate stale offers: " + JSON.stringify(safeOwnOffers));
 }
 
+state.finance.balance = -4000000;
+state.teamPlayers = hydrateImportedPlayers([
+  {
+    id: "team-hot-sale-1",
+    biwengerPlayerId: 901,
+    name: "Jugador en racha",
+    team: "Mi equipo",
+    position: "DL",
+    price: 11150000,
+    biwengerValue: 11150000,
+    starter: 84,
+    form: 88,
+    asScore: 84,
+    sofascore: 86,
+    stats: 84,
+    risk: "low",
+    sourceStatus: "live",
+    dataConfidence: 88,
+    sourceSummary: {
+      recentMatches: [
+        { provider: "biwenger", points: { biwenger: 8, mixed: 8 }, minutes: 83 },
+        { provider: "biwenger", points: { biwenger: 9, mixed: 9 }, minutes: 90 },
+        { provider: "biwenger", points: { biwenger: 7, mixed: 7 }, minutes: 76 }
+      ]
+    }
+  },
+  { id: "team-sale-dl-2", biwengerPlayerId: 902, name: "Delantero suplente 1", team: "Mi equipo", position: "DL", price: 1800000, biwengerValue: 1800000, starter: 24, form: 30, sourceStatus: "live", sourceSummary: { recentMatches: [{ provider: "biwenger", points: { biwenger: 0, mixed: 0 } }, { provider: "biwenger", points: { biwenger: 0, mixed: 0 } }, { provider: "biwenger", points: { biwenger: 0, mixed: 0 } }] } },
+  { id: "team-sale-dl-3", biwengerPlayerId: 903, name: "Delantero suplente 2", team: "Mi equipo", position: "DL", price: 1700000, biwengerValue: 1700000, starter: 22, form: 28, sourceStatus: "live", sourceSummary: { recentMatches: [{ provider: "biwenger", points: { biwenger: 0, mixed: 0 } }, { provider: "biwenger", points: { biwenger: 0, mixed: 0 } }, { provider: "biwenger", points: { biwenger: 0, mixed: 0 } }] } },
+  { id: "team-sale-dl-4", biwengerPlayerId: 904, name: "Delantero suplente 3", team: "Mi equipo", position: "DL", price: 1600000, biwengerValue: 1600000, starter: 20, form: 26, sourceStatus: "live", sourceSummary: { recentMatches: [{ provider: "biwenger", points: { biwenger: 0, mixed: 0 } }, { provider: "biwenger", points: { biwenger: 0, mixed: 0 } }, { provider: "biwenger", points: { biwenger: 0, mixed: 0 } }] } },
+  { id: "team-sale-dl-5", biwengerPlayerId: 905, name: "Delantero suplente 4", team: "Mi equipo", position: "DL", price: 1500000, biwengerValue: 1500000, starter: 18, form: 24, sourceStatus: "live", sourceSummary: { recentMatches: [{ provider: "biwenger", points: { biwenger: 0, mixed: 0 } }, { provider: "biwenger", points: { biwenger: 0, mixed: 0 } }, { provider: "biwenger", points: { biwenger: 0, mixed: 0 } }] } }
+]);
+const saleRows = assistantSaleRows();
+if (saleRows.some((row) => row.player.name === "Jugador en racha")) {
+  throw new Error("Hot streak player should not be recommended for sale: " + JSON.stringify(saleRows));
+}
+const hotSale = saleUrgencyForPlayer(assistantTeamPlayers().find((player) => player.name === "Jugador en racha"));
+if (hotSale.action !== "Mantener" || hotSale.suggestedPrice < hotSale.value) {
+  throw new Error("Hot streak sale advice should protect player and keep sale price above market value: " + JSON.stringify(hotSale));
+}
+const urgentSale = saleUrgencyForPlayer({
+  id: "urgent-sale-price",
+  name: "Venta urgente",
+  team: "Mi equipo",
+  position: "MC",
+  price: 5555000,
+  biwengerValue: 5555000,
+  lineupScore: 35,
+  recommendation: 35,
+  health: { status: "injured" },
+  sourceSummary: {
+    recentMatches: [
+      { provider: "biwenger", points: { biwenger: 0, mixed: 0 } },
+      { provider: "biwenger", points: { biwenger: 0, mixed: 0 } },
+      { provider: "biwenger", points: { biwenger: 0, mixed: 0 } }
+    ]
+  }
+});
+if (urgentSale.action === "Mantener" || urgentSale.suggestedPrice < urgentSale.value) {
+  throw new Error("Urgent sale price must not go below market value: " + JSON.stringify(urgentSale));
+}
+
 console.log(JSON.stringify({
   players: analyzed.length,
   ocrPlayers: ocrPlayers.length,

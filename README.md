@@ -1,6 +1,6 @@
-# Fantasy Market Scout
+# Radar Fantasy
 
-App para analizar mercado fantasy de Biwenger con OCR, ranking de fichajes y apoyo de fuentes como SofaScore y FutbolFantasy.
+App para analizar mercados fantasy, empezando por Biwenger, con ranking de fichajes y apoyo de fuentes como SofaScore, FutbolFantasy y API-Football.
 
 ## Modos de uso
 

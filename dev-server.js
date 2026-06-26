@@ -1362,7 +1362,7 @@ loadLeaguesDb();
 ensureDefaultLeague();
 
 server.listen(port, host, () => {
-  console.log(`Fantasy Market Scout listo en http://${host}:${port}/index.html`);
+  console.log(`Radar Fantasy listo en http://${host}:${port}/index.html`);
   if (publicOrigin) console.log(`Origen publico API: ${publicOrigin}`);
   console.log(`Base local de fuentes: ${playerDbPath}`);
   console.log(`Base local de ligas: ${leaguesDbPath}`);

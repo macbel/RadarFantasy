@@ -1,6 +1,6 @@
 {
   "appId": "com.fantasymarketscout.app",
-  "appName": "Fantasy Market Scout",
+  "appName": "Radar Fantasy",
   "webDir": "mobile-web",
   "bundledWebRuntime": false,
   "server": {

@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Fantasy Market Scout</string>
-    <string name="title_activity_main">Fantasy Market Scout</string>
+    <string name="app_name">Radar Fantasy</string>
+    <string name="title_activity_main">Radar Fantasy</string>
     <string name="package_name">com.fantasymarketscout.app</string>
     <string name="custom_url_scheme">com.fantasymarketscout.app</string>
 </resources>

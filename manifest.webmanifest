@@ -1,7 +1,7 @@
 {
-  "name": "Radar Biwenger",
-  "short_name": "Radar",
-  "description": "Mercado, plantilla y recomendacion de fichajes para Biwenger.",
+  "name": "Radar Fantasy",
+  "short_name": "Radar Fantasy",
+  "description": "Mercado, plantilla y recomendacion de fichajes fantasy.",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#071318",

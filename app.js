@@ -1915,7 +1915,15 @@ const resolveDecisionHistoryPlayer = (row = {}) => {
     competitionPoints: current?.competitionPoints ?? row.competitionPoints ?? row.points ?? 0,
     points: current?.points ?? row.points ?? 0,
     recommendation: current?.recommendation ?? row.recommendation ?? 0,
-    starter: current?.starter ?? row.starter ?? 0
+    starter: current?.starter ?? row.starter ?? 0,
+    recentForm: current?.recentForm || row.recentForm || recentFormProfile({
+      ...row,
+      sourceSummary: {
+        ...(row.sourceSummary || {}),
+        recentMatches: Array.isArray(row.sourceSummary?.recentMatches) ? row.sourceSummary.recentMatches : []
+      }
+    }),
+    marketDecision: current?.marketDecision || row.marketDecision || null
   };
 };
 
@@ -1956,6 +1964,9 @@ const recordDecisionHistory = (players) => {
       starter: player.starter,
       confidence: analysisConfidence(player).score,
       media: player.media || {},
+      recentForm: player.recentForm || null,
+      nextMatch: nextMatchPlainText(player),
+      marketDecision: player.marketDecision || null,
       sourceSummary: {
         ...(player.sourceSummary || {}),
         recentMatches: Array.isArray(player.sourceSummary?.recentMatches) ? player.sourceSummary.recentMatches.slice(-5) : []
@@ -1984,6 +1995,7 @@ const renderDecisionHistoryPanel = () => {
     const label = Number.isNaN(date.getTime()) ? "" : date.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
     const player = top ? resolveDecisionHistoryPlayer(top) : null;
     const currentMarketPlayer = player ? state.players.find((itemPlayer) => itemPlayer.id === player.id) : null;
+    const nextMatchMarkup = player ? renderNextMatch(player, true) : "";
     return `
       <div class="history-row history-player-row ${currentMarketPlayer ? "clickable" : ""}" ${currentMarketPlayer ? `data-player-id="${escapeHtml(currentMarketPlayer.id)}"` : ""}>
         <span class="history-date">${escapeHtml(label)}</span>
@@ -1997,7 +2009,7 @@ const renderDecisionHistoryPanel = () => {
             ${top ? `<b>${escapeHtml(top.decision || "decision")}</b>` : ""}
             ${delta === null ? "" : `<b>${delta >= 0 ? "+" : ""}${delta}</b>`}
           </small>
-          ${player ? `<small class="history-next-match">${renderNextMatch(player, true)}</small>` : `<small>Sin jugadores</small>`}
+          ${player ? `<small class="history-next-match">${nextMatchMarkup || escapeHtml(top?.nextMatch || "Sin partido localizado")}</small>` : `<small>Sin jugadores</small>`}
         </div>
       </div>
     `;

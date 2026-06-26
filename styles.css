@@ -1623,6 +1623,20 @@ tr.over-maximum-bid td,
   min-width: 0;
 }
 
+.history-meta .position-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 38px;
+  width: 38px;
+  min-width: 38px;
+  max-width: 38px;
+  height: 24px;
+  min-height: 24px;
+  line-height: 1;
+  text-align: center;
+}
+
 .history-meta b {
   color: var(--muted);
   font-size: 11px;
@@ -2277,6 +2291,7 @@ tbody tr.selected .player-cell span {
 .operation-player .player-name-line,
 .strategy-player .player-name-line,
 .decision-player .player-name-line,
+.history-player-row .player-name-line,
 .top-five-card .player-name-line,
 .compare-card .player-name-line,
 .assistant-player .player-name-line,
@@ -2296,6 +2311,7 @@ tbody tr.selected .player-cell span {
 .operation-player .recent-form-dots,
 .strategy-player .recent-form-dots,
 .decision-player .recent-form-dots,
+.history-player-row .recent-form-dots,
 .top-five-card .recent-form-dots,
 .compare-card .recent-form-dots,
 .detail-title .recent-form-dots,
@@ -2314,6 +2330,7 @@ tbody tr.selected .player-cell span {
 .operation-player .recent-dot,
 .strategy-player .recent-dot,
 .decision-player .recent-dot,
+.history-player-row .recent-dot,
 .top-five-card .recent-dot,
 .compare-card .recent-dot,
 .lineup-player .recent-dot,
@@ -4224,6 +4241,7 @@ body.sheet-open {
 .player-cell .scoring-badge,
 .strategy-player .scoring-badge,
 .decision-player .scoring-badge,
+.history-player-row .scoring-badge,
 .top-five-card .scoring-badge,
 .compare-card .scoring-badge,
 .detail-title .scoring-badge,

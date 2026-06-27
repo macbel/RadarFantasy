@@ -52,6 +52,7 @@
   offerSimulation: {
     selectedOfferIds: []
   },
+  teamAlerts: [],
   recommendedLineup: null,
   editableLineup: null,
   competition: "club",
@@ -89,6 +90,7 @@ const LOCAL_LEAGUES_KEY = "fantasy-market-scout.leagues.v1";
 const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
+const TEAM_ALERTS_READ_KEY = "radar-fantasy.team-alerts-read.v1";
 let lastDecisionHistorySignature = "";
 const trimTrailingSlash = (value) => String(value || "").replace(/\/+$/, "");
 const currentProtocol = window.location?.protocol || "http:";
@@ -2537,6 +2539,185 @@ const renderHealthBadge = (player) => {
   const health = player.health || {};
   const title = [meta.label, health.detail, health.expectedReturn].filter(Boolean).join(" - ");
   return `<span class="health-badge ${meta.className}" title="${escapeHtml(title)}"><b>${meta.mark}</b><span>${escapeHtml(meta.label)}</span></span>`;
+};
+
+const readTeamAlertsState = () => {
+  try {
+    return JSON.parse(window.localStorage.getItem(TEAM_ALERTS_READ_KEY) || "{}") || {};
+  } catch (error) {
+    return {};
+  }
+};
+
+const writeTeamAlertsState = (value) => {
+  try {
+    window.localStorage.setItem(TEAM_ALERTS_READ_KEY, JSON.stringify(value));
+  } catch (error) {
+    // Alertas still work in memory when private browsing blocks storage.
+  }
+};
+
+const explicitPlayerStatusText = (player) => [
+  player.statusText,
+  player.note,
+  player.health?.label,
+  player.health?.detail,
+  player.health?.expectedReturn,
+  ...(player.riskReasons || []),
+  player.sourceSummary?.fantasy?.lineupStatus,
+  player.sourceSummary?.fantasy?.availability,
+  player.sourceSummary?.fantasy?.predictionText
+].filter(Boolean).join(" ");
+
+const playerTeamAlert = (player, lineupIds) => {
+  const health = player.health || {};
+  const status = String(health.status || "unknown").toLowerCase();
+  const statusText = normalize(explicitPlayerStatusText(player));
+  const fantasy = player.sourceSummary?.fantasy || {};
+  const identity = player.sourceSummary?.identity || {};
+  const inLineup = lineupIds.has(String(player.id)) || lineupIds.has(String(player.biwengerPlayerId || ""));
+  const confirmedNonStarter = fantasy.confirmedStarter === false
+    || ["bench", "substitute", "not-starting", "non-starter", "out"].includes(String(fantasy.lineupStatus || "").toLowerCase())
+    || /no titular confirmado|suplente confirmado|descartado|fuera de la convocatoria|no convocado/.test(statusText);
+  const outsideCompetition = player.outOfCompetition === true
+    || player.activeInCompetition === false
+    || identity.competitionMismatch === true
+    || /fuera de (la )?(competicion|liga)|abandona (la )?(competicion|liga)|ya no (juega|pertenece) (en|a)|traspasado a otra (liga|competicion)/.test(statusText);
+
+  let kind = "";
+  let title = "";
+  let message = "";
+  let priority = 0;
+
+  if (status === "suspended") {
+    kind = "suspended";
+    title = "Sancionado para el próximo partido";
+    message = health.detail || "No estará disponible por sanción o acumulación de tarjetas.";
+    priority = 100;
+  } else if (status === "injured") {
+    kind = "injured";
+    title = "Jugador lesionado";
+    message = [health.detail, health.expectedReturn ? `Regreso previsto: ${health.expectedReturn}` : ""].filter(Boolean).join(" · ") || "Revisa su parte médico antes de mantenerlo en el once.";
+    priority = 95;
+  } else if (outsideCompetition) {
+    kind = "outside";
+    title = "Fuera de la competición";
+    message = "Las fuentes indican que ya no pertenece a la competición de esta liga.";
+    priority = 92;
+  } else if (confirmedNonStarter) {
+    kind = "nonstarter";
+    title = "No será titular";
+    message = "Las fuentes lo sitúan fuera del once inicial del próximo partido.";
+    priority = 82;
+  } else if (status === "doubtful") {
+    kind = "doubtful";
+    title = "Duda para el próximo partido";
+    message = [health.detail, health.expectedReturn].filter(Boolean).join(" · ") || "Su disponibilidad todavía no está confirmada.";
+    priority = 72;
+  }
+
+  if (!kind) return null;
+  if (inLineup) {
+    title = `Cambio recomendado en tu once: ${title.toLowerCase()}`;
+    priority += 30;
+  }
+  return {
+    id: `${player.biwengerPlayerId || player.id}:${kind}`,
+    player,
+    kind,
+    title,
+    message,
+    priority,
+    inLineup
+  };
+};
+
+const buildTeamAlerts = () => {
+  const lineupIds = new Set((state.editableLineup?.playerIds || []).map(String));
+  return state.teamPlayers
+    .map(playerForCompetition)
+    .map((player) => playerTeamAlert(player, lineupIds))
+    .filter(Boolean)
+    .sort((a, b) => b.priority - a.priority || a.player.name.localeCompare(b.player.name, "es"));
+};
+
+const teamAlertsSignature = (alerts) => alerts.map((alert) => `${alert.id}:${alert.inLineup ? 1 : 0}`).join("|");
+
+const renderTeamAlerts = () => {
+  const button = qs("#team-alerts-button");
+  const count = qs("#team-alerts-count");
+  const list = qs("#team-alerts-list");
+  const summary = qs("#team-alerts-summary");
+  if (!button || !count || !list || !summary) return;
+
+  state.teamAlerts = buildTeamAlerts();
+  const signature = teamAlertsSignature(state.teamAlerts);
+  const readState = readTeamAlertsState();
+  const leagueKey = String(state.activeLeagueId || "default");
+  const unread = Boolean(signature && readState[leagueKey] !== signature);
+  const lineupAlerts = state.teamAlerts.filter((alert) => alert.inLineup).length;
+
+  button.classList.toggle("has-alerts", state.teamAlerts.length > 0);
+  button.classList.toggle("unread", unread);
+  button.setAttribute("aria-label", state.teamAlerts.length
+    ? `${state.teamAlerts.length} alertas de mi equipo${unread ? " sin revisar" : ""}`
+    : "Sin alertas en mi equipo");
+  count.hidden = state.teamAlerts.length === 0;
+  count.textContent = String(state.teamAlerts.length);
+  summary.innerHTML = state.teamAlerts.length
+    ? `<strong>${state.teamAlerts.length} aviso${state.teamAlerts.length === 1 ? "" : "s"}</strong><span>${lineupAlerts ? `${lineupAlerts} afecta${lineupAlerts === 1 ? "" : "n"} a tu once actual.` : "Ninguno afecta al once actual."}</span>`
+    : `<strong>Plantilla sin incidencias</strong><span>No hay lesiones, sanciones ni bajas confirmadas detectadas.</span>`;
+  list.innerHTML = state.teamAlerts.length ? state.teamAlerts.map((alert) => `
+    <article class="team-alert-row ${alert.kind} ${alert.inLineup ? "lineup" : ""}">
+      ${renderPlayerMedia(alert.player, "sm")}
+      <div class="team-alert-copy">
+        <div class="player-name-line"><strong>${escapeHtml(alert.player.name)}</strong>${renderRecentFormDots(alert.player)}</div>
+        <span>${renderPositionBadge(alert.player.position)} ${escapeHtml(alert.title)}</span>
+        <p>${escapeHtml(alert.message)}</p>
+      </div>
+      <button class="ghost-button team-alert-action" type="button" data-team-alert-player="${escapeHtml(alert.player.id)}" data-team-alert-lineup="${alert.inLineup ? "1" : "0"}">
+        ${alert.inLineup ? "Corregir once" : "Ver jugador"}
+      </button>
+    </article>
+  `).join("") : `<p class="muted-empty">Tu equipo no presenta avisos relevantes con los datos disponibles.</p>`;
+
+  list.querySelectorAll("[data-team-alert-player]").forEach((action) => action.addEventListener("click", () => {
+    const playerId = action.dataset.teamAlertPlayer;
+    const targetsLineup = action.dataset.teamAlertLineup === "1";
+    closeTeamAlerts();
+    openView("team");
+    window.requestAnimationFrame(() => {
+      const target = targetsLineup
+        ? qs("#lineup-output")
+        : qsa("[data-team-player-id]").find((row) => String(row.dataset.teamPlayerId) === String(playerId));
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.classList.add("attention-target");
+      window.setTimeout(() => target?.classList.remove("attention-target"), 1800);
+    });
+  }));
+};
+
+const openTeamAlerts = () => {
+  renderTeamAlerts();
+  const modal = qs("#team-alerts-modal");
+  const button = qs("#team-alerts-button");
+  if (!modal || !button) return;
+  modal.hidden = false;
+  document.body.classList.add("modal-open");
+  button.setAttribute("aria-expanded", "true");
+  const readState = readTeamAlertsState();
+  readState[String(state.activeLeagueId || "default")] = teamAlertsSignature(state.teamAlerts);
+  writeTeamAlertsState(readState);
+  button.classList.remove("unread");
+  qs("#close-team-alerts")?.focus();
+};
+
+const closeTeamAlerts = () => {
+  const modal = qs("#team-alerts-modal");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  document.body.classList.remove("modal-open");
+  qs("#team-alerts-button")?.setAttribute("aria-expanded", "false");
 };
 
 const slugifyPublic = (value) => normalize(value).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -7754,6 +7935,7 @@ const renderTeam = () => {
   if (!state.teamPlayers.length) {
     roster.innerHTML = `<p class="muted-empty">Carga tu equipo para ajustar las recomendaciones del mercado.</p>`;
     renderBidSaleAssistant();
+    renderTeamAlerts();
     return;
   }
 
@@ -7779,7 +7961,7 @@ const renderTeam = () => {
             const incomingOffer = incomingByPlayerId.get(Number(player.biwengerPlayerId || 0));
             const hasOffer = Boolean(incomingOffer);
             return `
-          <div class="mini-player-row">
+          <div class="mini-player-row" data-team-player-id="${escapeHtml(player.id)}">
         ${renderPlayerMedia(player, "sm")}
             <div>
               <div class="player-name-line"><strong>${escapeHtml(player.name)}</strong>${renderRecentFormDots(player)}</div>
@@ -7805,6 +7987,7 @@ const renderTeam = () => {
     if (offerRow) offerRow.scrollIntoView({ behavior: "smooth", block: "center" });
   }));
   renderBidSaleAssistant();
+  renderTeamAlerts();
 };
 
 const lineupPlayerScore = (player) => {
@@ -8009,12 +8192,14 @@ const renderLineup = () => {
 
   if (!state.teamPlayers.length) {
     output.innerHTML = `<p class="muted-empty">Guarda tu equipo y calcula el once ideal para ver formacion, titulares y alertas.</p>`;
+    renderTeamAlerts();
     return;
   }
 
   const best = calculateBestLineup();
   if (!best) {
     output.innerHTML = `<p class="muted-empty">No hay suficientes datos para calcular alineacion.</p>`;
+    renderTeamAlerts();
     return;
   }
   state.recommendedLineup = best;
@@ -8143,6 +8328,7 @@ const renderLineup = () => {
     saveActiveLeague();
   }));
   output.querySelector(".send-lineup-biwenger")?.addEventListener("click", sendEditableLineup);
+  renderTeamAlerts();
 };
 
 const sendEditableLineup = async () => {
@@ -8718,12 +8904,18 @@ const initEvents = () => {
   });
   qs("#close-market-detail").addEventListener("click", closeMobileDetail);
   qs("#close-market-detail-backdrop").addEventListener("click", closeMobileDetail);
+  qs("#team-alerts-button")?.addEventListener("click", openTeamAlerts);
+  qs("#close-team-alerts")?.addEventListener("click", closeTeamAlerts);
+  qs("#team-alerts-backdrop")?.addEventListener("click", closeTeamAlerts);
   qs("#close-fixture-video")?.addEventListener("click", closeFixtureVideo);
   qs("#fixture-video-backdrop")?.addEventListener("click", closeFixtureVideo);
   document.addEventListener("click", handleRecentDotInteraction, true);
   document.addEventListener("mouseover", handleRecentDotHover, true);
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeRecentFormPopover();
+    if (event.key === "Escape") {
+      closeRecentFormPopover();
+      closeTeamAlerts();
+    }
   });
   window.addEventListener("resize", () => {
     if (!isCompactMarketLayout()) closeMobileDetail();

@@ -341,6 +341,22 @@ if (urgentSale.action === "Mantener" || urgentSale.suggestedPrice < urgentSale.v
   throw new Error("Urgent sale price must not go below market value: " + JSON.stringify(urgentSale));
 }
 
+state.editableLineup = { formationName: "4-4-2", playerIds: ["alert-injured"] };
+state.teamPlayers = hydrateImportedPlayers([
+  { id: "alert-injured", name: "Lesionado titular", team: "Espana", position: "DF", health: { status: "injured", detail: "Baja muscular" } },
+  { id: "alert-suspended", name: "Sancionado", team: "Espana", position: "MC", health: { status: "suspended", detail: "Acumulacion de tarjetas" } },
+  { id: "alert-doubtful", name: "Jugador duda", team: "Espana", position: "DL", health: { status: "doubtful" } },
+  { id: "alert-bench", name: "Suplente confirmado", team: "Espana", position: "MC", sourceSummary: { fantasy: { lineupStatus: "bench" } } },
+  { id: "alert-low-estimate", name: "Titularidad baja estimada", team: "Espana", position: "MC", starter: 5 }
+]);
+const teamAlerts = buildTeamAlerts();
+if (teamAlerts.length !== 4 || teamAlerts[0].player.id !== "alert-injured" || !teamAlerts[0].inLineup) {
+  throw new Error("Team alert priority or incident detection failed: " + JSON.stringify(teamAlerts));
+}
+if (teamAlerts.some((alert) => alert.player.id === "alert-low-estimate")) {
+  throw new Error("Low estimated starter probability must not become a confirmed team alert");
+}
+
 console.log(JSON.stringify({
   players: analyzed.length,
   ocrPlayers: ocrPlayers.length,

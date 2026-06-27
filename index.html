@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#081317" />
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=41" />
+    <link rel="stylesheet" href="styles.css?v=42" />
   </head>
   <body>
     <div class="app-shell">
@@ -109,6 +109,10 @@
             <h2>Ranking de fichajes</h2>
           </div>
           <div class="topbar-actions">
+            <button class="icon-button team-alerts-button" type="button" id="team-alerts-button" aria-label="Abrir alertas de mi equipo" title="Alertas de mi equipo" aria-haspopup="dialog" aria-controls="team-alerts-modal">
+              <span class="icon icon-bell" aria-hidden="true"></span>
+              <span class="team-alerts-count" id="team-alerts-count" hidden>0</span>
+            </button>
             <button class="ghost-button" type="button" id="sync-biwenger">
               <span class="icon icon-refresh" aria-hidden="true"></span>
               Biwenger
@@ -932,6 +936,23 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
 
     <div id="recent-form-popover" class="recent-form-popover" role="dialog" aria-live="polite" hidden></div>
 
+    <div id="team-alerts-modal" class="team-alerts-modal" hidden>
+      <button class="team-alerts-backdrop" type="button" id="team-alerts-backdrop" aria-label="Cerrar alertas"></button>
+      <section class="team-alerts-dialog" role="dialog" aria-modal="true" aria-labelledby="team-alerts-title">
+        <header class="team-alerts-header">
+          <div>
+            <p class="eyebrow">Mi equipo</p>
+            <h3 id="team-alerts-title">Alertas de plantilla</h3>
+          </div>
+          <button class="icon-button" type="button" id="close-team-alerts" aria-label="Cerrar alertas">
+            <span class="icon icon-clear" aria-hidden="true"></span>
+          </button>
+        </header>
+        <div class="team-alerts-summary" id="team-alerts-summary"></div>
+        <div class="team-alerts-list" id="team-alerts-list"></div>
+      </section>
+    </div>
+
     <div id="fixture-video-modal" class="video-modal" hidden>
       <button class="video-modal-backdrop" type="button" id="fixture-video-backdrop" aria-label="Cerrar video"></button>
       <div class="video-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="fixture-video-title">
@@ -957,6 +978,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=11"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=59"></script>
+    <script src="app.js?v=60"></script>
   </body>
 </html>

@@ -1,22 +1,22 @@
-# Version 2.7.1
+# Version 2.8.0
 
-Fecha de cierre: 2026-06-26
+Fecha de cierre: 2026-06-27
 
 ## Alcance
 
 - Web app de mercado fantasy multiplataforma, empezando por Biwenger.
 - API PHP para hosting compartido.
 - Empaquetado Android/iOS con Capacitor.
-- APK debug local: `Radar-Fantasy-Android-v2.7.1.apk`.
+- APK debug local: `Radar-Fantasy-Android-v2.8.0.apk`.
 
 ## Notas de version
 
-- Centro de mercado con recomendaciones, puja maxima y racha visual.
-- Centro de pujas/ventas con simulacion de saldo y puja maxima.
-- Filtro reforzado para no mostrar pujas antiguas o duplicadas.
-- Importacion directa de mercado y equipo desde Biwenger.
-- Secciones de equipo, rivales, jornada, jornada fantasy y videos.
-- Renombre de marca visible a `Radar Fantasy` en web, PWA, Android e iOS.
+- Centro de alertas por liga para lesiones, dudas, sanciones, bajas confirmadas y jugadores fuera de competicion.
+- Avisos prioritarios cuando una incidencia afecta al once, con acceso directo para corregir la alineacion.
+- Asistente con saldo futuro, recompensas de jornada y ejecucion conjunta de acciones sugeridas.
+- Simulacion corregida de ofertas, pujas y ventas, protegiendo jugadores en racha.
+- Mercado reforzado con decisiones aprendidas, limites reales de puja y descarte de jugadores inasequibles.
+- Actividad de liga enriquecida con jugadores, rivales e iconos; busqueda de emisiones y videos desde Jornada.
 
 ## Seguridad de configuracion
 

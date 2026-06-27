@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#081317" />
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=42" />
+    <link rel="stylesheet" href="styles.css?v=43" />
   </head>
   <body>
     <div class="app-shell">
@@ -129,6 +129,36 @@
         </header>
 
         <section class="view active" id="market-view" aria-label="Analisis de mercado">
+          <section class="daily-command-center" aria-label="Plan diario del director deportivo">
+            <div class="daily-command-header">
+              <div>
+                <p class="eyebrow">Director deportivo</p>
+                <h3>Plan de hoy</h3>
+                <span id="daily-plan-status">Preparando decisiones con los datos guardados.</span>
+              </div>
+              <div class="daily-command-tools">
+                <div class="segmented-control" id="daily-plan-modes" aria-label="Nivel de riesgo del plan">
+                  <button type="button" data-plan-mode="conservative">Conservador</button>
+                  <button type="button" data-plan-mode="balanced" class="active">Equilibrado</button>
+                  <button type="button" data-plan-mode="aggressive">Agresivo</button>
+                </div>
+                <button class="ghost-button" type="button" id="refresh-daily-plan">
+                  <span class="icon icon-refresh" aria-hidden="true"></span>
+                  Sincronizar
+                </button>
+              </div>
+            </div>
+            <div class="daily-plan-metrics" id="daily-plan-metrics"></div>
+            <div class="daily-plan-layout">
+              <div class="daily-plan-actions" id="daily-plan-actions">
+                <p class="muted-empty compact">Carga mercado y equipo para preparar decisiones.</p>
+              </div>
+              <aside class="daily-plan-side">
+                <div class="daily-scenarios" id="daily-plan-scenarios"></div>
+                <div class="daily-rival-intel" id="daily-rival-intel"></div>
+              </aside>
+            </div>
+          </section>
           <section class="input-band" aria-label="Entrada de mercado">
             <div class="market-input">
               <div class="section-heading">
@@ -893,6 +923,21 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <input id="investment-mode" type="checkbox" />
                 <span>Priorizar revalorizacion de mercado</span>
               </label>
+              <label class="toggle-row">
+                <input id="auto-sync-enabled" type="checkbox" checked />
+                <span>Sincronizar el plan automaticamente</span>
+              </label>
+              <label class="toggle-row">
+                <input id="notifications-enabled" type="checkbox" />
+                <span>Avisarme de decisiones urgentes</span>
+              </label>
+              <div class="notification-settings-row">
+                <button class="ghost-button" type="button" id="enable-notifications">
+                  <span class="icon icon-bell" aria-hidden="true"></span>
+                  Activar avisos del dispositivo
+                </button>
+                <span id="notification-status">Avisos desactivados.</span>
+              </div>
               <div class="reward-config-card">
                 <div class="section-heading compact-heading">
                   <div>
@@ -978,6 +1023,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=11"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=60"></script>
+    <script src="app.js?v=62"></script>
   </body>
 </html>

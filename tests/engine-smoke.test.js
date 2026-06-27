@@ -1,9 +1,16 @@
 const fs = require("fs");
 const vm = require("vm");
 
+const storageMemory = new Map();
 const context = {
   console,
-  window: {}
+  window: {
+    localStorage: {
+      getItem: (key) => storageMemory.has(key) ? storageMemory.get(key) : null,
+      setItem: (key, value) => storageMemory.set(key, String(value)),
+      removeItem: (key) => storageMemory.delete(key)
+    }
+  }
 };
 
 vm.createContext(context);
@@ -349,12 +356,39 @@ state.teamPlayers = hydrateImportedPlayers([
   { id: "alert-bench", name: "Suplente confirmado", team: "Espana", position: "MC", sourceSummary: { fantasy: { lineupStatus: "bench" } } },
   { id: "alert-low-estimate", name: "Titularidad baja estimada", team: "Espana", position: "MC", starter: 5 }
 ]);
+state.teamDepartures = hydrateImportedPlayers([
+  { id: "alert-departed", biwengerPlayerId: 99001, name: "Fuera de competicion", team: "Espana", position: "DF", outOfCompetition: true, activeInCompetition: false }
+]);
 const teamAlerts = buildTeamAlerts();
-if (teamAlerts.length !== 4 || teamAlerts[0].player.id !== "alert-injured" || !teamAlerts[0].inLineup) {
+if (teamAlerts.length !== 5 || teamAlerts[0].player.id !== "alert-injured" || !teamAlerts[0].inLineup) {
   throw new Error("Team alert priority or incident detection failed: " + JSON.stringify(teamAlerts));
+}
+if (!teamAlerts.some((alert) => alert.player.id === "alert-departed" && alert.kind === "outside")) {
+  throw new Error("Departed player must remain visible as an out-of-competition alert");
 }
 if (teamAlerts.some((alert) => alert.player.id === "alert-low-estimate")) {
   throw new Error("Low estimated starter probability must not become a confirmed team alert");
+}
+
+state.competition = "club";
+state.activeLeagueId = "daily-plan-test";
+state.finance = { balance: 10000000, teamValue: 25000000, maximumBid: 6000000, activeBids: 0, bidTotal: 0 };
+state.biwengerOperations = { offers: [], sales: [], finance: { balance: 10000000, maximumBid: 6000000 } };
+state.teamPlayers = [];
+state.teamDepartures = [];
+state.editableLineup = null;
+state.players = hydrateImportedPlayers([
+  { id: "daily-star-1", biwengerPlayerId: 2001, name: "Objetivo uno", team: "Equipo A", position: "DF", price: 2200000, starter: 94, form: 90, asScore: 88, sofascore: 89, stats: 88, risk: "low", sourceStatus: "live", dataConfidence: 90, sourceSummary: { recentMatches: [{ provider: "biwenger", points: { biwenger: 8, mixed: 8 } }, { provider: "biwenger", points: { biwenger: 9, mixed: 9 } }] } },
+  { id: "daily-star-2", biwengerPlayerId: 2002, name: "Objetivo dos", team: "Equipo B", position: "MC", price: 2800000, starter: 90, form: 86, asScore: 86, sofascore: 87, stats: 86, risk: "low", sourceStatus: "live", dataConfidence: 86, sourceSummary: { recentMatches: [{ provider: "biwenger", points: { biwenger: 7, mixed: 7 } }, { provider: "biwenger", points: { biwenger: 8, mixed: 8 } }] } }
+]);
+const conservativePlan = dailyScenarioSnapshot("conservative");
+const aggressivePlan = dailyScenarioSnapshot("aggressive");
+if (conservativePlan.bids.length > aggressivePlan.bids.length || aggressivePlan.bids.meta.used > state.finance.maximumBid) {
+  throw new Error("Daily plan scenarios must respect risk ordering and maximum bid budget");
+}
+recordDailyActionFeedback({ id: "bid:2001", type: "bid", player: state.players[0] }, true);
+if (learnedDecisionAdjustment(state.players[0], "bid") <= 0) {
+  throw new Error("Useful daily-plan feedback should create a bounded positive adjustment");
 }
 
 console.log(JSON.stringify({

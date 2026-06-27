@@ -399,6 +399,245 @@ textarea {
   font-weight: 900;
 }
 
+.daily-command-center {
+  margin: 0 -24px 20px;
+  padding: 20px 24px;
+  border-top: 1px solid rgba(242, 184, 76, 0.24);
+  border-bottom: 1px solid rgba(242, 184, 76, 0.24);
+  background: linear-gradient(90deg, rgba(242, 184, 76, 0.08), rgba(37, 201, 197, 0.06));
+}
+
+.daily-command-header,
+.daily-command-tools,
+.daily-plan-action-main,
+.daily-plan-action-meta,
+.daily-action-controls,
+.notification-settings-row {
+  display: flex;
+  align-items: center;
+}
+
+.daily-command-header {
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.daily-command-header h3 {
+  margin: 2px 0 4px;
+  font-size: 25px;
+}
+
+.daily-command-header > div > span,
+.notification-settings-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.daily-command-tools {
+  gap: 10px;
+}
+
+.segmented-control {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(2, 20, 24, 0.72);
+}
+
+.segmented-control button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.segmented-control button.active {
+  background: #f2b84c;
+  color: #071318;
+}
+
+.daily-plan-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.daily-plan-metric {
+  min-width: 0;
+  padding: 10px 12px;
+  border-left: 3px solid rgba(37, 201, 197, 0.5);
+  background: rgba(5, 29, 33, 0.78);
+}
+
+.daily-plan-metric span,
+.daily-plan-metric small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.daily-plan-metric strong {
+  display: block;
+  overflow: hidden;
+  margin: 3px 0;
+  color: #fff7dc;
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.daily-plan-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(260px, 0.8fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.daily-plan-actions,
+.daily-plan-side,
+.daily-scenarios,
+.daily-rival-intel {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.daily-plan-action {
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  padding: 10px 12px 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(4, 25, 29, 0.88);
+}
+
+.daily-plan-action::before {
+  width: 5px;
+  height: 100%;
+  min-height: 54px;
+  background: #25c9c5;
+  content: "";
+}
+
+.daily-plan-action.sale::before,
+.daily-plan-action.offer::before {
+  background: #f2b84c;
+}
+
+.daily-plan-action.lineup::before,
+.daily-plan-action.alert::before {
+  background: #ff6672;
+}
+
+.daily-plan-action-main {
+  min-width: 0;
+  gap: 10px;
+}
+
+.daily-plan-action-copy {
+  min-width: 0;
+}
+
+.daily-plan-action-copy strong,
+.daily-plan-action-copy small {
+  display: block;
+}
+
+.daily-plan-action-copy strong {
+  overflow: hidden;
+  color: #fff;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.daily-plan-action-copy small {
+  margin-top: 3px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.daily-plan-action-meta {
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.daily-confidence {
+  padding: 2px 6px;
+  border: 1px solid rgba(37, 201, 197, 0.36);
+  border-radius: 8px;
+  color: #9ff7ed;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.daily-confidence.low {
+  border-color: rgba(255, 184, 74, 0.48);
+  color: #ffd08a;
+}
+
+.daily-action-controls {
+  gap: 6px;
+}
+
+.daily-action-controls .icon-button {
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  font-size: 13px;
+}
+
+.daily-scenario,
+.daily-rival-insight {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(4, 25, 29, 0.72);
+}
+
+.daily-scenario.active {
+  border-color: rgba(242, 184, 76, 0.52);
+}
+
+.daily-scenario header,
+.daily-rival-insight header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.daily-scenario span,
+.daily-rival-insight span,
+.daily-scenario small,
+.daily-rival-insight small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.daily-rival-intel::before {
+  color: #ffe29a;
+  content: "Lectura de rivales";
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.notification-settings-row {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+}
+
 .primary-button,
 .ghost-button {
   padding: 0 14px;
@@ -5549,6 +5788,41 @@ tr.has-rival-bids.has-rival-sale {
     min-width: 0;
     padding: 0 6px;
     font-size: 11px;
+  }
+
+  .daily-command-center {
+    margin: 0 -12px 14px;
+    padding: 14px 12px;
+  }
+
+  .daily-command-header,
+  .daily-command-tools,
+  .notification-settings-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .daily-command-tools,
+  .segmented-control,
+  .daily-command-tools > button {
+    width: 100%;
+  }
+
+  .daily-plan-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .daily-plan-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .daily-plan-action {
+    grid-template-columns: 5px minmax(0, 1fr);
+  }
+
+  .daily-action-controls {
+    grid-column: 2;
+    justify-content: flex-start;
   }
 
   .biwenger-form {

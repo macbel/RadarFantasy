@@ -1,6 +1,7 @@
 ﻿const state = {
   players: [],
   teamPlayers: [],
+  teamDepartures: [],
   leagues: [],
   activeLeagueId: null,
   selectedPlayerId: null,
@@ -47,12 +48,19 @@
   liveRoundLoading: null,
   selectedLiveRoundUserId: null,
   rivalTeam: null,
+  rivalProfiles: {},
   biwengerOperations: null,
   recentDetailsCache: {},
   offerSimulation: {
     selectedOfferIds: []
   },
   teamAlerts: [],
+  dailyPlanMode: "balanced",
+  autoSync: {
+    running: false,
+    lastAt: null,
+    status: "pending"
+  },
   recommendedLineup: null,
   editableLineup: null,
   competition: "club",
@@ -72,6 +80,9 @@
     strictBudget: true,
     riskAverse: false,
     investmentMode: false,
+    autoSync: true,
+    notifications: false,
+    planMode: "balanced",
     rewards: {
       pointValue: 0,
       rank1: 0,
@@ -91,6 +102,9 @@ const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
 const TEAM_ALERTS_READ_KEY = "radar-fantasy.team-alerts-read.v1";
+const DAILY_FEEDBACK_KEY = "radar-fantasy.daily-feedback.v1";
+const AUTO_SYNC_KEY = "radar-fantasy.auto-sync.v1";
+const NOTIFICATION_SIGNATURE_KEY = "radar-fantasy.notification-signatures.v1";
 let lastDecisionHistorySignature = "";
 const trimTrailingSlash = (value) => String(value || "").replace(/\/+$/, "");
 const currentProtocol = window.location?.protocol || "http:";
@@ -252,6 +266,7 @@ const ensureLocalLeagueDb = () => {
         scoring: state.scoring,
         marketPlayers: [],
         teamPlayers: [],
+        teamDepartures: [],
         finance: { ...state.finance },
         weights: { ...state.weights },
         filters: { ...state.filters },
@@ -280,6 +295,7 @@ const saveLocalLeagueSnapshot = () => {
     scoring: state.scoring,
     marketPlayers: state.players,
     teamPlayers: state.teamPlayers,
+    teamDepartures: state.teamDepartures,
     finance: { ...state.finance },
     weights: { ...state.weights },
     filters: { ...state.filters },
@@ -309,6 +325,7 @@ const createLocalLeague = (name) => {
     scoring: state.scoring,
     marketPlayers: [],
     teamPlayers: [],
+    teamDepartures: [],
     finance: { ...state.finance },
     weights: { ...state.weights },
     filters: { ...state.filters },
@@ -344,6 +361,7 @@ const deleteLocalLeague = (leagueId) => {
       scoring: state.scoring,
       marketPlayers: [],
       teamPlayers: [],
+      teamDepartures: [],
       finance: { ...state.finance },
       weights: { ...state.weights },
       filters: { ...state.filters },
@@ -456,6 +474,49 @@ const normalize = (text) =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+
+const readJsonStorage = (key, fallback) => {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || "null");
+    return parsed === null ? fallback : parsed;
+  } catch (error) {
+    return fallback;
+  }
+};
+
+const writeJsonStorage = (key, value) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    // Private browsing can block storage; decisions still work in memory.
+  }
+};
+
+const dailyFeedbackRows = () => {
+  const rows = readJsonStorage(DAILY_FEEDBACK_KEY, []);
+  const leagueId = String(state.activeLeagueId || "local");
+  const oldest = Date.now() - 90 * 86400000;
+  return (Array.isArray(rows) ? rows : []).filter((row) =>
+    String(row.leagueId || "local") === leagueId
+    && Number(new Date(row.createdAt || 0)) >= oldest
+  );
+};
+
+const learnedDecisionAdjustment = (player, actionType = "bid") => {
+  const playerId = String(player?.biwengerPlayerId || player?.id || "");
+  const position = String(player?.position || "");
+  const rows = dailyFeedbackRows().slice(-80);
+  let score = 0;
+  rows.forEach((row) => {
+    const direction = row.useful ? 1 : -1;
+    const ageDays = Math.max(0, (Date.now() - new Date(row.createdAt).getTime()) / 86400000);
+    const recency = Math.max(0.2, 1 - ageDays / 120);
+    if (String(row.actionType || "") === actionType) score += direction * 0.35 * recency;
+    if (position && row.position === position) score += direction * 0.28 * recency;
+    if (playerId && String(row.playerId || "") === playerId) score += direction * 1.35 * recency;
+  });
+  return Math.max(-6, Math.min(6, Math.round(score * 10) / 10));
+};
 
 const normalizedTeamName = (text) => normalize(text)
   .replace(/\b(fc|cf|club|futbol|football|de|the|seleccion|national|team)\b/g, " ")
@@ -1458,7 +1519,7 @@ const saleUrgencyForPlayer = (player, context = {}) => {
   const roundAlmostCoversDebt = rewardRelief >= 0.55 && rewardAmount > 0;
   const immediateRisk = noNextMatch || player.health?.status === "suspended" || player.health?.status === "injured";
   const protectHotStreak = recent.hot && !immediateRisk;
-  let score = 18 + negativePressure;
+  let score = 18 + negativePressure + learnedDecisionAdjustment(player, "sale");
   score += surplus * 14;
   score += Math.max(0, 72 - quality) * 0.55;
   if (recent.cold) score += 14;
@@ -1548,7 +1609,8 @@ const assistantPlanSnapshot = () => {
   const offers = operations.offers || [];
   const myOffers = activeOwnBidOffers(offers);
   const incoming = activeIncomingOffers(offers);
-  const balance = Number(operations.finance?.balance ?? state.finance.balance);
+  const rawBalance = operations.finance?.balance ?? state.finance.balance;
+  const balance = rawBalance === null || rawBalance === undefined || rawBalance === "" ? null : Number(rawBalance);
   const roundReward = estimatedRoundReward();
   const bids = assistantBidRows();
   const offerRows = assistantOfferRows(incoming, myOffers, roundReward.amount);
@@ -1593,6 +1655,374 @@ const assistantPlanSnapshot = () => {
     planBalance: Number.isFinite(balance) ? balance - bidWinCost + recommendedOfferAmount + salePotential + roundReward.amount : null,
     projectedWithSales: Number.isFinite(balance) ? balance + recommendedOfferAmount + salePotential + roundReward.amount : null
   };
+};
+
+const DAILY_PLAN_CONFIG = {
+  conservative: { label: "Conservador", maxBids: 2, minBidPriority: 72, minSaleScore: 70, bidMode: "recommended" },
+  balanced: { label: "Equilibrado", maxBids: 4, minBidPriority: 62, minSaleScore: 58, bidMode: "balanced" },
+  aggressive: { label: "Agresivo", maxBids: 6, minBidPriority: 56, minSaleScore: 54, bidMode: "aggressive" }
+};
+
+const playerDataReliability = (player = {}) => {
+  const confidence = analysisConfidence(player);
+  const fantasyStarter = Number(player.sourceSummary?.fantasy?.nextStarterProbability);
+  const starter = Number(player.starter);
+  const starterGap = Number.isFinite(fantasyStarter) && Number.isFinite(starter) ? Math.abs(fantasyStarter - starter) : 0;
+  const fantasyHealth = String(player.sourceSummary?.fantasy?.health?.status || "");
+  const health = String(player.health?.status || "");
+  const conflicts = [];
+  if (starterGap >= 24) conflicts.push(`titularidad difiere ${Math.round(starterGap)} puntos`);
+  if (fantasyHealth && health && fantasyHealth !== "unknown" && health !== "unknown" && fantasyHealth !== health) conflicts.push("estado físico discrepante");
+  const timestamps = [
+    player.sourceUpdatedAt,
+    player.updatedAt,
+    player.sourceSummary?.updatedAt,
+    player.sourceSummary?.fantasy?.updatedAt
+  ].map((value) => new Date(value || 0).getTime()).filter((value) => Number.isFinite(value) && value > 0);
+  const newest = timestamps.length ? Math.max(...timestamps) : null;
+  const ageHours = newest ? Math.max(0, (Date.now() - newest) / 3600000) : null;
+  const freshness = ageHours === null ? "sin hora" : ageHours <= 24 ? "hoy" : ageHours <= 72 ? "reciente" : "antiguo";
+  const expected = Number(player.marketIntelligence?.expectedPoints);
+  const uncertainty = Math.max(0.8, (100 - confidence.score) / 13 + conflicts.length * 0.7);
+  return {
+    ...confidence,
+    conflicts,
+    freshness,
+    ageHours,
+    expectedPoints: Number.isFinite(expected) ? expected : null,
+    pointsLow: Number.isFinite(expected) ? Math.max(0, Math.round((expected - uncertainty) * 10) / 10) : null,
+    pointsHigh: Number.isFinite(expected) ? Math.round((expected + uncertainty) * 10) / 10 : null
+  };
+};
+
+const dailyLineupActions = () => {
+  const alerts = buildTeamAlerts().filter((alert) => alert.inLineup);
+  const selectedIds = new Set((state.editableLineup?.playerIds || []).map(String));
+  const candidates = teamPlayersWithLineupScore();
+  return alerts.map((alert) => {
+    const replacement = candidates
+      .filter((player) => player.position === alert.player.position && !selectedIds.has(String(player.id)))
+      .filter((player) => !["injured", "suspended"].includes(player.health?.status))
+      .sort((a, b) => b.lineupScore - a.lineupScore)[0] || null;
+    return {
+      id: `lineup:${alert.id}`,
+      type: "lineup",
+      player: alert.player,
+      priority: alert.priority + 20,
+      title: replacement ? `Sustituye a ${alert.player.name} por ${replacement.name}` : `Revisa a ${alert.player.name} en el once`,
+      reason: `${alert.title}. ${replacement ? `Alternativa ${replacement.lineupScore}/100 para el once.` : "No hay sustituto claro en su posición."}`,
+      amount: null,
+      confidence: 92,
+      executable: true,
+      replacementId: replacement?.id || null
+    };
+  });
+};
+
+const selectScenarioBids = (mode, candidates = assistantBidCandidates()) => {
+  const config = DAILY_PLAN_CONFIG[mode] || DAILY_PLAN_CONFIG.balanced;
+  const budget = assistantBidBudget();
+  let remaining = budget;
+  const selected = [];
+  candidates.forEach((row) => {
+    if (selected.length >= config.maxBids || row.priority < config.minBidPriority) return;
+    const amount = config.bidMode === "aggressive"
+      ? row.plan.aggressiveBid
+      : config.bidMode === "recommended"
+        ? row.plan.recommendedBid
+        : row.amount;
+    const delta = row.plan.hasOwnBid ? Math.max(0, amount - Number(row.plan.ownBidAmount || 0)) : amount;
+    if (delta <= 0 || (Number.isFinite(remaining) && delta > remaining)) return;
+    selected.push({ ...row, amount, delta });
+    if (Number.isFinite(remaining)) remaining -= delta;
+  });
+  selected.meta = { budget, remaining, used: selected.reduce((sum, row) => sum + row.delta, 0) };
+  return selected;
+};
+
+const dailyRivalInsights = (players = []) => {
+  const contested = [...players]
+    .filter((player) => Number(player.bidCount || player.rivalBidCount || 0) > 0)
+    .sort((a, b) => Number(b.bidCount || b.rivalBidCount || 0) - Number(a.bidCount || a.rivalBidCount || 0))[0];
+  const rivalSales = players.filter((player) => marketSellerInfo(player).type === "rival");
+  const sellers = new Map();
+  rivalSales.forEach((player) => {
+    const seller = marketSellerInfo(player).name || "Rival";
+    sellers.set(seller, (sellers.get(seller) || 0) + 1);
+  });
+  const activeSeller = [...sellers.entries()].sort((a, b) => b[1] - a[1])[0];
+  const standings = (state.leagueOverview?.standings || []).filter((row) => !row.isMe);
+  const insights = [];
+  const topProfile = Object.values(state.rivalProfiles || {}).sort((a, b) => Number(b.threat || 0) - Number(a.threat || 0))[0];
+  if (topProfile) insights.push({ title: `Amenaza: ${topProfile.name}`, text: `${topProfile.threat}/100. Su necesidad probable es ${POSITION_NAMES[topProfile.weakestPosition] || topProfile.weakestPosition || "sin definir"}; anticipa competencia en esa posición.` });
+  if (contested) insights.push({ title: "Demanda visible", text: `${contested.name} concentra ${Number(contested.bidCount || contested.rivalBidCount || 0)} puja(s). No superes el tope racional por presión.` });
+  if (activeSeller) insights.push({ title: "Rival vendedor", text: `${activeSeller[0]} tiene ${activeSeller[1]} jugador(es) en venta; puede estar buscando liquidez.` });
+  if (state.rivalTeam?.players?.length) {
+    const weak = teamNeedPositions().map((item) => item.position).slice(0, 2).join(" y ");
+    insights.push({ title: "Plantilla rival cargada", text: `${state.rivalTeam.name || "El rival"} tiene ${state.rivalTeam.players.length} jugadores visibles. Vigila competencia por ${weak || "tus posiciones débiles"}.` });
+  } else if (standings.length) {
+    insights.push({ title: "Contexto de liga", text: `${standings.length} rivales disponibles. Abre Liga para perfilar una plantilla concreta.` });
+  }
+  return insights.slice(0, 3);
+};
+
+const dailyScenarioSnapshot = (mode = state.dailyPlanMode, marketPlayers = null, shared = {}) => {
+  const config = DAILY_PLAN_CONFIG[mode] || DAILY_PLAN_CONFIG.balanced;
+  const base = shared.base || assistantPlanSnapshot();
+  const bids = selectScenarioBids(mode, shared.bidCandidates || assistantBidCandidates());
+  const saleContext = {
+    baseBalance: base.balance,
+    roundRewardAmount: base.roundReward.amount,
+    balanceAfterRoundAndOffers: base.balanceAfterRecommendedOffersAndRound
+  };
+  const saleLimit = mode === "conservative" ? 2 : mode === "balanced" ? 4 : 6;
+  const sales = (shared.saleRows || assistantSaleRows(assistantTeamPlayers(), saleContext))
+    .filter((row) => row.sale.score >= config.minSaleScore && !row.existingSale)
+    .slice(0, saleLimit);
+  const offers = base.offerRows.filter((row) => row.action === "Aceptar" || (mode !== "aggressive" && row.action === "Rechazar"));
+  const acceptedIncome = offers.filter((row) => row.action === "Aceptar").reduce((sum, row) => sum + row.amount, 0);
+  const saleIncome = sales.reduce((sum, row) => sum + row.sale.suggestedPrice, 0);
+  const bidCost = bids.reduce((sum, row) => sum + row.amount, 0);
+  const projectedBalance = Number.isFinite(base.balance)
+    ? base.balance + base.roundReward.amount + acceptedIncome + saleIncome - bidCost
+    : null;
+  const analyzedMarket = marketPlayers || shared.analyzedMarket || assistantMarketPlayers();
+  const actions = [
+    ...dailyLineupActions(),
+    ...bids.map((row) => ({
+      id: `bid:${row.player.biwengerPlayerId || row.player.id}`,
+      type: "bid",
+      player: row.player,
+      priority: row.priority,
+      title: `${row.action} por ${row.player.name}`,
+      reason: `${row.reason}. Tope racional ${formatFinanceMoney(row.plan.rationalMax)}.`,
+      amount: row.amount,
+      confidence: playerDataReliability(row.player).score,
+      executable: state.biwenger.connected && Boolean(row.player.biwengerPlayerId),
+      ownerId: Number(row.player.marketOwnerId || 0)
+    })),
+    ...sales.map((row) => ({
+      id: `sale:${row.player.biwengerPlayerId || row.player.id}`,
+      type: "sale",
+      player: row.player,
+      priority: row.sale.score,
+      title: `${row.sale.action}: ${row.player.name}`,
+      reason: row.sale.reason,
+      amount: row.sale.suggestedPrice,
+      confidence: playerDataReliability(row.player).score,
+      executable: state.biwenger.connected && Boolean(row.player.biwengerPlayerId)
+    })),
+    ...offers.map((row) => {
+      const player = operationPlayerData(row.offer);
+      return {
+        id: `offer:${row.offer.offerId}:${row.action}`,
+        type: "offer",
+        player,
+        priority: row.priority,
+        title: `${row.action} oferta por ${player.name}`,
+        reason: row.reason,
+        amount: row.amount,
+        confidence: Math.round(Math.max(45, 100 - row.metrics.cost)),
+        executable: state.biwenger.connected && Boolean(row.offer.offerId),
+        offerId: Number(row.offer.offerId),
+        offerStatus: row.action === "Aceptar" ? "accepted" : "rejected"
+      };
+    })
+  ].sort((a, b) => b.priority - a.priority).slice(0, 7);
+  const reliabilityRows = [...analyzedMarket, ...state.teamPlayers.map(playerForCompetition)];
+  const lineupPlayers = state.editableLineup?.playerIds?.length
+    ? resolvedEditableLineup().selected
+    : (calculateBestLineup()?.selected || []);
+  const expectedLineupPoints = Math.round(lineupPlayers.reduce((sum, player) => {
+    const system = systemScore(player, state.scoring);
+    const intelligence = player.marketIntelligence || marketIntelligenceForPlayer(player, system, player.priceScore || 50, player.squadFitScore || squadFitScore(player));
+    return sum + Number(intelligence.expectedPoints || 0);
+  }, 0) * 10) / 10;
+  const confidence = reliabilityRows.length
+    ? Math.round(reliabilityRows.reduce((sum, player) => sum + analysisConfidence(player).score, 0) / reliabilityRows.length)
+    : 0;
+  return {
+    mode,
+    config,
+    base,
+    bids,
+    sales,
+    offers,
+    actions,
+    bidCost,
+    saleIncome,
+    acceptedIncome,
+    projectedBalance,
+    expectedLineupPoints,
+    confidence,
+    rivalInsights: dailyRivalInsights(analyzedMarket)
+  };
+};
+
+const dailyPlanSnapshot = (marketPlayers = null) => {
+  const base = assistantPlanSnapshot();
+  const bidCandidates = assistantBidCandidates();
+  const analyzedMarket = marketPlayers || assistantMarketPlayers();
+  const saleContext = {
+    baseBalance: base.balance,
+    roundRewardAmount: base.roundReward.amount,
+    balanceAfterRoundAndOffers: base.balanceAfterRecommendedOffersAndRound
+  };
+  const shared = { base, bidCandidates, analyzedMarket, saleRows: assistantSaleRows(assistantTeamPlayers(), saleContext) };
+  const scenarios = Object.keys(DAILY_PLAN_CONFIG).map((mode) => dailyScenarioSnapshot(mode, analyzedMarket, shared));
+  const selectedMode = state.dailyPlanMode || state.preferences.planMode || "balanced";
+  return {
+    selected: scenarios.find((scenario) => scenario.mode === selectedMode) || scenarios[1],
+    scenarios
+  };
+};
+
+const recordDailyActionFeedback = (action, useful) => {
+  const rows = readJsonStorage(DAILY_FEEDBACK_KEY, []);
+  rows.push({
+    leagueId: String(state.activeLeagueId || "local"),
+    actionId: action.id,
+    actionType: action.type,
+    playerId: String(action.player?.biwengerPlayerId || action.player?.id || ""),
+    position: String(action.player?.position || ""),
+    useful: Boolean(useful),
+    createdAt: new Date().toISOString()
+  });
+  writeJsonStorage(DAILY_FEEDBACK_KEY, rows.slice(-240));
+};
+
+const renderDailyPlan = (marketPlayers = null) => {
+  const metrics = qs("#daily-plan-metrics");
+  const actionsTarget = qs("#daily-plan-actions");
+  const scenariosTarget = qs("#daily-plan-scenarios");
+  const rivalsTarget = qs("#daily-rival-intel");
+  const status = qs("#daily-plan-status");
+  if (!metrics || !actionsTarget || !scenariosTarget || !rivalsTarget || !status) return;
+  state.dailyPlanMode = state.preferences.planMode || state.dailyPlanMode || "balanced";
+  const snapshot = dailyPlanSnapshot(marketPlayers);
+  const plan = snapshot.selected;
+  qsa("[data-plan-mode]").forEach((button) => button.classList.toggle("active", button.dataset.planMode === plan.mode));
+  const lastSync = state.autoSync.lastAt ? new Date(state.autoSync.lastAt) : null;
+  status.textContent = state.autoSync.running
+    ? "Sincronizando mercado, equipo, fuentes y operaciones..."
+    : lastSync && !Number.isNaN(lastSync.getTime())
+      ? `Datos revisados ${lastSync.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}.`
+      : "Plan calculado con los últimos datos guardados.";
+  metrics.innerHTML = [
+    ["Saldo actual", formatFinanceMoney(plan.base.balance), plan.base.balance < 0 ? "negative" : "positive", "Biwenger"],
+    ["Saldo al cierre", formatFinanceMoney(plan.projectedBalance), plan.projectedBalance < 0 ? "negative" : "positive", `${plan.config.label}`],
+    ["Acciones", String(plan.actions.length), "", `${plan.bids.length} pujas · ${plan.sales.length} ventas`],
+    ["Once esperado", `${plan.expectedLineupPoints} pts`, "", "estimación próxima jornada"],
+    ["Fuentes", `${plan.confidence}/100`, plan.confidence >= 70 ? "positive" : "", "confianza media"],
+    ["Jornada", formatFinanceMoney(plan.base.roundReward.amount), plan.base.roundReward.amount > 0 ? "positive" : "", plan.base.roundReward.source]
+  ].map(([label, value, className, detail]) => `
+    <div class="daily-plan-metric"><span>${escapeHtml(label)}</span><strong class="${className}">${escapeHtml(value)}</strong><small>${escapeHtml(detail || "")}</small></div>
+  `).join("");
+
+  actionsTarget.innerHTML = plan.actions.length ? plan.actions.map((action) => {
+    const reliability = action.player ? playerDataReliability(action.player) : { score: action.confidence, label: "Media", conflicts: [], expectedPoints: null };
+    const expectedRange = reliability.expectedPoints === null
+      ? ""
+      : `${reliability.pointsLow}-${reliability.pointsHigh} pts esperados`;
+    const conflict = reliability.conflicts?.length ? ` · ${reliability.conflicts[0]}` : "";
+    return `
+      <article class="daily-plan-action ${action.type}" data-daily-action="${escapeHtml(action.id)}">
+        <div class="daily-plan-action-main">
+          ${action.player ? renderPlayerMedia(action.player, "sm") : ""}
+          <div class="daily-plan-action-copy">
+            <strong>${escapeHtml(action.title)}</strong>
+            <small>${escapeHtml(action.reason)}</small>
+            <div class="daily-plan-action-meta">
+              ${action.player ? renderPositionBadge(action.player.position) : ""}
+              ${action.amount ? `<span class="daily-confidence">${formatFinanceMoney(action.amount)}</span>` : ""}
+              <span class="daily-confidence ${reliability.score < 55 ? "low" : ""}">Conf. ${Math.round(reliability.score)}/100</span>
+              ${expectedRange ? `<span class="daily-confidence">${escapeHtml(expectedRange)}</span>` : ""}
+              ${conflict ? `<span class="daily-confidence low">${escapeHtml(conflict.replace(/^ · /, ""))}</span>` : ""}
+            </div>
+          </div>
+        </div>
+        <div class="daily-action-controls">
+          <button class="icon-button daily-feedback" type="button" data-action-id="${escapeHtml(action.id)}" data-useful="1" title="Esta recomendación me resulta útil" aria-label="Marcar recomendación útil">+</button>
+          <button class="icon-button daily-feedback" type="button" data-action-id="${escapeHtml(action.id)}" data-useful="0" title="No quiero recomendaciones como esta" aria-label="Descartar recomendación">−</button>
+          <button class="${action.type === "lineup" ? "ghost-button" : "primary-button"} execute-daily-action" type="button" data-action-id="${escapeHtml(action.id)}" ${action.executable ? "" : "disabled"}>${action.type === "lineup" ? "Corregir" : "Ejecutar"}</button>
+        </div>
+      </article>
+    `;
+  }).join("") : `<p class="muted-empty compact">No hay acciones urgentes. Mantén el equipo y evita pujar por inercia.</p>`;
+
+  scenariosTarget.innerHTML = snapshot.scenarios.map((scenario) => `
+    <button class="daily-scenario ${scenario.mode === plan.mode ? "active" : ""}" type="button" data-scenario-mode="${scenario.mode}">
+      <header><strong>${escapeHtml(scenario.config.label)}</strong><b class="${scenario.projectedBalance < 0 ? "negative" : "positive"}">${formatFinanceMoney(scenario.projectedBalance)}</b></header>
+      <span>${scenario.bids.length} pujas · ${scenario.sales.length} ventas · ${scenario.offers.filter((row) => row.action === "Aceptar").length} ofertas</span>
+      <small>Coste de fichajes ${formatFinanceMoney(scenario.bidCost)}</small>
+    </button>
+  `).join("");
+  rivalsTarget.innerHTML = plan.rivalInsights.length ? plan.rivalInsights.map((insight) => `
+    <div class="daily-rival-insight"><header><strong>${escapeHtml(insight.title)}</strong></header><span>${escapeHtml(insight.text)}</span></div>
+  `).join("") : `<div class="daily-rival-insight"><span>Actualiza Liga para incorporar hábitos y presión visible de los rivales.</span></div>`;
+
+  qsa("[data-scenario-mode]").forEach((button) => button.addEventListener("click", () => {
+    state.dailyPlanMode = button.dataset.scenarioMode;
+    state.preferences.planMode = state.dailyPlanMode;
+    persistLeagueSettings();
+    renderDailyPlan(marketPlayers);
+  }));
+  actionsTarget.querySelectorAll(".daily-feedback").forEach((button) => button.addEventListener("click", () => {
+    const action = plan.actions.find((item) => item.id === button.dataset.actionId);
+    if (!action) return;
+    const useful = button.dataset.useful === "1";
+    recordDailyActionFeedback(action, useful);
+    button.classList.add("active");
+    status.textContent = useful ? "Preferencia aprendida para próximas recomendaciones." : "Esta recomendación perderá peso en próximos planes.";
+  }));
+  actionsTarget.querySelectorAll(".execute-daily-action").forEach((button) => button.addEventListener("click", () => executeDailyPlanAction(button.dataset.actionId)));
+};
+
+const executeDailyPlanAction = async (actionId) => {
+  const action = dailyPlanSnapshot().selected.actions.find((item) => item.id === actionId);
+  if (!action) return;
+  if (action.type === "lineup") {
+    if (action.replacementId && state.editableLineup?.playerIds) {
+      state.editableLineup.playerIds = state.editableLineup.playerIds.map((id) => String(id) === String(action.player.id) ? action.replacementId : id);
+      renderLineup();
+      await saveActiveLeague();
+    }
+    openView("team");
+    window.requestAnimationFrame(() => qs("#lineup-output")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    return;
+  }
+  if (!state.biwenger.connected) {
+    setOcrStatus("Conecta Biwenger desde Ajustes para ejecutar esta decisión.", "error");
+    openView("settings");
+    return;
+  }
+  const confirmation = action.type === "bid"
+    ? `Enviar puja de ${formatFinanceMoney(action.amount)} por ${action.player.name}?`
+    : action.type === "sale"
+      ? `Poner a ${action.player.name} en venta por ${formatFinanceMoney(action.amount)}?`
+      : `${action.offerStatus === "accepted" ? "Aceptar" : "Rechazar"} la oferta de ${formatFinanceMoney(action.amount)} por ${action.player.name}?`;
+  if (!window.confirm(confirmation)) return;
+  const status = qs("#daily-plan-status");
+  if (status) status.textContent = `Ejecutando: ${action.title}...`;
+  try {
+    if (action.type === "bid") {
+      await postBiwengerAssistantAction("/api/biwenger/bid", { playerId: Number(action.player.biwengerPlayerId), amount: action.amount, toUserId: action.ownerId });
+    } else if (action.type === "sale") {
+      await postBiwengerAssistantAction("/api/biwenger/sale", { playerId: Number(action.player.biwengerPlayerId), price: action.amount });
+    } else if (action.type === "offer") {
+      await postBiwengerAssistantAction("/api/biwenger/offer-status", { offerId: action.offerId, status: action.offerStatus });
+    }
+    recordDailyActionFeedback(action, true);
+    await loadBiwengerOperations(false);
+    await refreshBiwengerStatus(`${action.title}: acción confirmada por Biwenger.`);
+    renderFinance();
+    renderTable();
+    renderTeam();
+    await saveActiveLeague();
+  } catch (error) {
+    setOcrStatus(error.message || "No se pudo ejecutar la decisión.", "error");
+    if (status) status.textContent = error.message || "La acción no se pudo completar.";
+  }
 };
 
 const renderAssistantPlayerRow = (player, meta = "") => {
@@ -2056,6 +2486,9 @@ const renderSourceQualityPanel = (players) => {
   const fixtures = players.filter((player) => nextMatchForPlayer(player)).length;
   const images = players.filter((player) => player.photo || player.emblem || player.flag).length;
   const health = players.filter((player) => player.health?.status && player.health.status !== "unknown").length;
+  const reliability = players.map(playerDataReliability);
+  const conflicts = reliability.filter((row) => row.conflicts.length).length;
+  const current = reliability.filter((row) => row.freshness === "hoy" || row.freshness === "reciente").length;
   const confidenceAverage = players.length
     ? Math.round(players.reduce((sum, player) => sum + analysisConfidence(player).score, 0) / players.length)
     : 0;
@@ -2065,12 +2498,15 @@ const renderSourceQualityPanel = (players) => {
     ["Racha Biwenger", recent, total],
     ["Próximo partido", fixtures, total],
     ["Fotos/escudos", images, total],
-    ["Estado físico", health, total]
+    ["Estado físico", health, total],
+    ["Datos recientes", current, total],
+    ["Sin discrepancias", total - conflicts, total]
   ];
   target.innerHTML = `
     <div class="source-quality-score ${confidenceAverage >= 74 ? "high" : confidenceAverage >= 52 ? "medium" : "low"}">
       <strong>${confidenceAverage}</strong>
       <span>confianza media</span>
+      ${conflicts ? `<small>${conflicts} jugador${conflicts === 1 ? "" : "es"} con fuentes discrepantes</small>` : `<small>Fuentes coherentes</small>`}
     </div>
     <div class="source-quality-grid">
       ${rows.map(([label, value, rowTotal]) => {
@@ -2082,6 +2518,7 @@ const renderSourceQualityPanel = (players) => {
 };
 
 const renderStrategicMarket = (players) => {
+  renderDailyPlan(players);
   renderMarketPlan(players);
   renderOpportunityRadar(players);
   renderMarketAlerts(players);
@@ -2634,7 +3071,7 @@ const playerTeamAlert = (player, lineupIds) => {
 
 const buildTeamAlerts = () => {
   const lineupIds = new Set((state.editableLineup?.playerIds || []).map(String));
-  return state.teamPlayers
+  return [...state.teamPlayers, ...state.teamDepartures]
     .map(playerForCompetition)
     .map((player) => playerTeamAlert(player, lineupIds))
     .filter(Boolean)
@@ -2718,6 +3155,103 @@ const closeTeamAlerts = () => {
   modal.hidden = true;
   document.body.classList.remove("modal-open");
   qs("#team-alerts-button")?.setAttribute("aria-expanded", "false");
+};
+
+const updateNotificationStatus = (message = "") => {
+  const target = qs("#notification-status");
+  if (!target) return;
+  if (message) {
+    target.textContent = message;
+    return;
+  }
+  const webPermission = typeof Notification !== "undefined" ? Notification.permission : "unsupported";
+  target.textContent = state.preferences.notifications
+    ? (webPermission === "denied" ? "Permiso bloqueado por el dispositivo." : "Avisos urgentes activados.")
+    : "Avisos desactivados.";
+};
+
+const registerRadarServiceWorker = async () => {
+  if (!("serviceWorker" in navigator) || isNativeRuntime() || !["http:", "https:"].includes(currentProtocol)) return null;
+  try {
+    return await navigator.serviceWorker.register(assetUrl("sw.js"), { scope: "./" });
+  } catch (error) {
+    return null;
+  }
+};
+
+const requestDecisionNotifications = async () => {
+  try {
+    const nativePlugin = window.Capacitor?.Plugins?.LocalNotifications;
+    if (nativePlugin) {
+      const permission = await nativePlugin.requestPermissions();
+      state.preferences.notifications = permission?.display === "granted";
+    } else if (typeof Notification !== "undefined") {
+      state.preferences.notifications = (await Notification.requestPermission()) === "granted";
+    } else {
+      state.preferences.notifications = false;
+    }
+    const input = qs("#notifications-enabled");
+    if (input) input.checked = state.preferences.notifications;
+    persistLeagueSettings();
+    updateNotificationStatus(state.preferences.notifications ? "Avisos urgentes activados correctamente." : "El dispositivo no ha concedido permiso para avisos.");
+    return state.preferences.notifications;
+  } catch (error) {
+    state.preferences.notifications = false;
+    updateNotificationStatus("No se pudieron activar los avisos del dispositivo.");
+    return false;
+  }
+};
+
+const notificationIdFrom = (value) => {
+  let hash = 0;
+  String(value || "radar-fantasy").split("").forEach((char) => { hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0; });
+  return Math.max(1, Math.abs(hash % 2147483000));
+};
+
+const showDecisionNotification = async (title, body, tag) => {
+  if (!state.preferences.notifications) return false;
+  try {
+    const nativePlugin = window.Capacitor?.Plugins?.LocalNotifications;
+    if (nativePlugin) {
+      await nativePlugin.schedule({ notifications: [{ title, body, id: notificationIdFrom(tag), extra: { view: "market" } }] });
+      return true;
+    }
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
+    const registration = await navigator.serviceWorker?.ready;
+    if (registration?.showNotification) {
+      await registration.showNotification(title, { body, tag, icon: assetUrl("assets/app-icon.png"), badge: assetUrl("assets/app-icon.png"), data: { url: assetUrl("index.html") } });
+    } else {
+      new Notification(title, { body, tag, icon: assetUrl("assets/app-icon.png") });
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+};
+
+const notifyDailyPlanIfNeeded = async () => {
+  if (!state.preferences.notifications) return;
+  const snapshot = dailyPlanSnapshot().selected;
+  const urgentLineup = buildTeamAlerts().filter((alert) => alert.inLineup);
+  const urgentAction = snapshot.actions.find((action) => action.priority >= 82);
+  const balanceRisk = Number.isFinite(snapshot.projectedBalance) && snapshot.projectedBalance < 0;
+  if (!urgentLineup.length && !urgentAction && !balanceRisk) return;
+  const signatures = readJsonStorage(NOTIFICATION_SIGNATURE_KEY, {});
+  const leagueKey = String(state.activeLeagueId || "local");
+  const signature = [
+    urgentLineup.map((alert) => alert.id).join(","),
+    urgentAction?.id || "",
+    balanceRisk ? Math.round(snapshot.projectedBalance / 100000) : 0
+  ].join("|");
+  if (signatures[leagueKey] === signature) return;
+  signatures[leagueKey] = signature;
+  writeJsonStorage(NOTIFICATION_SIGNATURE_KEY, signatures);
+  const body = urgentLineup.length
+    ? `${urgentLineup[0].player.name} afecta a tu once: ${urgentLineup[0].title}.`
+    : balanceRisk
+      ? `El plan dejaría tu saldo en ${formatFinanceMoney(snapshot.projectedBalance)}.`
+      : urgentAction.title;
+  await showDecisionNotification(`Radar Fantasy · ${activeLeagueName() || "Plan de hoy"}`, body, `${leagueKey}:${signature}`);
 };
 
 const slugifyPublic = (value) => normalize(value).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -3545,6 +4079,8 @@ const hydrateImportedPlayers = (players) => (players || []).map((player, index) 
   competitionPoints: Number(player.competitionPoints || 0),
   status: player.status || "ok",
   statusText: player.statusText || "",
+  outOfCompetition: player.outOfCompetition === true,
+  activeInCompetition: player.activeInCompetition !== false,
   valueTrend: Number.isFinite(player.valueTrend) ? player.valueTrend : 0,
   sourceStatus: player.sourceStatus || "seed",
   dataConfidence: Number.isFinite(player.dataConfidence) ? player.dataConfidence : 74,
@@ -3971,11 +4507,18 @@ const applyLeague = (league) => {
       ...(league.preferences?.rewards || {})
     }
   };
+  state.dailyPlanMode = state.preferences.planMode || "balanced";
+  const savedAutoSync = readJsonStorage(AUTO_SYNC_KEY, {})[String(league.id)] || null;
+  state.autoSync.lastAt = savedAutoSync?.completedAt || null;
+  state.autoSync.status = savedAutoSync ? "fresh" : "pending";
   state.players = Array.isArray(league.marketPlayers)
     ? league.marketPlayers.map(cleanWorldcupPlayerIdentity)
     : [];
   state.teamPlayers = Array.isArray(league.teamPlayers)
     ? league.teamPlayers.map(cleanWorldcupPlayerIdentity)
+    : [];
+  state.teamDepartures = Array.isArray(league.teamDepartures)
+    ? league.teamDepartures.map(cleanWorldcupPlayerIdentity)
     : [];
   state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
   state.finance = {
@@ -3999,6 +4542,7 @@ const applyLeague = (league) => {
   state.liveRoundDebug = null;
   state.selectedLiveRoundUserId = null;
   state.rivalTeam = null;
+  state.rivalProfiles = {};
   renderLeagueIdentity();
 
   qs("#competition-select").value = state.competition;
@@ -4054,6 +4598,7 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
       ...league,
       marketPlayers: league.marketPlayers?.length ? league.marketPlayers : remote.marketPlayers,
       teamPlayers: league.teamPlayers?.length ? league.teamPlayers : remote.teamPlayers,
+      teamDepartures: league.teamDepartures?.length ? league.teamDepartures : (remote.teamDepartures || []),
       finance: { ...(remote.finance || {}), ...(league.finance || {}) },
       weights: { ...(remote.weights || {}), ...(league.weights || {}) },
       filters: { ...(remote.filters || {}), ...(league.filters || {}) },
@@ -4128,6 +4673,7 @@ const saveActiveLeague = async () => {
         scoring: state.scoring,
         marketPlayers: state.players,
         teamPlayers: state.teamPlayers,
+        teamDepartures: state.teamDepartures,
         finance: state.finance,
         weights: state.weights,
         filters: state.filters,
@@ -4514,6 +5060,41 @@ const enrichPlayerListBatched = async (players, forceRefresh = false, onProgress
   };
 };
 
+let teamAlertRefreshPromise = null;
+const refreshTeamAlertSources = async () => {
+  if (!state.teamPlayers.length || !canUseApi()) {
+    renderTeamAlerts();
+    return false;
+  }
+  if (teamAlertRefreshPromise) return teamAlertRefreshPromise;
+  teamAlertRefreshPromise = (async () => {
+    setTeamStatus("Revisando noticias e incidencias de tu plantilla...", "busy");
+    try {
+      const { players, payload } = await enrichPlayerListBatched(state.teamPlayers, false, (done, total) => {
+        setTeamStatus(`Revisando alertas de plantilla: ${done}/${total}...`, "busy");
+      });
+      state.teamPlayers = players;
+      state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
+      renderTeam();
+      renderLineup();
+      renderTable();
+      await saveActiveLeague();
+      const alertCount = buildTeamAlerts().length;
+      setTeamStatus(alertCount
+        ? `Plantilla revisada: ${alertCount} aviso${alertCount === 1 ? "" : "s"} importante${alertCount === 1 ? "" : "s"}.`
+        : "Plantilla revisada: sin incidencias importantes.", "ready");
+      return payload.failedBatches === 0;
+    } catch (error) {
+      renderTeamAlerts();
+      setTeamStatus("No se pudieron actualizar las alertas; se muestran los ultimos datos guardados.", "error");
+      return false;
+    } finally {
+      teamAlertRefreshPromise = null;
+    }
+  })();
+  return teamAlertRefreshPromise;
+};
+
 const enrichCurrentMarket = async (forceRefresh = false) => {
   if (!state.players.length || state.isEnriching) return;
   if (!canUseApi()) {
@@ -4789,10 +5370,25 @@ const importFromBiwenger = async (kind) => {
   setBiwengerBusy(true, label);
   setBiwengerStatus(kind === "team" ? "Importando tu plantilla real..." : "Importando el mercado real...", "busy");
   try {
+    const knownTeamPlayers = kind === "team"
+      ? [...state.teamPlayers, ...state.teamDepartures].map((player) => ({
+          id: player.id,
+          biwengerPlayerId: player.biwengerPlayerId,
+          name: player.name,
+          team: player.team,
+          position: player.position,
+          biwengerPosition: player.biwengerPosition,
+          price: player.price,
+          competitionPoints: player.competitionPoints,
+          media: player.media,
+          sourceLinks: player.sourceLinks,
+          sourceSummary: player.sourceSummary
+        }))
+      : [];
     const response = await apiFetch("/api/biwenger/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind })
+      body: JSON.stringify({ kind, knownTeamPlayers })
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -4808,8 +5404,8 @@ const importFromBiwenger = async (kind) => {
 
     if (kind === "team") {
       state.teamPlayers = importedPlayers;
+      state.teamDepartures = hydrateImportedPlayers(payload.departedPlayers || []);
       state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
-      state.editableLineup = null;
       qs("#team-text").value = biwengerPlayersToText(importedPlayers);
       qs("#market-text").value = biwengerPlayersToText(state.players);
       renderTeam();
@@ -4854,6 +5450,7 @@ const importFromBiwenger = async (kind) => {
         ? `Equipo importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
         : `Mercado importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
     );
+    if (kind === "team") await notifyDailyPlanIfNeeded();
     return true;
   } catch (error) {
     const message = error.message || "No se pudo importar desde Biwenger.";
@@ -4908,6 +5505,63 @@ const syncSelectedLeagueWithBiwenger = async () => {
     return false;
   } finally {
     setBiwengerBusy(false);
+  }
+};
+
+const autoSyncRecord = () => {
+  const records = readJsonStorage(AUTO_SYNC_KEY, {});
+  return records[String(state.activeLeagueId || "local")] || null;
+};
+
+const saveAutoSyncRecord = (record) => {
+  const records = readJsonStorage(AUTO_SYNC_KEY, {});
+  records[String(state.activeLeagueId || "local")] = record;
+  writeJsonStorage(AUTO_SYNC_KEY, records);
+};
+
+const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
+  if (state.autoSync.running) return false;
+  const previous = autoSyncRecord();
+  const previousTime = new Date(previous?.completedAt || 0).getTime();
+  const freshEnough = Number.isFinite(previousTime) && Date.now() - previousTime < 20 * 60 * 1000;
+  if (!force && (!state.preferences.autoSync || freshEnough)) {
+    state.autoSync.lastAt = previous?.completedAt || state.autoSync.lastAt;
+    state.autoSync.status = freshEnough ? "fresh" : "disabled";
+    renderDailyPlan(filteredPlayers());
+    return true;
+  }
+  state.autoSync.running = true;
+  state.autoSync.status = "running";
+  renderDailyPlan(filteredPlayers());
+  let success = false;
+  try {
+    if (state.biwenger.authenticated) {
+      success = await syncSelectedLeagueWithBiwenger();
+      if (success) {
+        await loadLeagueOverview();
+        await ensureLiveRoundForFinance(false);
+      }
+    } else {
+      if (state.players.length) await enrichCurrentMarket(false);
+      await refreshTeamAlertSources();
+      success = true;
+    }
+    if (!success) throw new Error("La sincronización no pudo completar todos los datos.");
+    const completedAt = new Date().toISOString();
+    state.autoSync.lastAt = completedAt;
+    state.autoSync.status = "ready";
+    saveAutoSyncRecord({ completedAt, reason, leagueId: state.activeLeagueId, playerCount: state.players.length, teamCount: state.teamPlayers.length });
+    renderDailyPlan(filteredPlayers());
+    await notifyDailyPlanIfNeeded();
+    return true;
+  } catch (error) {
+    state.autoSync.status = "error";
+    const target = qs("#daily-plan-status");
+    if (target) target.textContent = `${error.message || "Sincronización incompleta"} Se mantienen los últimos datos válidos.`;
+    return false;
+  } finally {
+    state.autoSync.running = false;
+    renderDailyPlan(filteredPlayers());
   }
 };
 
@@ -6252,6 +6906,7 @@ const loadRivalTeam = async (userId) => {
       .map(([position, targetCount]) => ({ position, gap: targetCount - (counts[position] || 0) }))
       .sort((a, b) => b.gap - a.gap)[0];
     const analysis = buildRivalAnalysis(players, payload.teamValue, weakest, { ...payload, sourceDiagnostics });
+    state.rivalProfiles[String(payload.userId || userId)] = { ...analysis, name: payload.name || "Rival", updatedAt: new Date().toISOString(), weakestPosition: weakest?.position || null };
     qs("#rival-intelligence").innerHTML = renderRivalAnalysis(analysis);
     target.innerHTML = players.length ? players.map((player) => `
       <div class="mini-player-row rival-player-row">
@@ -6331,6 +6986,12 @@ const buildRivalAnalysis = (players, teamValue, weakest, payload = {}) => {
   const tradingEdge = Number.isFinite(Number(tradeSummary.netBalance))
     ? clamp(50 + Number(tradeSummary.netBalance) / 250000)
     : null;
+  const visibleOverbids = (tradeSummary.transactions || [])
+    .map((trade) => Number(trade.overbid))
+    .filter(Number.isFinite);
+  const averageOverbid = visibleOverbids.length
+    ? Math.round(visibleOverbids.reduce((sum, value) => sum + value, 0) / visibleOverbids.length)
+    : null;
   const sourceDiagnostics = payload.sourceDiagnostics || {};
   const sourceSummary = {
     totalPlayers: players.length,
@@ -6391,6 +7052,7 @@ const buildRivalAnalysis = (players, teamValue, weakest, payload = {}) => {
     liquidity,
     marketActivity,
     tradingEdge,
+    averageOverbid,
     teamValue: normalizedTeamValue,
     cash: Number.isFinite(cash) ? cash : null,
     maximumBid: Number.isFinite(maximumBid) ? maximumBid : null,
@@ -6455,6 +7117,7 @@ const renderRivalAnalysis = (analysis) => `
       <div><span>Potencial mejor once</span><strong>${analysis.starterPoints}</strong></div>
       <div><span>Compras / ventas</span><strong>${Number(analysis.tradeSummary?.boughtCount || 0)} / ${Number(analysis.tradeSummary?.soldCount || 0)}</strong></div>
       <div><span>Balance mercado</span><strong>${formatFinanceMoney(Number(analysis.tradeSummary?.netBalance || 0))}</strong></div>
+      <div><span>Sobrepuja media</span><strong>${analysis.averageOverbid === null ? "Sin dato" : formatFinanceMoney(analysis.averageOverbid)}</strong></div>
     </div>
     ${Array.isArray(analysis.tradeSummary?.transactions) && analysis.tradeSummary.transactions.length ? `
       <div class="rival-trades">
@@ -7126,6 +7789,7 @@ const analyzePlayer = (player, allPlayers) => {
   score += Math.min(3.5, intelligence.pointsPerMillion * 1.5);
   score -= intelligence.contextualRisk * 0.12;
   score += (recent.score - 50) * 0.46;
+  score += learnedDecisionAdjustment(player, "bid");
   if (recent.hot) score += recent.average >= 8 ? 10 : 7;
   if (recent.cold) {
     score = Math.min(score - (state.preferences.riskAverse ? 24 : 18), state.preferences.riskAverse ? 44 : 52);
@@ -7292,6 +7956,12 @@ const syncSettingsControls = () => {
   if (riskAverse) riskAverse.checked = Boolean(state.preferences.riskAverse);
   const investmentMode = qs("#investment-mode");
   if (investmentMode) investmentMode.checked = Boolean(state.preferences.investmentMode);
+  const autoSync = qs("#auto-sync-enabled");
+  if (autoSync) autoSync.checked = state.preferences.autoSync !== false;
+  const notifications = qs("#notifications-enabled");
+  if (notifications) notifications.checked = Boolean(state.preferences.notifications);
+  state.dailyPlanMode = state.preferences.planMode || state.dailyPlanMode || "balanced";
+  updateNotificationStatus();
   const rewards = normalizedRewardPreferences();
   const rewardInputs = {
     "#reward-point-value": rewards.pointValue,
@@ -7995,6 +8665,12 @@ const lineupPlayerScore = (player) => {
   let score = player.starter * 0.48 + system * 0.27 + player.form * 0.25;
   score -= riskPenalty(player.risk) * 0.8;
   const intelligence = player.marketIntelligence || marketIntelligenceForPlayer(player, system, player.priceScore || 50, player.squadFitScore || squadFitScore(player));
+  const recent = player.recentForm || recentFormProfile(player);
+  const confidence = analysisConfidence(player).score;
+  score += (recent.score - 50) * 0.18;
+  score += (confidence - 50) * 0.07;
+  score += Math.min(8, Number(intelligence.expectedPoints || 0) * 0.8);
+  score += (intelligence.calendar.score - 50) * 0.08;
   if (player.health?.status === "suspended") score -= 55;
   else if (player.health?.status === "injured") score -= 42;
   if (player.health?.status === "doubtful") score -= 16;
@@ -8570,6 +9246,7 @@ const analyzeTeam = async () => {
     const parsedPlayers = parseMarketText(inputText);
     const players = mergeTeamPlayerEdits(parsedPlayers, state.teamPlayers);
     state.teamPlayers = players;
+    state.teamDepartures = [];
     state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
     state.editableLineup = null;
     qs("#market-text").value = biwengerPlayersToText(state.players);
@@ -8738,11 +9415,19 @@ const initEvents = () => {
   });
   qs("#run-compare").addEventListener("click", runCompare);
   qs("#refresh-sources").addEventListener("click", () => enrichCurrentMarket(true));
+  qs("#refresh-daily-plan")?.addEventListener("click", () => runAutomaticSync({ force: true, reason: "manual" }));
+  qsa("[data-plan-mode]").forEach((button) => button.addEventListener("click", () => {
+    state.dailyPlanMode = button.dataset.planMode;
+    state.preferences.planMode = state.dailyPlanMode;
+    persistLeagueSettings();
+    renderDailyPlan(filteredPlayers());
+  }));
   qs("#analyze-team").addEventListener("click", analyzeTeam);
   qs("#calculate-lineup").addEventListener("click", selectIdealLineup);
   qs("#clear-team").addEventListener("click", () => {
     qs("#team-text").value = "";
     state.teamPlayers = [];
+    state.teamDepartures = [];
     state.editableLineup = null;
     state.selectedTeamImageFile = null;
     qs("#team-image-upload").value = "";
@@ -8782,11 +9467,7 @@ const initEvents = () => {
     } catch (error) {
       // The local selection remains authoritative when the server is unavailable.
     }
-    if (state.biwenger.authenticated) {
-      await syncSelectedLeagueWithBiwenger();
-    } else if (state.players.length) {
-      enrichCurrentMarket(hasStaleStarterSignals(state.players));
-    }
+    await runAutomaticSync({ force: true, reason: "league-change" });
   });
 
   qs("#create-league").addEventListener("click", createLeagueFromInput);
@@ -8867,6 +9548,21 @@ const initEvents = () => {
     renderTable();
     persistLeagueSettings();
   });
+  qs("#auto-sync-enabled")?.addEventListener("change", (event) => {
+    state.preferences.autoSync = event.target.checked;
+    persistLeagueSettings();
+    if (event.target.checked) runAutomaticSync({ force: true, reason: "settings" });
+  });
+  qs("#notifications-enabled")?.addEventListener("change", async (event) => {
+    if (event.target.checked) {
+      await requestDecisionNotifications();
+    } else {
+      state.preferences.notifications = false;
+      persistLeagueSettings();
+      updateNotificationStatus();
+    }
+  });
+  qs("#enable-notifications")?.addEventListener("click", requestDecisionNotifications);
   const rewardInputMap = {
     "#reward-point-value": "pointValue",
     "#reward-rank-1": "rank1",
@@ -8939,6 +9635,7 @@ const initEvents = () => {
     if (!file) return;
     state.selectedTeamImageFile = file;
     state.teamPlayers = [];
+    state.teamDepartures = [];
     state.editableLineup = null;
     qs("#team-text").value = "";
     renderTeam();
@@ -8957,6 +9654,7 @@ const init = async () => {
   initNavigation();
   initEvents();
   initScorebatWidget();
+  registerRadarServiceWorker();
   syncApiConfigUi();
   updateWeightLabels();
   refreshOcrAvailability();
@@ -8968,7 +9666,8 @@ const init = async () => {
   await loadLeagues();
   await refreshBiwengerStatus();
   await refreshFutbolFantasyStatus();
-  if (state.biwenger.authenticated) await syncSelectedLeagueWithBiwenger();
+  await runAutomaticSync({ force: false, reason: "startup" });
+  window.setInterval(() => runAutomaticSync({ force: false, reason: "periodic" }), 10 * 60 * 1000);
 };
 
 init();

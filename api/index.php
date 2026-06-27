@@ -372,7 +372,10 @@ if ($route === '/biwenger/import' && $requestMethod === 'POST') {
         send_json(401, ['error' => 'No hay una sesion de Biwenger abierta']);
     }
     try {
-        $import = biwenger_import_players($sessionState, $kind, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
+        $knownTeamPlayers = $kind === 'team'
+            ? array_values(array_filter(array_slice((array)($payload['knownTeamPlayers'] ?? []), 0, 80), 'is_array'))
+            : [];
+        $import = biwenger_import_players($sessionState, $kind, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls, $knownTeamPlayers);
         $_SESSION['biwenger'] = array_merge($sessionState, [
             'syncedAt' => gmdate('c'),
             'competition' => $import['competition'] ?? ($sessionState['competition'] ?? ''),
@@ -1588,7 +1591,7 @@ function biwenger_competition_value($competition): string
     return trim((string)$competition);
 }
 
-function biwenger_import_players(array $session, string $kind, int $timeoutSeconds, array $headers, bool $strictTls): array
+function biwenger_import_players(array $session, string $kind, int $timeoutSeconds, array $headers, bool $strictTls, array $knownTeamPlayers = []): array
 {
     $leagueId = (int)($session['leagueId'] ?? 0);
     $userId = (int)($session['userId'] ?? 0);
@@ -1607,6 +1610,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
         'bidTotal' => 0
     ];
 
+    $departedPlayers = [];
     if ($kind === 'team') {
         try {
             $response = biwenger_private_get_json(
@@ -1650,6 +1654,29 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
             $catalogEntry = is_array($catalog['playersById'][$playerId] ?? null) ? $catalog['playersById'][$playerId] : [];
             $merged = array_merge($catalogEntry, $entry);
             $players[] = biwenger_normalize_player($merged, $catalog, $competition, true);
+        }
+        $currentPlayerIds = array_fill_keys(array_values(array_filter(array_map(static function ($player) {
+            return (int)($player['biwengerPlayerId'] ?? $player['id'] ?? 0);
+        }, $players))), true);
+        foreach ($knownTeamPlayers as $knownPlayer) {
+            $knownId = (int)($knownPlayer['biwengerPlayerId'] ?? $knownPlayer['id'] ?? 0);
+            if ($knownId <= 0 || isset($currentPlayerIds[$knownId]) || isset($catalog['playersById'][$knownId])) continue;
+            $departedPlayers[] = [
+                'id' => $knownPlayer['id'] ?? ('departed-' . $knownId),
+                'biwengerPlayerId' => $knownId,
+                'name' => (string)($knownPlayer['name'] ?? 'Jugador'),
+                'team' => (string)($knownPlayer['team'] ?? ''),
+                'position' => (string)($knownPlayer['biwengerPosition'] ?? $knownPlayer['position'] ?? 'MC'),
+                'biwengerPosition' => (string)($knownPlayer['biwengerPosition'] ?? $knownPlayer['position'] ?? 'MC'),
+                'price' => (int)($knownPlayer['price'] ?? 0),
+                'competitionPoints' => (int)($knownPlayer['competitionPoints'] ?? 0),
+                'media' => is_array($knownPlayer['media'] ?? null) ? $knownPlayer['media'] : [],
+                'sourceLinks' => is_array($knownPlayer['sourceLinks'] ?? null) ? $knownPlayer['sourceLinks'] : [],
+                'sourceSummary' => is_array($knownPlayer['sourceSummary'] ?? null) ? $knownPlayer['sourceSummary'] : [],
+                'outOfCompetition' => true,
+                'activeInCompetition' => false,
+                'statusText' => 'Biwenger confirma que el jugador ya no figura en el catalogo de esta competicion'
+            ];
         }
         $finance['balance'] = isset($userData['balance']) ? (int)$userData['balance'] : $finance['balance'];
         $finance['teamValue'] = array_sum(array_map(static function ($player) {
@@ -1720,7 +1747,8 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
         'competition' => $competition,
         'importedAt' => gmdate('c'),
         'finance' => $finance,
-        'players' => array_values(array_filter($players))
+        'players' => array_values(array_filter($players)),
+        'departedPlayers' => $kind === 'team' ? $departedPlayers : []
     ];
 }
 
@@ -2021,6 +2049,7 @@ function sanitize_league_payload(array $payload): array
             'id', 'name', 'team', 'clubTeam', 'baseTeam', 'nationalTeam', 'position', 'biwengerPosition', 'price',
             'starter', 'form', 'asScore', 'sofascore', 'stats', 'valueTrend', 'risk',
             'riskReasons', 'sourceStatus', 'dataConfidence', 'sources', 'note',
+            'statusText', 'outOfCompetition', 'activeInCompetition',
             'competitionScope', 'health', 'sourceLinks', 'sourceSummary', 'media',
             'referenceValue', 'competitionProfiles', 'contextLabel', 'criteriaVersion',
             'biwengerValue', 'biwengerDiff', 'label', 'recommendation', 'maxBid', 'systemScore',
@@ -2053,6 +2082,7 @@ function sanitize_league_payload(array $payload): array
         'scoring' => sanitize_scoring($payload['scoring'] ?? 'mixed'),
         'marketPlayers' => $sanitizePlayers($payload['marketPlayers'] ?? []),
         'teamPlayers' => $sanitizePlayers($payload['teamPlayers'] ?? []),
+        'teamDepartures' => $sanitizePlayers($payload['teamDepartures'] ?? []),
         'finance' => sanitize_finance_payload($payload['finance'] ?? []),
         'weights' => sanitize_weights_payload($payload['weights'] ?? []),
         'filters' => sanitize_filters_payload($payload['filters'] ?? []),
@@ -2103,6 +2133,11 @@ function sanitize_preferences_payload($preferences): array
         'strictBudget' => !array_key_exists('strictBudget', $preferences) || !empty($preferences['strictBudget']),
         'riskAverse' => !empty($preferences['riskAverse']),
         'investmentMode' => !empty($preferences['investmentMode']),
+        'autoSync' => !array_key_exists('autoSync', $preferences) || !empty($preferences['autoSync']),
+        'notifications' => !empty($preferences['notifications']),
+        'planMode' => in_array((string)($preferences['planMode'] ?? 'balanced'), ['conservative', 'balanced', 'aggressive'], true)
+            ? (string)$preferences['planMode']
+            : 'balanced',
         'rewards' => [
             'pointValue' => $money($rewards['pointValue'] ?? 0),
             'rank1' => $money($rewards['rank1'] ?? 0),

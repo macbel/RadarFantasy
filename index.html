@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#081317" />
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=43" />
+    <link rel="stylesheet" href="styles.css?v=46" />
   </head>
   <body>
     <div class="app-shell">
@@ -297,62 +297,27 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
             </div>
           </section>
           <div class="bid-analysis" id="bid-analysis">Conecta Biwenger para analizar el impacto de tus pujas.</div>
-          <section class="market-strategy-grid" aria-label="Plan estratégico de mercado">
-            <article class="strategy-panel strategy-panel-wide">
-              <div class="section-heading compact-heading">
-                <div>
-                  <p class="eyebrow">Plan de mercado</p>
-                  <h3>Estrategia para hoy</h3>
-                </div>
+          <section class="market-analysis-center" id="market-analysis-center" aria-label="Centro de análisis del mercado">
+            <div class="market-analysis-header">
+              <div><p class="eyebrow">Centro de análisis</p><h3>Lecturas del mercado</h3></div>
+              <button class="ghost-button compact-button" type="button" id="market-analysis-toggle" aria-expanded="true" aria-controls="market-analysis-body">Ocultar</button>
+            </div>
+            <div id="market-analysis-body">
+              <div class="market-analysis-tabs" role="tablist" aria-label="Secciones del análisis">
+                <button type="button" role="tab" aria-selected="true" data-analysis-tab="plan">Plan</button>
+                <button type="button" role="tab" aria-selected="false" data-analysis-tab="radar">Radar</button>
+                <button type="button" role="tab" aria-selected="false" data-analysis-tab="alerts">Alertas <span id="market-alert-count" class="analysis-tab-count" hidden>0</span></button>
+                <button type="button" role="tab" aria-selected="false" data-analysis-tab="sources">Fuentes</button>
+                <button type="button" role="tab" aria-selected="false" data-analysis-tab="history">Histórico</button>
               </div>
-              <div id="market-plan" class="market-plan">
-                <p class="muted-empty compact">Carga el mercado para generar una estrategia con tu saldo, equipo y pujas.</p>
+              <div class="market-analysis-content">
+                <section class="market-analysis-panel" role="tabpanel" data-analysis-panel="plan"><div id="market-plan" class="market-plan"><p class="muted-empty compact">Carga el mercado para generar una estrategia con tu saldo, equipo y pujas.</p></div></section>
+                <section class="market-analysis-panel" role="tabpanel" data-analysis-panel="radar" hidden><div id="opportunity-radar" class="opportunity-radar"><p class="muted-empty compact">Sin mercado analizado.</p></div></section>
+                <section class="market-analysis-panel" role="tabpanel" data-analysis-panel="alerts" hidden><div id="market-alerts" class="market-alerts"><p class="muted-empty compact">Sin alertas todavía.</p></div></section>
+                <section class="market-analysis-panel" role="tabpanel" data-analysis-panel="sources" hidden><div id="source-quality-panel" class="source-quality-panel"><p class="muted-empty compact">Actualiza fuentes para medir cobertura.</p></div></section>
+                <section class="market-analysis-panel" role="tabpanel" data-analysis-panel="history" hidden><div id="decision-history-panel" class="decision-history-panel"><p class="muted-empty compact">Aparecerán las últimas lecturas del mercado.</p></div></section>
               </div>
-            </article>
-            <article class="strategy-panel">
-              <div class="section-heading compact-heading">
-                <div>
-                  <p class="eyebrow">Radar</p>
-                  <h3>Oportunidades y trampas</h3>
-                </div>
-              </div>
-              <div id="opportunity-radar" class="opportunity-radar">
-                <p class="muted-empty compact">Sin mercado analizado.</p>
-              </div>
-            </article>
-            <article class="strategy-panel">
-              <div class="section-heading compact-heading">
-                <div>
-                  <p class="eyebrow">Alertas</p>
-                  <h3>Lo que cambia la puja</h3>
-                </div>
-              </div>
-              <div id="market-alerts" class="market-alerts">
-                <p class="muted-empty compact">Sin alertas todavía.</p>
-              </div>
-            </article>
-            <article class="strategy-panel">
-              <div class="section-heading compact-heading">
-                <div>
-                  <p class="eyebrow">Fuentes</p>
-                  <h3>Confianza de datos</h3>
-                </div>
-              </div>
-              <div id="source-quality-panel" class="source-quality-panel">
-                <p class="muted-empty compact">Actualiza fuentes para medir cobertura.</p>
-              </div>
-            </article>
-            <article class="strategy-panel">
-              <div class="section-heading compact-heading">
-                <div>
-                  <p class="eyebrow">Histórico</p>
-                  <h3>Decisiones aprendidas</h3>
-                </div>
-              </div>
-              <div id="decision-history-panel" class="decision-history-panel">
-                <p class="muted-empty compact">Aparecerán las últimas lecturas del mercado.</p>
-              </div>
-            </article>
+            </div>
           </section>
           <section class="market-decision-center" aria-label="Centro de decision de mercado">
             <div class="section-heading compact-heading">
@@ -381,8 +346,9 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
             <div class="table-panel" aria-label="Tabla de mercado">
               <div class="section-heading">
                 <div>
-                  <p class="eyebrow">Prioridad</p>
-                  <h3>Ordenado por recomendacion</h3>
+                  <p class="eyebrow" id="market-order-kicker">Prioridad real</p>
+                  <h3 id="market-order-title">Candidatos primero</h3>
+                  <p class="market-order-description" id="market-order-description">La decisión final manda sobre la puntuación de análisis.</p>
                 </div>
                 <div class="market-heading-actions">
                   <button class="ghost-button" type="button" id="refresh-market-bids">
@@ -422,7 +388,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                       <th>Riesgo</th>
                       <th>Datos</th>
                       <th>Ficha</th>
-                      <th>Nota</th>
+                      <th title="Puntuación técnica; la decisión final determina si conviene pujar">Análisis</th>
                     </tr>
                   </thead>
                   <tbody id="results-body">
@@ -551,6 +517,11 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <div>
                   <span class="muted-label">Revalorización</span>
                   <strong id="team-finance-revaluation">S/D</strong>
+                </div>
+                <div>
+                  <span class="muted-label">Monedas Biwenger</span>
+                  <strong id="team-biwenger-credits">S/D</strong>
+                  <small>Los vídeos premiados se gestionan en la app oficial</small>
                 </div>
               </div>
               <div class="position-counts" id="team-position-counts"></div>
@@ -950,24 +921,18 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     Euros por punto
                     <input id="reward-point-value" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
                   </label>
-                  <label>
-                    Premio 1º jornada
-                    <input id="reward-rank-1" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
-                  </label>
-                  <label>
-                    Premio 2º jornada
-                    <input id="reward-rank-2" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
-                  </label>
-                  <label>
-                    Premio 3º jornada
-                    <input id="reward-rank-3" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
-                  </label>
-                  <label>
-                    MVP partido
-                    <input id="reward-mvp" class="currency-input" type="text" inputmode="numeric" placeholder="0" />
-                  </label>
+                  <label>Abono fijo fin de jornada<input id="reward-fixed" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
+                  <label>Abono por gol anotado<input id="reward-goal" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
+                  <label>Jugador en once ideal<input id="reward-ideal-lineup" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
+                  <label>MVP partido<input id="reward-game-mvp" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
+                  <label>1º posición en la jornada<input id="reward-round-rank-1" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
+                  <label>2º posición en la jornada<input id="reward-round-rank-2" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
+                  <label>3º posición en la jornada<input id="reward-round-rank-3" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
+                  <label>1º posición en la liga<input id="reward-league-rank-1" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
+                  <label>2º posición en la liga<input id="reward-league-rank-2" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
+                  <label>3º posición en la liga<input id="reward-league-rank-3" class="currency-input" type="text" inputmode="numeric" placeholder="0" /></label>
                 </div>
-                <p class="settings-help">El asistente intenta leer primero de Biwenger el total real a cobrar en la jornada en curso. Si Biwenger no lo expone, usa estos premios como estimacion de respaldo.</p>
+                <p class="settings-help">Se usan primero los ajustes de premios devueltos por Biwenger. Estos importes quedan como respaldo cuando la liga no los expone.</p>
               </div>
               <button class="ghost-button demo-button" type="button" id="load-demo">
                 <span class="icon icon-upload" aria-hidden="true"></span>
@@ -980,6 +945,31 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     </div>
 
     <div id="recent-form-popover" class="recent-form-popover" role="dialog" aria-live="polite" hidden></div>
+
+    <aside id="data-sync-popup" class="data-sync-popup" role="status" aria-live="polite" aria-atomic="true" hidden data-mode="busy">
+      <span class="data-sync-spinner" aria-hidden="true"></span>
+      <div>
+        <strong id="data-sync-popup-title">Actualizando datos</strong>
+        <p id="data-sync-popup-message">Sincronizando la información más reciente...</p>
+      </div>
+    </aside>
+
+    <div id="bid-count-popup" class="bid-count-popup" hidden>
+      <button class="bid-count-backdrop" type="button" id="bid-count-popup-backdrop" aria-label="Cerrar resultado de pujas"></button>
+      <section class="bid-count-dialog" role="dialog" aria-modal="true" aria-labelledby="bid-count-popup-title" data-mode="ready">
+        <header>
+          <div>
+            <p class="eyebrow">Respuesta de Biwenger</p>
+            <h3 id="bid-count-popup-title">Pujas rivales</h3>
+          </div>
+          <button class="icon-button" type="button" id="close-bid-count-popup" aria-label="Cerrar">
+            <span class="icon icon-clear" aria-hidden="true"></span>
+          </button>
+        </header>
+        <p id="bid-count-popup-message" aria-live="polite"></p>
+        <button class="primary-button" type="button" id="accept-bid-count-popup">Aceptar</button>
+      </section>
+    </div>
 
     <div id="team-alerts-modal" class="team-alerts-modal" hidden>
       <button class="team-alerts-backdrop" type="button" id="team-alerts-backdrop" aria-label="Cerrar alertas"></button>
@@ -1020,9 +1010,9 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     </div>
 
     <script src="app-config.js?v=11"></script>
-    <script src="data.js?v=11"></script>
+    <script src="data.js?v=13"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=62"></script>
+    <script src="app.js?v=69"></script>
   </body>
 </html>

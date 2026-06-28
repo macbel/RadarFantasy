@@ -1,4 +1,4 @@
-const CACHE_NAME = "radar-fantasy-shell-v3";
+const CACHE_NAME = "radar-fantasy-shell-v16";
 const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./data.js", "./assets/app-icon.png"];
 
 self.addEventListener("install", (event) => {
@@ -13,6 +13,8 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET" || !event.request.url.startsWith(self.location.origin)) return;
+  const url = new URL(event.request.url);
+  if (url.pathname.includes("/api/")) return;
   event.respondWith(fetch(event.request).then((response) => {
     const copy = response.clone();
     caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));

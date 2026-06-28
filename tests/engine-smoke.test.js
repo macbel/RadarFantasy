@@ -114,6 +114,115 @@ if (!affordableFit || budgetAnalyzed[0].id !== "affordable-fit") {
 state.finance.maximumBid = previousMaximumBid;
 state.biwengerOperations = previousOperations;
 
+const noMinutesPlayers = hydrateImportedPlayers([
+  {
+    id: "no-minutes-forward",
+    name: "Delantero sin minutos",
+    team: "Equipo prueba",
+    position: "DL",
+    price: 4300000,
+    starter: 59,
+    form: 95,
+    asScore: 80,
+    sofascore: 80,
+    stats: 80,
+    risk: "low",
+    sourceStatus: "live",
+    dataConfidence: 90,
+    sourceSummary: {
+      recentMatches: [
+        { provider: "biwenger", points: { biwenger: 0, mixed: 0 }, minutes: 0 },
+        { provider: "biwenger", points: { biwenger: 0, mixed: 0 }, minutes: 0 },
+        { provider: "biwenger", points: { biwenger: 0, mixed: 0 }, minutes: 0 }
+      ]
+    }
+  }
+]);
+const noMinutesAnalyzed = analyzePlayer(noMinutesPlayers[0], noMinutesPlayers);
+if (!noMinutesAnalyzed.recentForm.noRecentMinutes || noMinutesAnalyzed.marketDecision.type !== "avoid") {
+  throw new Error("A player without recent minutes must be excluded regardless of form weight: " + JSON.stringify(noMinutesAnalyzed));
+}
+if (marketTopCandidates([noMinutesAnalyzed]).length !== 0) {
+  throw new Error("Players marked avoid or without minutes must never enter the Top 5");
+}
+const decisionOrdered = [
+  { id: "avoid-high", recommendation: 95, marketDecision: { type: "avoid" }, recentForm: {} },
+  { id: "limited-low", recommendation: 60, marketDecision: { type: "limited" }, recentForm: {} }
+].sort(compareMarketRecommendations);
+if (decisionOrdered[0].id !== "limited-low") {
+  throw new Error("Final market decision must take priority over raw score");
+}
+
+const previousFixtureCompetition = state.competition;
+const previousLeagueFixtures = state.leagueFixtures;
+const futureTimestamp = Math.floor(Date.now() / 1000) + 86400;
+state.competition = "worldcup";
+state.leagueFixtures = {
+  events: [{
+    id: "usa-next",
+    timestamp: futureTimestamp,
+    home: { name: "USA" },
+    away: { name: "Bosnia & Herzegovina" }
+  }]
+};
+const usaMatch = nextMatchForPlayer({ team: "Estados Unidos" });
+if (!usaMatch || usaMatch.opponent?.name !== "Bosnia & Herzegovina") {
+  throw new Error("National-team aliases must link Estados Unidos with USA fixtures");
+}
+const worldCupAliasPairs = [
+  ["Jordania", "Jordan"],
+  ["Nueva Zelanda", "New Zealand"],
+  ["Arabia Saudita", "Saudi Arabia"],
+  ["Sudáfrica", "South Africa"],
+  ["Turquía", "Türkiye"],
+  ["Chequia", "Czechia"],
+  ["Curazao", "Curaçao"],
+  ["Costa de Marfil", "Côte d'Ivoire"],
+  ["Egipto", "Egypt"],
+  ["Suiza", "Switzerland"]
+];
+if (worldCupAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(biwengerName, fixtureName) < 88)) {
+  throw new Error("World Cup team translations must match SofaScore fixture names: " + JSON.stringify(worldCupAliasPairs));
+}
+
+state.competition = "club";
+state.leagueFixtures = {
+  events: [{
+    id: "unrelated-next",
+    timestamp: futureTimestamp,
+    home: { name: "Equipo ajeno A" },
+    away: { name: "Equipo ajeno B" }
+  }]
+};
+const unmatchedFixturePlayers = hydrateImportedPlayers([{
+  id: "strong-unmatched-fixture",
+  name: "Titular sin enlace",
+  team: "Equipo fuerte",
+  position: "MC",
+  price: 3000000,
+  starter: 90,
+  form: 88,
+  asScore: 86,
+  sofascore: 87,
+  stats: 86,
+  risk: "low",
+  sourceStatus: "live",
+  dataConfidence: 88,
+  sourceSummary: {
+    recentMatches: [
+      { provider: "biwenger", points: { biwenger: 8, mixed: 8 }, minutes: 90 },
+      { provider: "biwenger", points: { biwenger: 7, mixed: 7 }, minutes: 85 },
+      { provider: "biwenger", points: { biwenger: 9, mixed: 9 }, minutes: 90 }
+    ]
+  }
+}]);
+const strongUnmatched = analyzePlayer(unmatchedFixturePlayers[0], unmatchedFixturePlayers);
+if (strongUnmatched.marketIntelligence.noNextMatch || !strongUnmatched.marketIntelligence.fixtureUnresolved || strongUnmatched.marketDecision.type === "avoid") {
+  throw new Error("A fixture matching failure must not become an automatic no-match rejection: " + JSON.stringify(strongUnmatched));
+}
+state.competition = previousFixtureCompetition;
+state.leagueFixtures = previousLeagueFixtures;
+
 const ocrSample = [
   "Mercado",
   "Oihan Sancet",
@@ -278,13 +387,36 @@ state.teamPlayers = hydrateImportedPlayers([{
   price: 1500000
 }]);
 const safeOwnOffers = activeOwnBidOffers([
-  { offerId: 10, playerId: 502, playerName: "Samu Costa", amount: 2100000, isMine: true, isIncoming: false, status: "pending", source: "outgoing", expiresTs: nowSeconds - 60 },
-  { offerId: 20, playerId: 501, playerName: "Jugador actual", amount: 1000000, isMine: true, isIncoming: false, status: "pending", source: "user", timestampTs: nowSeconds },
-  { offerId: 21, playerId: 501, playerName: "Jugador actual", amount: 1200000, isMine: true, isIncoming: false, status: "pending", source: "outgoing", timestampTs: nowSeconds },
-  { offerId: 22, playerId: 503, playerName: "Jugador propio", amount: 900000, isMine: true, isIncoming: false, status: "pending", source: "outgoing", timestampTs: nowSeconds }
+  { offerId: 10, playerId: 502, playerName: "Samu Costa", amount: 2100000, isMine: true, isIncoming: false, status: "waiting", source: "outgoing", expiresTs: nowSeconds - 60 },
+  { offerId: 20, playerId: 501, playerName: "Jugador actual", amount: 1000000, isMine: true, isIncoming: false, status: "waiting", source: "user", timestampTs: nowSeconds },
+  { offerId: 21, playerId: 501, playerName: "Jugador actual", amount: 1200000, isMine: true, isIncoming: false, status: "waiting", source: "outgoing", timestampTs: nowSeconds },
+  { offerId: 22, playerId: 503, playerName: "Jugador propio", amount: 900000, isMine: true, isIncoming: false, status: "waiting", source: "outgoing", timestampTs: nowSeconds },
+  { offerId: 23, playerId: 504, playerName: "Jugador Brasil", amount: 1400000, isMine: true, isIncoming: false, status: "waiting", source: "outgoing", isAuthoritativeOutgoing: true, timestampTs: nowSeconds },
+  { offerId: 24, playerId: 505, playerName: "Puja ya resuelta", amount: 1800000, isMine: true, isIncoming: false, status: "processed", source: "outgoing", isAuthoritativeOutgoing: true, timestampTs: nowSeconds }
 ]);
-if (safeOwnOffers.length !== 1 || safeOwnOffers[0].playerId !== 501 || safeOwnOffers[0].amount !== 1200000) {
+if (safeOwnOffers.length !== 2
+  || !safeOwnOffers.some((offer) => offer.playerId === 501 && offer.amount === 1200000)
+  || !safeOwnOffers.some((offer) => offer.playerId === 504 && offer.amount === 1400000)) {
   throw new Error("Own bid filter must drop expired, owned-player and duplicate stale offers: " + JSON.stringify(safeOwnOffers));
+}
+
+const safeIncomingOffers = activeIncomingOffers([
+  { offerId: 30, playerId: 503, fromId: 88, toId: 77, amount: 1000000, isIncoming: true, status: "waiting", timestampTs: nowSeconds - 10 },
+  { offerId: 31, playerId: 503, fromId: 88, toId: 77, amount: 1100000, isIncoming: true, status: "waiting", timestampTs: nowSeconds },
+  { offerId: 32, playerId: 503, fromId: 89, toId: 77, amount: 1200000, isIncoming: true, status: "waiting", timestampTs: nowSeconds }
+]);
+if (safeIncomingOffers.length !== 2 || !safeIncomingOffers.some((offer) => offer.offerId === 31)) {
+  throw new Error("Incoming offers must be deduplicated by player and bidder: " + JSON.stringify(safeIncomingOffers));
+}
+if (roundBidAmount(1000001) !== 1010000) {
+  throw new Error("Bid rounding must never reduce the current minimum amount");
+}
+if (teamPlayerBiwengerValue({ biwengerPlayerId: 1, price: 9000000, biwengerValue: 1000000 }) !== 1000000) {
+  throw new Error("Sale suggestions must use the official player value, not a stale listing price");
+}
+if (saleListingPrice({ price: 79348870, value: 12150000, priceSource: "amount" }) !== 12150000
+  || saleListingPrice({ price: 13500000, value: 12150000, priceSource: "price" }) !== 13500000) {
+  throw new Error("Sale listings must reject legacy amount-derived prices while preserving official prices");
 }
 
 state.finance.balance = -4000000;
@@ -389,6 +521,43 @@ if (conservativePlan.bids.length > aggressivePlan.bids.length || aggressivePlan.
 recordDailyActionFeedback({ id: "bid:2001", type: "bid", player: state.players[0] }, true);
 if (learnedDecisionAdjustment(state.players[0], "bid") <= 0) {
   throw new Error("Useful daily-plan feedback should create a bounded positive adjustment");
+}
+
+const requiredFormations = ["3-3-4", "3-6-1", "4-2-4", "4-6-0", "5-2-3"];
+if (requiredFormations.some((name) => !FORMATIONS.some((formation) => formation.name === name))) {
+  throw new Error("All official Biwenger extra formations must be selectable: " + JSON.stringify(FORMATIONS));
+}
+
+state.biwenger = { ...state.biwenger, connected: true, userId: 77, rewardSettings: {} };
+state.liveRound = {
+  teams: [{
+    userId: 77,
+    isMe: true,
+    points: 50,
+    pointsReliable: true,
+    provisionalRank: 2,
+    players: [{ roundGoals: 2, isIdeal: true, isGameMvp: true }, { roundGoals: 1 }]
+  }],
+  rewardSettings: {
+    available: true,
+    fixed: 100000,
+    pointValue: 10000,
+    goal: 50000,
+    idealLineup: 25000,
+    gameMvp: 40000,
+    roundRank2: 200000,
+    leagueRank1: 300000
+  },
+  officialReward: { available: false, amount: 0 }
+};
+state.leagueOverview = { standings: [{ userId: 77, isMe: true, position: 1 }] };
+const rewardEstimate = estimatedRoundReward();
+if (rewardEstimate.amount !== 1315000 || rewardEstimate.source !== "Ajustes de liga Biwenger") {
+  throw new Error("Round reward must combine the explicit Biwenger fields without guessing unrelated amounts: " + JSON.stringify(rewardEstimate));
+}
+const pitchHtml = renderLineupPitch({ POR: [{ id: "p1", biwengerPlayerId: 1, name: "Portero", position: "POR", roundPoints: 7, media: {} }], DF: [], MC: [], DL: [] });
+if (!pitchHtml.includes("Puntos en la ultima jornada cerrada") || pitchHtml.includes("scoring-badge")) {
+  throw new Error("Pitch cards must show only the round score circle, without accumulated points below");
 }
 
 console.log(JSON.stringify({

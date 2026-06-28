@@ -217,6 +217,21 @@ if ($route === '/biwenger/status' && $requestMethod === 'GET') {
             // Keep the remembered session usable even if the score system cannot be refreshed.
         }
     }
+    if (!empty($_SESSION['biwenger']['token'])) {
+        try {
+            $creditsResponse = biwenger_private_get_json(
+                'https://biwenger.as.com/api/v2/account/credits',
+                $_SESSION['biwenger'],
+                min($sourceTimeoutSeconds, 5),
+                $biwengerJsonHeaders,
+                $strictTls
+            );
+            $creditsValue = $creditsResponse['data'] ?? $creditsResponse['credits'] ?? $creditsResponse;
+            if (is_numeric($creditsValue)) $_SESSION['biwenger']['credits'] = (int)$creditsValue;
+        } catch (Throwable $error) {
+            // Credits are informative; a temporary failure must not disconnect the league.
+        }
+    }
     $sessionState = biwenger_session_state($_SESSION['biwenger'] ?? []);
     send_json(200, $sessionState);
 }
@@ -401,9 +416,14 @@ if ($route === '/biwenger/bid' && $requestMethod === 'POST') {
         send_json(400, ['error' => 'Jugador e importe de puja requeridos']);
     }
     try {
-        if ($toUserId <= 0) {
-            $toUserId = biwenger_market_owner_id($sessionState, $playerId, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
+        $marketContext = biwenger_market_player_context($sessionState, $playerId, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
+        if ($toUserId <= 0) $toUserId = (int)($marketContext['ownerId'] ?? 0);
+        $minimumAmount = (int)($marketContext['minimumAmount'] ?? 0);
+        if ($minimumAmount > 0 && $amount < $minimumAmount) {
+            send_json(409, ['error' => 'La puja minima actual es ' . number_format($minimumAmount, 0, ',', '.') . ' €. Actualiza el mercado antes de ejecutar el plan.']);
         }
+        $offerPayload = ['amount' => $amount, 'requestedPlayers' => [$playerId], 'type' => 'purchase'];
+        if ($toUserId > 0) $offerPayload['to'] = $toUserId;
         $result = biwenger_private_request_json(
             'POST',
             'https://biwenger.as.com/api/v2/offers/',
@@ -411,7 +431,7 @@ if ($route === '/biwenger/bid' && $requestMethod === 'POST') {
             $sourceTimeoutSeconds,
             $biwengerJsonHeaders,
             $strictTls,
-            ['amount' => $amount, 'requestedPlayers' => [$playerId], 'to' => $toUserId > 0 ? $toUserId : null, 'type' => 'purchase']
+            $offerPayload
         );
         $operations = biwenger_operations_center($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
         $createdOfferId = (int)($result['data']['id'] ?? $result['id'] ?? 0);
@@ -454,9 +474,14 @@ if ($route === '/biwenger/bid-update' && $requestMethod === 'POST') {
         send_json(400, ['error' => 'Oferta, jugador e importe requeridos']);
     }
     try {
-        if ($toUserId <= 0) {
-            $toUserId = biwenger_market_owner_id($sessionState, $playerId, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
+        $marketContext = biwenger_market_player_context($sessionState, $playerId, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
+        if ($toUserId <= 0) $toUserId = (int)($marketContext['ownerId'] ?? 0);
+        $minimumAmount = (int)($marketContext['minimumAmount'] ?? 0);
+        if ($minimumAmount > 0 && $amount < $minimumAmount) {
+            send_json(409, ['error' => 'La puja minima actual es ' . number_format($minimumAmount, 0, ',', '.') . ' €. Actualiza el mercado antes de modificarla.']);
         }
+        $offerPayload = ['amount' => $amount, 'requestedPlayers' => [$playerId], 'type' => 'purchase'];
+        if ($toUserId > 0) $offerPayload['to'] = $toUserId;
         biwenger_private_request_json(
             'PUT',
             'https://biwenger.as.com/api/v2/offers/' . $offerId,
@@ -464,7 +489,7 @@ if ($route === '/biwenger/bid-update' && $requestMethod === 'POST') {
             $sourceTimeoutSeconds,
             $biwengerJsonHeaders,
             $strictTls,
-            ['amount' => $amount, 'requestedPlayers' => [$playerId], 'to' => $toUserId > 0 ? $toUserId : null, 'type' => 'purchase']
+            $offerPayload
         );
         send_json(200, ['ok' => true, 'operations' => biwenger_operations_center($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls)]);
     } catch (Throwable $error) {
@@ -488,11 +513,31 @@ if ($route === '/biwenger/offer-status' && $requestMethod === 'POST') {
     $sessionState = require_biwenger_session();
     $payload = read_json_body();
     $offerId = (int)($payload['offerId'] ?? 0);
+    $playerId = (int)($payload['playerId'] ?? 0);
+    $fromId = (int)($payload['fromId'] ?? 0);
+    $amount = biwenger_money_int($payload['amount'] ?? 0);
     $status = (string)($payload['status'] ?? '');
     if ($offerId <= 0 || !in_array($status, ['accepted', 'rejected'], true)) {
         send_json(400, ['error' => 'Oferta o estado no validos']);
     }
     try {
+        $currentOperations = biwenger_operations_center($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
+        $currentOffer = null;
+        foreach ((array)($currentOperations['offers'] ?? []) as $candidate) {
+            if (!is_array($candidate) || empty($candidate['isIncoming'])) continue;
+            if ((int)($candidate['offerId'] ?? 0) === $offerId) {
+                $currentOffer = $candidate;
+                break;
+            }
+            if ($playerId > 0 && (int)($candidate['playerId'] ?? 0) !== $playerId) continue;
+            if ($fromId > 0 && (int)($candidate['fromId'] ?? 0) !== $fromId) continue;
+            if ($amount > 0 && (int)($candidate['amount'] ?? 0) !== $amount) continue;
+            if ($playerId > 0) $currentOffer = $candidate;
+        }
+        if (!$currentOffer || (int)($currentOffer['offerId'] ?? 0) <= 0) {
+            send_json(409, ['error' => 'La oferta ya no esta activa en Biwenger. Se ha actualizado el centro de operaciones.', 'operations' => $currentOperations]);
+        }
+        $offerId = (int)$currentOffer['offerId'];
         biwenger_private_request_json('PUT', 'https://biwenger.as.com/api/v2/offers/' . $offerId, $sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls, ['status' => $status]);
         send_json(200, ['ok' => true, 'operations' => biwenger_operations_center($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls)]);
     } catch (Throwable $error) {
@@ -591,7 +636,14 @@ if ($route === '/biwenger/bid-count' && $requestMethod === 'POST') {
     $payload = read_json_body();
     $playerId = (int)($payload['playerId'] ?? 0);
     $ownerId = (int)($payload['ownerId'] ?? 0);
-    if ($playerId <= 0 || $ownerId <= 0) send_json(400, ['error' => 'Jugador y propietario requeridos']);
+    if ($playerId <= 0) send_json(400, ['error' => 'Jugador requerido']);
+    if (empty($sessionState['bidCountFree']) && empty($payload['confirmedCreditCost'])) {
+        send_json(402, [
+            'error' => 'Consultar este contador cuesta 1 moneda Biwenger en cuentas o ligas sin acceso incluido',
+            'requiresConfirmation' => true,
+            'costCredits' => 1
+        ]);
+    }
     try {
         $detail = biwenger_visible_bid_count_detail($sessionState, $playerId, $ownerId, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
         $count = $detail['count'];
@@ -625,16 +677,28 @@ if ($route === '/biwenger/bid-count' && $requestMethod === 'POST') {
 
 function biwenger_market_owner_id(array $session, int $playerId, int $timeoutSeconds, array $headers, bool $strictTls): int
 {
+    $context = biwenger_market_player_context($session, $playerId, $timeoutSeconds, $headers, $strictTls);
+    return (int)($context['ownerId'] ?? 0);
+}
+
+function biwenger_market_player_context(array $session, int $playerId, int $timeoutSeconds, array $headers, bool $strictTls): array
+{
     $response = biwenger_private_get_json('https://biwenger.as.com/api/v2/market', $session, $timeoutSeconds, $headers, $strictTls);
     $data = is_array($response['data'] ?? null) ? $response['data'] : [];
-    foreach ((array)($data['sales'] ?? []) as $sale) {
+    foreach (biwenger_market_entries($data) as $sale) {
         if (!is_array($sale)) continue;
         $salePlayerId = (int)($sale['player']['id'] ?? $sale['playerID'] ?? 0);
         if ($salePlayerId === $playerId) {
-            return (int)($sale['user']['id'] ?? $sale['userID'] ?? 0);
+            $player = is_array($sale['player'] ?? null) ? $sale['player'] : [];
+            return [
+                'found' => true,
+                'ownerId' => (int)($sale['user']['id'] ?? $sale['userID'] ?? 0),
+                'minimumAmount' => biwenger_sale_price($sale)
+                    ?: biwenger_money_int($player['price'] ?? $player['fantasyPrice'] ?? 0)
+            ];
         }
     }
-    return 0;
+    return ['found' => false, 'ownerId' => 0, 'minimumAmount' => 0];
 }
 
 if ($route === '/biwenger/league' && $requestMethod === 'GET') {
@@ -655,7 +719,8 @@ if ($route === '/biwenger/fixtures' && $requestMethod === 'GET') {
         'API-Football' => static fn() => api_football_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir),
         'Resultados-Futbol directo' => static fn() => resultados_futbol_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls),
         'Resultados-Futbol calendario' => static fn() => resultados_futbol_calendar_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir),
-        'TheSportsDB' => static fn() => thesportsdb_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls)
+        'TheSportsDB' => static fn() => thesportsdb_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls),
+        'SofaScore' => static fn() => sofascore_current_fixtures($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls, $dbDir)
     ];
     foreach ($sources as $label => $loader) {
         try {
@@ -664,17 +729,11 @@ if ($route === '/biwenger/fixtures' && $requestMethod === 'GET') {
             $errors[] = $label . ': ' . $error->getMessage();
         }
     }
-    if (!$payloads) {
-        try {
-            $payloads[] = sofascore_current_fixtures($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls, $dbDir);
-        } catch (Throwable $error) {
-            $errors[] = 'SofaScore: ' . $error->getMessage();
-        }
-    }
     if (!$payloads) send_json(502, ['error' => 'Sin partidos disponibles. ' . implode(' | ', $errors)]);
     $fixtures = array_shift($payloads);
     foreach ($payloads as $payload) $fixtures = merge_fixture_payloads($fixtures, $payload);
     $fixtures = scorebat_attach_highlights($fixtures, $sourceTimeoutSeconds, $sourceHeaders, $strictTls);
+    $fixtures['schemaVersion'] = 2;
     $fixtures['diagnostics'] = $errors;
     send_json(200, $fixtures);
 }
@@ -1036,6 +1095,9 @@ function biwenger_session_state(array $session): array
         'balance' => $session['balance'] ?? null,
         'teamValue' => $session['teamValue'] ?? null,
         'maximumBid' => $session['maximumBid'] ?? null,
+        'credits' => $session['credits'] ?? null,
+        'rewardSettings' => is_array($session['rewardSettings'] ?? null) ? $session['rewardSettings'] : [],
+        'bidCountFree' => !empty($session['bidCountFree']),
         'xVersion' => $session['xVersion'] ?? '',
         'syncedAt' => $session['syncedAt'] ?? null
     ];
@@ -1525,7 +1587,62 @@ function biwenger_build_session(string $token, string $version, string $preferre
         'competition' => biwenger_competition_value($league['competition'] ?? ''),
         'scoreId' => max(1, (int)($league['scoreID'] ?? $league['scoreId'] ?? $league['score']['id'] ?? 2)),
         'balance' => isset($user['balance']) ? (int)$user['balance'] : null,
+        'credits' => biwenger_first_numeric_value($data, ['credits', 'account.credits', 'user.credits', 'coins']),
+        'rewardSettings' => biwenger_reward_settings_from_node((array)($league['settings'] ?? $league)),
+        'bidCountFree' => !empty($user['isPremium']) || in_array(strtolower((string)($league['type'] ?? '')), ['premium', 'ultra'], true),
         'syncedAt' => gmdate('c')
+    ];
+}
+
+function biwenger_first_numeric_value(array $node, array $paths): ?int
+{
+    foreach ($paths as $path) {
+        $value = biwenger_path_value($node, $path);
+        if (is_numeric($value)) return (int)$value;
+    }
+    return null;
+}
+
+function biwenger_reward_position_amounts($value): array
+{
+    $result = [1 => 0, 2 => 0, 3 => 0];
+    if (!is_array($value)) return $result;
+    $keys = array_keys($value);
+    $isList = $value === [] || $keys === range(0, count($value) - 1);
+    foreach ($value as $key => $entry) {
+        if (is_array($entry)) {
+            $position = (int)($entry['position'] ?? $entry['rank'] ?? $entry['from'] ?? ($isList ? ((int)$key + 1) : (is_numeric($key) ? $key : 0)));
+            $amount = biwenger_money_int($entry['amount'] ?? $entry['value'] ?? $entry['money'] ?? $entry['bonus'] ?? 0);
+        } else {
+            $position = $isList ? ((int)$key + 1) : (is_numeric($key) ? (int)$key : 0);
+            $amount = biwenger_money_int($entry);
+        }
+        if ($position >= 1 && $position <= 3) $result[$position] = $amount;
+    }
+    return $result;
+}
+
+function biwenger_reward_settings_from_node(array $node): array
+{
+    $round = biwenger_reward_position_amounts($node['bonusRoundPosition'] ?? []);
+    $league = biwenger_reward_position_amounts($node['bonusLeaguePosition'] ?? []);
+    return [
+        'available' => (bool)array_intersect([
+            'bonusFixed', 'bonusPoint', 'bonusGoal', 'bonusIdealLineup', 'bonusGameMVP',
+            'bonusRoundPosition', 'bonusLeaguePosition'
+        ], array_keys($node)),
+        'fixed' => biwenger_money_int($node['bonusFixed'] ?? 0),
+        'pointValue' => biwenger_money_int($node['bonusPoint'] ?? 0),
+        'goal' => biwenger_money_int($node['bonusGoal'] ?? 0),
+        'idealLineup' => biwenger_money_int($node['bonusIdealLineup'] ?? 0),
+        'gameMvp' => biwenger_money_int($node['bonusGameMVP'] ?? 0),
+        'roundRank1' => $round[1],
+        'roundRank2' => $round[2],
+        'roundRank3' => $round[3],
+        'leagueRank1' => $league[1],
+        'leagueRank2' => $league[2],
+        'leagueRank3' => $league[3],
+        'source' => 'Biwenger: ajustes de liga'
     ];
 }
 
@@ -1611,6 +1728,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
     ];
 
     $departedPlayers = [];
+    $lineupPayload = null;
     if ($kind === 'team') {
         try {
             $response = biwenger_private_get_json(
@@ -1687,6 +1805,16 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
             return !empty($offer['hasBid']);
         }));
         $finance['bidTotal'] = array_sum(array_column($offerMap, 'myBidAmount'));
+        $activeLineup = biwenger_pick_active_lineup($userData);
+        if ($activeLineup) {
+            $lineupIds = array_map('intval', array_keys(biwenger_lineup_player_ids($userData)));
+            $lineupPayload = [
+                'type' => (string)($activeLineup['type'] ?? $activeLineup['formation'] ?? ''),
+                'playersID' => array_values(array_filter($lineupIds, static fn($id) => $id > 0)),
+                'captain' => biwenger_lineup_role_id($userData, 'captain'),
+                'striker' => biwenger_lineup_role_id($userData, 'striker')
+            ];
+        }
     } else {
         $response = biwenger_private_get_json(
             'https://biwenger.as.com/api/v2/market',
@@ -1713,7 +1841,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
             // The market remains usable even when outgoing offers are not exposed.
         }
         $players = [];
-        foreach ((array)($marketData['sales'] ?? []) as $sale) {
+        foreach (biwenger_market_entries($marketData) as $sale) {
             if (!is_array($sale)) continue;
             $saleOwner = biwenger_sale_owner_payload($sale);
             if ((int)($saleOwner['id'] ?? 0) === $userId) continue;
@@ -1748,8 +1876,22 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
         'importedAt' => gmdate('c'),
         'finance' => $finance,
         'players' => array_values(array_filter($players)),
-        'departedPlayers' => $kind === 'team' ? $departedPlayers : []
+        'departedPlayers' => $kind === 'team' ? $departedPlayers : [],
+        'lineup' => $kind === 'team' ? $lineupPayload : null
     ];
+}
+
+function biwenger_market_entries(array $market): array
+{
+    $entries = [];
+    foreach (['sales' => 'sale', 'loans' => 'loan', 'auctions' => 'auction'] as $key => $type) {
+        foreach ((array)($market[$key] ?? []) as $entry) {
+            if (!is_array($entry)) continue;
+            $entry['_marketType'] = $type;
+            $entries[] = $entry;
+        }
+    }
+    return $entries;
 }
 
 function biwenger_fetch_competition_catalog(string $competition, int $timeoutSeconds, array $headers, bool $strictTls, int $scoreId = 2): array
@@ -2140,10 +2282,16 @@ function sanitize_preferences_payload($preferences): array
             : 'balanced',
         'rewards' => [
             'pointValue' => $money($rewards['pointValue'] ?? 0),
-            'rank1' => $money($rewards['rank1'] ?? 0),
-            'rank2' => $money($rewards['rank2'] ?? 0),
-            'rank3' => $money($rewards['rank3'] ?? 0),
-            'mvp' => $money($rewards['mvp'] ?? 0)
+            'fixed' => $money($rewards['fixed'] ?? 0),
+            'goal' => $money($rewards['goal'] ?? 0),
+            'idealLineup' => $money($rewards['idealLineup'] ?? 0),
+            'gameMvp' => $money($rewards['gameMvp'] ?? 0),
+            'roundRank1' => $money($rewards['roundRank1'] ?? $rewards['rank1'] ?? 0),
+            'roundRank2' => $money($rewards['roundRank2'] ?? $rewards['rank2'] ?? 0),
+            'roundRank3' => $money($rewards['roundRank3'] ?? $rewards['rank3'] ?? 0),
+            'leagueRank1' => $money($rewards['leagueRank1'] ?? 0),
+            'leagueRank2' => $money($rewards['leagueRank2'] ?? 0),
+            'leagueRank3' => $money($rewards['leagueRank3'] ?? 0)
         ]
     ];
 }
@@ -2344,7 +2492,7 @@ function biwenger_money_int($value): int
 
 function biwenger_sale_price(array $sale): int
 {
-    foreach (['salePrice', 'ownerPrice', 'askingPrice', 'listingPrice', 'amount', 'price'] as $key) {
+    foreach (['price', 'salePrice', 'ownerPrice', 'askingPrice', 'listingPrice'] as $key) {
         if (!array_key_exists($key, $sale)) continue;
         $price = biwenger_money_int($sale[$key]);
         if ($price > 0) return $price;
@@ -2354,7 +2502,7 @@ function biwenger_sale_price(array $sale): int
 
 function biwenger_sale_price_source(array $sale): string
 {
-    foreach (['salePrice', 'ownerPrice', 'askingPrice', 'listingPrice', 'amount', 'price'] as $key) {
+    foreach (['price', 'salePrice', 'ownerPrice', 'askingPrice', 'listingPrice'] as $key) {
         if (array_key_exists($key, $sale) && biwenger_money_int($sale[$key]) > 0) return $key;
     }
     return 'unknown';
@@ -2676,10 +2824,12 @@ function biwenger_league_overview(array $session, int $timeoutSeconds, array $he
     $rows = biwenger_league_users($session, $timeoutSeconds, $headers, $strictTls);
     $standingsSource = $rows ? 'league-users' : 'rounds-league';
     $candidates = [];
-    if (!$rows) {
+    try {
         $response = biwenger_private_get_json('https://biwenger.as.com/api/v2/rounds/league', $session, $timeoutSeconds, $headers, $strictTls);
         $data = is_array($response['data'] ?? null) ? $response['data'] : $response;
         biwenger_collect_standing_entries($data, $candidates);
+    } catch (Throwable $error) {
+        // League users are still enough when the round endpoint is unavailable.
     }
     if (!$rows && !$candidates) {
         try {
@@ -2724,6 +2874,24 @@ function biwenger_league_overview(array $session, int $timeoutSeconds, array $he
                 'isMe' => $userId === (int)($session['userId'] ?? 0)
             ];
         }
+    } else if ($candidates) {
+        $iconsByUser = [];
+        foreach ($candidates as $entry) {
+            if (!is_array($entry)) continue;
+            $user = is_array($entry['user'] ?? null) ? $entry['user'] : $entry;
+            $userId = (int)($user['id'] ?? $entry['userID'] ?? $entry['userId'] ?? 0);
+            if ($userId <= 0) continue;
+            $icon = biwenger_user_icon($user, $entry, $userId);
+            if ($icon) $iconsByUser[$userId] = $icon;
+        }
+        foreach ($rows as &$row) {
+            $userId = (int)($row['userId'] ?? 0);
+            if (empty($row['icon']) && isset($iconsByUser[$userId])) {
+                $row['icon'] = $iconsByUser[$userId];
+                $row['avatar'] = $iconsByUser[$userId];
+            }
+        }
+        unset($row);
     }
     $rows = biwenger_sort_standings_rows($rows);
     return [
@@ -2746,7 +2914,7 @@ function biwenger_league_users(array $session, int $timeoutSeconds, array $heade
     if ($leagueId <= 0) return [];
     $candidates = [];
     $urls = [
-        'https://biwenger.as.com/api/v2/league/' . $leagueId . '?fields=*,users(*,lastPositions,points,score,name)',
+        'https://biwenger.as.com/api/v2/league/' . $leagueId . '?fields=*,users(*,id,name,icon,avatar,photo,image,account(*),lastPositions,points,score)',
         'https://biwenger.as.com/api/v2/owners/league',
         'https://biwenger.as.com/api/v2/league/' . $leagueId
     ];
@@ -3032,15 +3200,9 @@ function biwenger_extract_live_round_reward(array $sources, int $userId): array
         'currentRound.rewards.total', 'currentRound.reward.total', 'currentRound.prizes.total',
         'currentRound.bonuses.total', 'currentRound.income.total', 'currentRound.earnings.total',
         'currentRound.totalReward', 'currentRound.rewardTotal', 'currentRound.totalRewards',
-        'currentRound.roundReward', 'currentRound.roundRewards', 'currentRound.reward',
-        'currentRound.rewards', 'currentRound.prize', 'currentRound.prizes', 'currentRound.bonus',
-        'currentRound.bonuses', 'currentRound.income', 'currentRound.earnings',
-        'lineup.rewards.total', 'lineup.reward.total', 'lineup.income.total', 'lineup.reward',
-        'lineup.rewards', 'lineup.prize', 'lineup.bonus', 'lineup.income',
-        'round.reward.total', 'round.rewards.total', 'round.income.total', 'round.reward',
-        'round.rewards', 'round.prize', 'round.bonus', 'round.income',
-        'rewardTotal', 'totalReward', 'totalRewards', 'roundReward', 'roundRewards',
-        'roundIncome', 'currentReward', 'currentRewards', 'income', 'earnings', 'reward', 'rewards'
+        'lineup.rewards.total', 'lineup.reward.total', 'lineup.income.total',
+        'round.reward.total', 'round.rewards.total', 'round.income.total',
+        'rewardTotal', 'totalReward', 'totalRewards', 'roundRewardTotal', 'roundIncomeTotal'
     ];
     $candidates = [];
     foreach ($sources as $source => $node) {
@@ -3061,7 +3223,6 @@ function biwenger_extract_live_round_reward(array $sources, int $userId): array
                 ];
             }
         }
-        biwenger_collect_round_reward_candidates($node, $candidates, (string)$source, '', $userId);
     }
     if (!$candidates) {
         return [
@@ -3352,18 +3513,42 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
         if (is_array($ownData['user'] ?? null)) $ownData = array_merge($ownData, $ownData['user']);
         if ($ownUserId > 0) {
             $roundEntry = (array)($entriesByUser[$ownUserId]['entry'] ?? []);
-            $entriesByUser[$ownUserId] = ['score' => 9999, 'entry' => array_merge($roundEntry, $ownData)];
+            // The round endpoint is authoritative for the last scored lineup. Keep the
+            // complete user payload nested for player metadata, but never let an older
+            // profile lineup overwrite the round that Biwenger has just closed.
+            $entriesByUser[$ownUserId] = ['score' => 9999, 'entry' => array_merge(
+                $ownData,
+                $roundEntry,
+                ['_ownData' => $ownData, '_roundEntry' => $roundEntry]
+            )];
         }
     } catch (Throwable $error) {
         // The league-round payload can still expose the current user's score.
     }
     $ownEntry = $ownUserId > 0 ? (array)($entriesByUser[$ownUserId]['entry'] ?? []) : [];
+    $selectedRound = biwenger_lineup_round_number(biwenger_pick_latest_scored_lineup($ownEntry));
     $officialReward = biwenger_extract_live_round_reward([
         'ownData' => $ownData,
         'ownEntry' => $ownEntry,
         'roundsLeague' => (array)$roundData,
         'leagueOverview' => (array)$overview
     ], $ownUserId);
+    $rewardSettings = is_array($session['rewardSettings'] ?? null) ? $session['rewardSettings'] : [];
+    if (empty($rewardSettings['available'])) {
+        try {
+            $leagueResponse = biwenger_private_get_json(
+                'https://biwenger.as.com/api/v2/league/' . (int)($session['leagueId'] ?? 0) . '?fields=*,settings',
+                $session,
+                $timeoutSeconds,
+                $headers,
+                $strictTls
+            );
+            $leagueData = is_array($leagueResponse['data'] ?? null) ? $leagueResponse['data'] : $leagueResponse;
+            $rewardSettings = biwenger_reward_settings_from_node((array)($leagueData['settings'] ?? $leagueData['league']['settings'] ?? []));
+        } catch (Throwable $error) {
+            // Manual settings remain available in the client when the league hides its configuration.
+        }
+    }
     $teams = [];
     foreach ($standings as $standing) {
         $userId = (int)($standing['userId'] ?? 0);
@@ -3385,6 +3570,9 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
             $player['roundPoints'] = (float)($lineupPoints[$playerId] ?? 0);
             $player['isCaptain'] = $playerId === $captainId;
             $player['isStriker'] = $playerId === $strikerId;
+            $player['roundGoals'] = biwenger_player_round_goals($merged);
+            $player['isIdeal'] = biwenger_player_is_ideal($merged);
+            $player['isGameMvp'] = biwenger_player_is_game_mvp($merged);
             $players[] = $player;
         }
         $pointSnapshot = biwenger_extract_live_round_points($data);
@@ -3422,9 +3610,37 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
         'hasReliablePoints' => $reliableTeams > 0,
         'officialReward' => $officialReward,
         'roundReward' => $officialReward,
-        'standingsImageUrl' => 'https://cf.biwenger.com/draw/standings.jpg?league=' . (int)($session['leagueId'] ?? 0) . '&round=active',
+        'rewardSettings' => $rewardSettings,
+        'round' => $selectedRound > 0 ? $selectedRound : null,
+        'standingsImageUrl' => 'https://cf.biwenger.com/draw/standings.jpg?league=' . (int)($session['leagueId'] ?? 0) . '&round=' . ($selectedRound > 0 ? $selectedRound : 'active'),
         'updatedAt' => gmdate('c')
     ];
+}
+
+function biwenger_player_round_goals(array $player): int
+{
+    foreach (['roundGoals', 'goals', 'stats.goals', 'statistics.goals', 'currentRound.goals'] as $path) {
+        $value = biwenger_path_value($player, $path);
+        if (is_numeric($value)) return max(0, (int)$value);
+        if (is_array($value) && is_numeric($value['total'] ?? null)) return max(0, (int)$value['total']);
+    }
+    return 0;
+}
+
+function biwenger_player_is_ideal(array $player): bool
+{
+    foreach (['isIdeal', 'ideal', 'idealLineup', 'inIdealLineup', 'roundIdeal'] as $key) {
+        if (!empty($player[$key])) return true;
+    }
+    return false;
+}
+
+function biwenger_player_is_game_mvp(array $player): bool
+{
+    foreach (['mvp', 'isMvp', 'isMVP', 'gameMVP', 'isGameMVP', 'currentRound.mvp'] as $path) {
+        if (!empty(biwenger_path_value($player, $path))) return true;
+    }
+    return false;
 }
 
 function biwenger_live_round_debug(array $session, int $timeoutSeconds, array $headers, bool $strictTls): array
@@ -3505,7 +3721,7 @@ function biwenger_extract_live_round_points(array $data): array
             'reliable' => true
         ];
     }
-    $lineup = biwenger_pick_active_lineup($data);
+    $lineup = biwenger_pick_latest_scored_lineup($data);
     foreach (['points', 'score', 'currentPoints', 'roundPoints'] as $key) {
         if (isset($lineup[$key]) && is_numeric($lineup[$key])) {
             return ['points' => (int)$lineup[$key], 'reliable' => true];
@@ -3582,7 +3798,7 @@ function biwenger_collect_fixture_entries(array $node, array &$events, int $dept
 function biwenger_lineup_player_ids(array $data): array
 {
     $ids = [];
-    $lineup = biwenger_pick_active_lineup($data);
+    $lineup = biwenger_pick_latest_scored_lineup($data);
     biwenger_collect_lineup_ids($lineup, $ids);
     return $ids;
 }
@@ -3590,14 +3806,14 @@ function biwenger_lineup_player_ids(array $data): array
 function biwenger_lineup_player_points(array $data): array
 {
     $points = [];
-    $lineup = biwenger_pick_active_lineup($data);
+    $lineup = biwenger_pick_latest_scored_lineup($data);
     biwenger_collect_lineup_points($lineup, $points);
     return $points;
 }
 
 function biwenger_lineup_role_id(array $data, string $role): int
 {
-    $lineup = biwenger_pick_active_lineup($data);
+    $lineup = biwenger_pick_latest_scored_lineup($data);
     $value = $lineup[$role] ?? $data[$role] ?? null;
     if (is_array($value)) return (int)($value['id'] ?? $value['playerID'] ?? $value['playerId'] ?? 0);
     return is_numeric($value) ? (int)$value : 0;
@@ -3605,7 +3821,7 @@ function biwenger_lineup_role_id(array $data, string $role): int
 
 function biwenger_current_round_points(array $data, int $fallback): int
 {
-    $lineup = biwenger_pick_active_lineup($data);
+    $lineup = biwenger_pick_latest_scored_lineup($data);
     foreach (['points', 'score', 'currentPoints', 'roundPoints'] as $key) {
         if (isset($lineup[$key]) && is_numeric($lineup[$key])) return (int)$lineup[$key];
     }
@@ -3630,6 +3846,69 @@ function biwenger_pick_active_lineup(array $data): array
         return biwenger_lineup_payload_score($right) <=> biwenger_lineup_payload_score($left);
     });
     return $candidates[0] ?? [];
+}
+
+function biwenger_pick_latest_scored_lineup(array $data): array
+{
+    $candidates = [];
+    foreach (['currentRound', 'lineup'] as $key) {
+        if (is_array($data[$key] ?? null)) $candidates[] = $data[$key];
+    }
+    foreach (['lineups', 'rounds'] as $key) {
+        foreach (array_values(array_filter((array)($data[$key] ?? []), 'is_array')) as $entry) {
+            $candidates[] = $entry;
+        }
+    }
+    if (is_array($data['_roundEntry'] ?? null)) $candidates[] = $data['_roundEntry'];
+    if (!$candidates) return [];
+
+    $scored = array_values(array_filter($candidates, 'biwenger_lineup_has_score_data'));
+    if ($scored) $candidates = $scored;
+    usort($candidates, static function ($left, $right) {
+        $roundDiff = biwenger_lineup_round_number($right) <=> biwenger_lineup_round_number($left);
+        if ($roundDiff !== 0) return $roundDiff;
+        $timeDiff = biwenger_lineup_timestamp($right) <=> biwenger_lineup_timestamp($left);
+        if ($timeDiff !== 0) return $timeDiff;
+        return biwenger_lineup_payload_score($right) <=> biwenger_lineup_payload_score($left);
+    });
+    return $candidates[0] ?? [];
+}
+
+function biwenger_lineup_has_score_data(array $lineup): bool
+{
+    $status = normalize_text((string)($lineup['status'] ?? $lineup['state'] ?? ''));
+    if (preg_match('/finish|finished|closed|complete|completed|processed|final|cerrad|terminad/', $status)) return true;
+    $points = [];
+    biwenger_collect_lineup_points($lineup, $points);
+    if ($points) return true;
+    foreach (['points', 'score', 'currentPoints', 'roundPoints'] as $key) {
+        if (!isset($lineup[$key]) || !is_numeric($lineup[$key])) continue;
+        if ((float)$lineup[$key] !== 0.0 || (int)($lineup['count'] ?? $lineup['played'] ?? 0) > 0) return true;
+    }
+    return false;
+}
+
+function biwenger_lineup_round_number(array $lineup): int
+{
+    foreach (['round', 'roundID', 'roundId', 'matchday', 'week', 'number'] as $key) {
+        $value = $lineup[$key] ?? null;
+        if (is_numeric($value)) return (int)$value;
+        if (is_array($value)) {
+            foreach (['id', 'number', 'round', 'matchday'] as $nestedKey) {
+                if (is_numeric($value[$nestedKey] ?? null)) return (int)$value[$nestedKey];
+            }
+        }
+    }
+    return 0;
+}
+
+function biwenger_lineup_timestamp(array $lineup): int
+{
+    foreach (['updated', 'updatedAt', 'date', 'end', 'endDate', 'timestamp', 'created', 'createdAt'] as $key) {
+        $timestamp = biwenger_timestamp_seconds($lineup[$key] ?? null);
+        if ($timestamp > 0) return $timestamp;
+    }
+    return 0;
 }
 
 function biwenger_lineup_payload_score(array $lineup): int
@@ -3703,14 +3982,15 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
 {
     $competition = trim((string)($session['competition'] ?? ''));
     $leagueName = trim((string)($session['leagueName'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-' . slugify($competition ?: $leagueName) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v2-' . slugify($competition ?: $leagueName) . '.json';
     $cached = read_json_file($cachePath, []);
     if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit';
         return $cached;
     }
 
-    $query = trim(str_replace(['-', '_'], ' ', $competition ?: $leagueName));
+    $fixtureQueries = fixture_competition_queries($session);
+    $query = trim((string)($fixtureQueries[0] ?? str_replace(['-', '_'], ' ', $competition ?: $leagueName)));
     $search = sofascore_api_json('/search/all?q=' . rawurlencode($query) . '&page=0', $timeoutSeconds, $headers, $strictTls);
     $results = (array)($search['results'] ?? []);
     $tournaments = [];
@@ -3728,10 +4008,30 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
     $tournament = $tournaments[0] ?? null;
     if (!$tournament) throw new RuntimeException('SofaScore no ha encontrado la competicion activa: ' . ($competition ?: $leagueName));
 
+    $seasonId = 0;
+    try {
+        $seasonPayload = sofascore_api_json('/unique-tournament/' . $tournament['id'] . '/seasons', $timeoutSeconds, $headers, $strictTls);
+        $seasons = array_values(array_filter((array)($seasonPayload['seasons'] ?? []), 'is_array'));
+        $currentYear = (int)date('Y');
+        usort($seasons, static function ($left, $right) use ($currentYear) {
+            $leftYear = (int)preg_replace('/\D.*$/', '', (string)($left['year'] ?? $left['name'] ?? 0));
+            $rightYear = (int)preg_replace('/\D.*$/', '', (string)($right['year'] ?? $right['name'] ?? 0));
+            $leftDistance = $leftYear > 0 ? abs($currentYear - $leftYear) : 999;
+            $rightDistance = $rightYear > 0 ? abs($currentYear - $rightYear) : 999;
+            return $leftDistance <=> $rightDistance ?: $rightYear <=> $leftYear;
+        });
+        $seasonId = (int)($seasons[0]['id'] ?? 0);
+    } catch (Throwable $error) {
+        $seasonId = 0;
+    }
+
     $eventRows = [];
     foreach (['last/0', 'next/0'] as $page) {
         try {
-            $payload = sofascore_api_json('/unique-tournament/' . $tournament['id'] . '/events/' . $page, $timeoutSeconds, $headers, $strictTls);
+            $path = $seasonId > 0
+                ? '/unique-tournament/' . $tournament['id'] . '/season/' . $seasonId . '/events/' . $page
+                : '/unique-tournament/' . $tournament['id'] . '/events/' . $page;
+            $payload = sofascore_api_json($path, $timeoutSeconds, $headers, $strictTls);
             foreach ((array)($payload['events'] ?? []) as $event) {
                 if (is_array($event) && !empty($event['id'])) $eventRows[(int)$event['id']] = $event;
             }
@@ -3741,20 +4041,16 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
     }
     if (!$eventRows) throw new RuntimeException('SofaScore no ha devuelto partidos para esta competicion');
 
-    $roundGroups = [];
-    foreach ($eventRows as $event) {
-        $round = (string)($event['roundInfo']['round'] ?? $event['roundInfo']['name'] ?? 'actual');
-        $roundGroups[$round][] = $event;
-    }
     $now = time();
-    uasort($roundGroups, static function ($left, $right) use ($now) {
-        $distance = static function ($events) use ($now) {
-            $times = array_map(static fn($event) => abs((int)($event['startTimestamp'] ?? $now) - $now), $events);
-            return $times ? min($times) : PHP_INT_MAX;
-        };
-        return $distance($left) <=> $distance($right);
-    });
-    $round = (string)array_key_first($roundGroups);
+    $relevantRows = array_values(array_filter($eventRows, static function ($event) use ($now) {
+        $timestamp = (int)($event['startTimestamp'] ?? 0);
+        return $timestamp > 0 && $timestamp >= $now - (10 * 86400) && $timestamp <= $now + (45 * 86400);
+    }));
+    if (!$relevantRows) $relevantRows = array_values($eventRows);
+    $roundNames = array_values(array_unique(array_filter(array_map(static function ($event) {
+        return (string)($event['roundInfo']['round'] ?? $event['roundInfo']['name'] ?? '');
+    }, $relevantRows))));
+    $round = implode(', ', array_slice($roundNames, 0, 4)) ?: 'actual';
     $events = array_values(array_map(static function ($event) use ($tournament) {
         $home = (array)($event['homeTeam'] ?? []);
         $away = (array)($event['awayTeam'] ?? []);
@@ -3772,9 +4068,10 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
             'awayScore' => is_numeric($awayScore) ? (int)$awayScore : null,
             'sofascoreUrl' => $eventId > 0
                 ? 'https://www.sofascore.com/football/match/' . slugify((string)($home['name'] ?? 'home') . '-' . (string)($away['name'] ?? 'away')) . '#id:' . $eventId
-                : null
+                : null,
+            'round' => (string)($event['roundInfo']['round'] ?? $event['roundInfo']['name'] ?? '')
         ];
-    }, $roundGroups[$round] ?? []));
+    }, $relevantRows));
     usort($events, static fn($a, $b) => $a['timestamp'] <=> $b['timestamp']);
     $result = [
         'ok' => true,
@@ -4764,13 +5061,65 @@ function biwenger_collect_clause_entries(array $node, array &$clauses, int $dept
     }
 }
 
+function biwenger_offer_player_ids(array $offer, int $inheritedPlayerId = 0): array
+{
+    $ids = [];
+    $append = static function ($value) use (&$ids): void {
+        if (is_numeric($value)) {
+            $id = (int)$value;
+            if ($id > 0) $ids[$id] = true;
+            return;
+        }
+        if (!is_array($value)) return;
+        foreach (['id', 'playerID', 'playerId', 'player_id'] as $idKey) {
+            if (isset($value[$idKey]) && is_numeric($value[$idKey])) {
+                $id = (int)$value[$idKey];
+                if ($id > 0) $ids[$id] = true;
+                return;
+            }
+        }
+        foreach ($value as $key => $item) {
+            if (is_numeric($key) && !is_array($item) && !is_numeric($item)) {
+                $id = (int)$key;
+                if ($id > 0) $ids[$id] = true;
+                continue;
+            }
+            if (is_numeric($item)) {
+                $id = (int)$item;
+                if ($id > 0) $ids[$id] = true;
+                continue;
+            }
+            if (is_array($item)) {
+                foreach (['id', 'playerID', 'playerId', 'player_id'] as $idKey) {
+                    if (!isset($item[$idKey]) || !is_numeric($item[$idKey])) continue;
+                    $id = (int)$item[$idKey];
+                    if ($id > 0) $ids[$id] = true;
+                    break;
+                }
+            }
+        }
+    };
+    foreach ([
+        'requestedPlayers', 'requestedPlayerIDs', 'requestedPlayerIds',
+        'offeredPlayers', 'offeredPlayerIDs', 'offeredPlayerIds', 'players',
+        'player', 'requestedPlayer', 'offeredPlayer',
+        'playerID', 'playerId', 'player_id',
+        'requestedPlayerID', 'requestedPlayerId', 'offeredPlayerID', 'offeredPlayerId'
+    ] as $key) {
+        if (array_key_exists($key, $offer)) $append($offer[$key]);
+    }
+    if (!$ids && $inheritedPlayerId > 0) $ids[$inheritedPlayerId] = true;
+    return array_map('intval', array_keys($ids));
+}
+
 function biwenger_collect_offer_entries(array $node, array &$offers, string $source, int $depth = 0, int $inheritedPlayerId = 0): void
 {
     if ($depth > 10) return;
-    $hasParties = isset($node['from']) || isset($node['to']) || isset($node['fromID']) || isset($node['toID'])
-        || isset($node['userID']) || isset($node['ownerID']) || isset($node['buyerID']) || isset($node['sellerID']);
-    $hasPlayers = isset($node['requestedPlayers']) || isset($node['requestedPlayerIDs']) || isset($node['offeredPlayers'])
-        || isset($node['offeredPlayerIDs']) || isset($node['players']) || isset($node['player']);
+    $hasParties = isset($node['from']) || isset($node['to']) || isset($node['fromID']) || isset($node['fromId'])
+        || isset($node['toID']) || isset($node['toId']) || isset($node['userID']) || isset($node['userId'])
+        || isset($node['ownerID']) || isset($node['ownerId']) || isset($node['buyerID']) || isset($node['buyerId'])
+        || isset($node['sellerID']) || isset($node['sellerId']) || isset($node['bidderID']) || isset($node['bidderId']);
+    $hasPlayers = !empty(biwenger_offer_player_ids($node, $inheritedPlayerId));
     $hasMoney = isset($node['amount']) || isset($node['price']) || isset($node['money']) || isset($node['cash'])
         || isset($node['offeredMoney']) || isset($node['requestedMoney']) || isset($node['offeredAmount'])
         || isset($node['requestedAmount']) || isset($node['bid']);
@@ -4832,8 +5181,8 @@ function biwenger_offer_timestamp_ts(array $offer): int
 
 function biwenger_offer_is_active(array $offer): bool
 {
-    $status = strtolower((string)($offer['status'] ?? 'pending'));
-    if (in_array($status, ['accepted', 'rejected', 'cancelled', 'canceled', 'expired', 'completed', 'closed'], true)) return false;
+    $status = strtolower(trim((string)($offer['status'] ?? '')));
+    if ($status !== 'waiting') return false;
     $until = biwenger_offer_expiry_ts($offer);
     if ($until > 0 && $until < time()) return false;
     $timestamp = biwenger_offer_timestamp_ts($offer);
@@ -4899,13 +5248,11 @@ function biwenger_visible_bid_count(array $session, int $playerId, int $ownerId,
 
 function biwenger_visible_bid_count_detail(array $session, int $playerId, int $ownerId, int $timeoutSeconds, array $headers, bool $strictTls): array
 {
-    if ($playerId <= 0 || $ownerId <= 0) return ['count' => null, 'source' => null, 'error' => 'Jugador o propietario no valido'];
+    if ($playerId <= 0) return ['count' => null, 'source' => null, 'error' => 'Jugador no valido'];
+    $payload = ['player' => $playerId];
+    if ($ownerId > 0) $payload['user'] = $ownerId;
     $requests = [
-        ['POST', 'https://biwenger.as.com/api/v2/market/bids', ['player' => $playerId, 'user' => $ownerId]],
-        ['POST', 'https://biwenger.as.com/api/v2/market/bids', ['playerID' => $playerId, 'userID' => $ownerId]],
-        ['POST', 'https://biwenger.as.com/api/v2/market/bids', ['requestedPlayers' => [$playerId], 'to' => $ownerId]],
-        ['GET', 'https://biwenger.as.com/api/v2/market/bids?player=' . $playerId . '&user=' . $ownerId, null],
-        ['GET', 'https://biwenger.as.com/api/v2/market/bids?playerID=' . $playerId . '&userID=' . $ownerId, null]
+        ['POST', 'https://biwenger.as.com/api/v2/market/bids', $payload]
     ];
     $lastError = null;
     foreach ($requests as $request) {
@@ -4937,7 +5284,7 @@ function biwenger_visible_bid_count_detail(array $session, int $playerId, int $o
 
 function biwenger_collect_own_market_offers(array $market, array &$offers): void
 {
-    foreach ((array)($market['sales'] ?? []) as $sale) {
+    foreach (biwenger_market_entries($market) as $sale) {
         if (!is_array($sale)) continue;
         $playerEntry = is_array($sale['player'] ?? null) ? $sale['player'] : ['id' => (int)($sale['playerID'] ?? 0)];
         $playerId = (int)($playerEntry['id'] ?? $sale['playerID'] ?? 0);
@@ -5203,7 +5550,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
 
     $catalog = biwenger_fetch_competition_catalog((string)($session['competition'] ?? ''), $timeoutSeconds, $headers, $strictTls, (int)($session['scoreId'] ?? 2));
     $marketOwners = [];
-    foreach ((array)($market['sales'] ?? []) as $sale) {
+    foreach (biwenger_market_entries($market) as $sale) {
         if (!is_array($sale)) continue;
         $salePlayerId = (int)($sale['player']['id'] ?? $sale['playerID'] ?? 0);
         $saleOwnerId = (int)($sale['user']['id'] ?? $sale['userID'] ?? 0);
@@ -5213,35 +5560,31 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
     $seenOffers = [];
     foreach ($offers as $offer) {
         if (!is_array($offer) || !biwenger_offer_is_active($offer)) continue;
-        $playerValues = (array)($offer['requestedPlayers'] ?? $offer['requestedPlayerIDs'] ?? $offer['offeredPlayers'] ?? $offer['offeredPlayerIDs'] ?? $offer['players'] ?? []);
-        if (!$playerValues && isset($offer['player']['id'])) $playerValues = [$offer['player']];
-        $playerId = 0;
-        foreach ($playerValues as $value) {
-            $playerId = is_array($value) ? (int)($value['id'] ?? 0) : (int)$value;
-            if ($playerId > 0) break;
-        }
+        $playerIds = biwenger_offer_player_ids($offer);
+        $playerId = (int)($playerIds[0] ?? 0);
         $marketPlayer = is_array($offer['_marketPlayer'] ?? null) ? $offer['_marketPlayer'] : [];
         $catalogPlayer = array_merge($marketPlayer, (array)($catalog['playersById'][$playerId] ?? []));
         $normalizedPlayer = $playerId > 0
             ? biwenger_normalize_player($catalogPlayer ?: ['id' => $playerId], $catalog, (string)($session['competition'] ?? ''), false)
             : [];
-        $fromValue = $offer['from'] ?? null;
-        $toValue = $offer['to'] ?? null;
+        $fromValue = $offer['from'] ?? $offer['buyer'] ?? $offer['bidder'] ?? null;
+        $toValue = $offer['to'] ?? $offer['owner'] ?? $offer['seller'] ?? null;
         $from = is_array($fromValue) ? $fromValue : [];
         $to = is_array($toValue) ? $toValue : [];
-        $fromId = (int)($from['id'] ?? $offer['fromID'] ?? (is_numeric($fromValue) ? $fromValue : 0));
-        $toId = (int)($to['id'] ?? $offer['toID'] ?? (is_numeric($toValue) ? $toValue : 0));
+        $fromId = (int)($from['id'] ?? $offer['fromID'] ?? $offer['fromId'] ?? (is_numeric($fromValue) ? $fromValue : 0));
+        $toId = (int)($to['id'] ?? $offer['toID'] ?? $offer['toId'] ?? (is_numeric($toValue) ? $toValue : 0));
         $direction = strtolower((string)($offer['direction'] ?? $offer['_direction'] ?? ''));
         $genericUserId = (int)($offer['userID'] ?? $offer['userId'] ?? 0);
-        $ownerId = (int)($offer['ownerID'] ?? $offer['ownerId'] ?? $offer['sellerID'] ?? 0);
-        $buyerId = (int)($offer['buyerID'] ?? 0);
+        $ownerId = (int)($offer['ownerID'] ?? $offer['ownerId'] ?? $offer['sellerID'] ?? $offer['sellerId'] ?? 0);
+        $buyerId = (int)($offer['buyerID'] ?? $offer['buyerId'] ?? $offer['bidderID'] ?? $offer['bidderId'] ?? 0);
         $source = (string)($offer['_source'] ?? '');
         if ($fromId <= 0) $fromId = $buyerId ?: ($direction === 'outgoing' ? $userId : $genericUserId);
         if ($toId <= 0) $toId = $ownerId ?: ($direction === 'incoming' ? $userId : 0);
         if ($toId <= 0 && $playerId > 0 && isset($marketOwners[$playerId])) $toId = (int)$marketOwners[$playerId];
         if ($fromId <= 0 && $toId === $userId && $genericUserId > 0) $fromId = $genericUserId;
         if ($toId <= 0 && $fromId === $userId && $genericUserId > 0 && $genericUserId !== $userId) $toId = $genericUserId;
-        $isMine = $fromId === $userId && $toId > 0 && $toId !== $userId;
+        // Free-agent bids target Biwenger's system market and legitimately have toId=0.
+        $isMine = $fromId === $userId && $toId !== $userId;
         $isIncoming = $toId === $userId && $fromId > 0 && $fromId !== $userId;
         if (!$isMine && !$isIncoming && $playerId > 0) {
             if (isset($ownedPlayerIds[$playerId])) {
@@ -5280,28 +5623,50 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
             'expiresTs' => $expiresTs,
             'timestampTs' => $timestampTs,
             'fromId' => $fromId,
-            'fromName' => (string)($from['name'] ?? $offer['fromName'] ?? ''),
+            'fromName' => (string)($from['name'] ?? $offer['fromName'] ?? $offer['buyerName'] ?? $offer['bidderName'] ?? ''),
             'toId' => $toId,
-            'toName' => (string)($to['name'] ?? $offer['toName'] ?? ''),
+            'toName' => (string)($to['name'] ?? $offer['toName'] ?? $offer['ownerName'] ?? $offer['sellerName'] ?? ''),
             'isMine' => $isMine,
-            'isIncoming' => $isIncoming
+            'isIncoming' => $isIncoming,
+            'isCurrentMarket' => isset($marketOwners[$playerId]),
+            'isAuthoritativeOutgoing' => (bool)preg_match('/(^|:)outgoing(?:$|:)|sent|own-check/i', $source)
         ];
     }
     $currentMarketPlayerIds = array_fill_keys(array_map('intval', array_keys($marketOwners)), true);
-    $normalizedOffers = array_values(array_filter($normalizedOffers, static function ($offer) use ($currentMarketPlayerIds) {
+    $discardedOwnBidCandidates = 0;
+    $normalizedOffers = array_values(array_filter($normalizedOffers, static function ($offer) use ($currentMarketPlayerIds, $ownedPlayerIds, &$discardedOwnBidCandidates) {
         if (empty($offer['isMine'])) return true;
-        $source = strtolower((string)($offer['source'] ?? ''));
-        if (strpos($source, 'market-sale') !== false) return false;
         $type = strtolower((string)($offer['type'] ?? 'purchase'));
-        if (preg_match('/sell|sale|venta/', $type) && !preg_match('/purchase|buy|bid|puja/', $type)) return false;
         $playerId = (int)($offer['playerId'] ?? 0);
-        return $playerId > 0 && isset($currentMarketPlayerIds[$playerId]) && (int)($offer['amount'] ?? 0) > 0;
+        $amount = (int)($offer['amount'] ?? 0);
+        $valid = $playerId > 0 && $amount > 0 && !isset($ownedPlayerIds[$playerId]);
+        if ($valid && preg_match('/sell|sale|venta/', $type) && !preg_match('/purchase|buy|bid|puja/', $type)) $valid = false;
+        if ($valid && isset($currentMarketPlayerIds[$playerId])) return true;
+
+        // The dedicated /offers endpoint is the authoritative source for outgoing bids.
+        // Keep it even if the market payload and player list are momentarily out of sync.
+        if ($valid && !empty($offer['isAuthoritativeOutgoing']) && (int)($offer['offerId'] ?? 0) > 0) return true;
+        $discardedOwnBidCandidates++;
+        return false;
     }));
     $stableOffers = [];
+    $bestIncomingOfferByParty = [];
     $bestOwnOfferByPlayer = [];
     foreach ($normalizedOffers as $offer) {
         if (empty($offer['isMine'])) {
-            $stableOffers[] = $offer;
+            if (!empty($offer['isIncoming'])) {
+                $incomingKey = implode(':', [
+                    (int)($offer['playerId'] ?? 0),
+                    (int)($offer['fromId'] ?? 0),
+                    (int)($offer['toId'] ?? 0)
+                ]);
+                $previous = $bestIncomingOfferByParty[$incomingKey] ?? null;
+                if ($previous === null || biwenger_normalized_offer_rank($offer) > biwenger_normalized_offer_rank($previous)) {
+                    $bestIncomingOfferByParty[$incomingKey] = $offer;
+                }
+            } else {
+                $stableOffers[] = $offer;
+            }
             continue;
         }
         $playerId = (int)($offer['playerId'] ?? 0);
@@ -5311,7 +5676,11 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
             $bestOwnOfferByPlayer[$playerId] = $offer;
         }
     }
-    $normalizedOffers = array_values(array_merge($stableOffers, array_values($bestOwnOfferByPlayer)));
+    $normalizedOffers = array_values(array_merge(
+        $stableOffers,
+        array_values($bestIncomingOfferByParty),
+        array_values($bestOwnOfferByPlayer)
+    ));
 
     $sales = [];
     $seenSales = [];
@@ -5325,7 +5694,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
         }
     }
     $queriedBidCounts = 0;
-    foreach ((array)($market['sales'] ?? []) as $sale) {
+    foreach (biwenger_market_entries($market) as $sale) {
         if (!is_array($sale)) continue;
         $ownerId = (int)($sale['user']['id'] ?? $sale['userID'] ?? 0);
         $entry = biwenger_sale_with_catalog($sale, $catalog);
@@ -5336,7 +5705,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
         $bidDetail = biwenger_extract_sale_bid_count_detail($sale);
         $bidCount = $bidDetail['count'];
         if ($ownerId !== $userId) {
-            if ($bidCount === null && $queriedBidCounts < 40) {
+            if ($bidCount === null && !empty($session['bidCountFree']) && $queriedBidCounts < 40) {
                 $bidDetail = biwenger_visible_bid_count_detail($session, $salePlayerId, $ownerId, $timeoutSeconds, $headers, $strictTls);
                 $bidCount = $bidDetail['count'];
                 $queriedBidCounts++;
@@ -5395,6 +5764,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
             'activeOffers' => count($normalizedOffers),
             'ownBids' => count(array_filter($normalizedOffers, static fn($offer) => !empty($offer['isMine']))),
             'receivedOffers' => count(array_filter($normalizedOffers, static fn($offer) => !empty($offer['isIncoming']))),
+            'discardedOwnBidCandidates' => $discardedOwnBidCandidates,
             'sales' => count($sales),
             'visibleBidCounts' => count(array_filter($marketBidCounts, static fn($count) => $count !== null)),
             'queriedBidCounts' => $queriedBidCounts,
@@ -5409,14 +5779,13 @@ function biwenger_offer_map(array $offers, int $userId): array
     foreach ($offers as $offer) {
         if (!is_array($offer)) continue;
         if (!biwenger_offer_is_active($offer)) continue;
-        $fromValue = $offer['from'] ?? null;
-        $toValue = $offer['to'] ?? null;
-        $fromId = (int)((is_array($fromValue) ? ($fromValue['id'] ?? 0) : (is_numeric($fromValue) ? $fromValue : 0)) ?: ($offer['fromID'] ?? 0));
-        $toId = (int)((is_array($toValue) ? ($toValue['id'] ?? 0) : (is_numeric($toValue) ? $toValue : 0)) ?: ($offer['toID'] ?? 0));
-        $fromName = (string)((is_array($fromValue) ? ($fromValue['name'] ?? '') : '') ?: ($offer['fromName'] ?? ''));
+        $fromValue = $offer['from'] ?? $offer['buyer'] ?? $offer['bidder'] ?? null;
+        $toValue = $offer['to'] ?? $offer['owner'] ?? $offer['seller'] ?? null;
+        $fromId = (int)((is_array($fromValue) ? ($fromValue['id'] ?? 0) : (is_numeric($fromValue) ? $fromValue : 0)) ?: ($offer['fromID'] ?? $offer['fromId'] ?? $offer['buyerID'] ?? $offer['buyerId'] ?? $offer['bidderID'] ?? $offer['bidderId'] ?? 0));
+        $toId = (int)((is_array($toValue) ? ($toValue['id'] ?? 0) : (is_numeric($toValue) ? $toValue : 0)) ?: ($offer['toID'] ?? $offer['toId'] ?? $offer['ownerID'] ?? $offer['ownerId'] ?? $offer['sellerID'] ?? $offer['sellerId'] ?? 0));
+        $fromName = (string)((is_array($fromValue) ? ($fromValue['name'] ?? '') : '') ?: ($offer['fromName'] ?? $offer['buyerName'] ?? $offer['bidderName'] ?? ''));
         $direction = strtolower((string)($offer['direction'] ?? $offer['_direction'] ?? ''));
-        $playerIds = (array)($offer['requestedPlayers'] ?? $offer['requestedPlayerIDs'] ?? $offer['players'] ?? []);
-        if (!$playerIds && isset($offer['player']['id'])) $playerIds = [(int)$offer['player']['id']];
+        $playerIds = biwenger_offer_player_ids($offer);
         $amount = (int)($offer['amount'] ?? $offer['price'] ?? 0);
         $status = (string)($offer['status'] ?? 'pending');
         foreach ($playerIds as $playerIdValue) {
@@ -5427,7 +5796,7 @@ function biwenger_offer_map(array $offers, int $userId): array
                 'hasBid' => false, 'rivalBids' => [], 'rivalBidCount' => 0,
                 'highestRivalBid' => null, 'rivalBidVisibility' => 'hidden'
             ];
-            $isOutgoing = $fromId === $userId && (($toId > 0 && $toId !== $userId) || strpos($direction, 'outgoing') !== false || strpos($direction, 'sent') !== false);
+            $isOutgoing = $fromId === $userId && ($toId !== $userId || strpos($direction, 'outgoing') !== false || strpos($direction, 'sent') !== false);
             if ($isOutgoing) {
                 $previous['myBidAmount'] = max((int)($previous['myBidAmount'] ?? 0), $amount);
                 $previous['myBidStatus'] = $status;
@@ -5621,7 +5990,7 @@ function biwenger_default_user_icon(): string
     return 'https://cdn.biwenger.com/img/user.svg';
 }
 
-function biwenger_user_icon(array $user, array $entry = [], int $userId = 0): string
+function biwenger_user_icon(array $user, array $entry = [], int $userId = 0): ?string
 {
     $keys = [
         'icon', 'iconUrl', 'logo', 'badge', 'shield', 'avatar', 'avatarUrl',
@@ -5630,7 +5999,7 @@ function biwenger_user_icon(array $user, array $entry = [], int $userId = 0): st
     ];
     return biwenger_entity_media($user, $keys)
         ?: biwenger_entity_media($entry, $keys)
-        ?: biwenger_default_user_icon();
+        ?: null;
 }
 
 function biwenger_entity_media(array $entity, array $keys, int $depth = 0): ?string

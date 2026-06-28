@@ -24,6 +24,9 @@
     availableLeagues: [],
     userName: "",
     competition: "",
+    credits: null,
+    bidCountFree: false,
+    rewardSettings: {},
     importing: false
   },
   futbolFantasy: {
@@ -85,10 +88,16 @@
     planMode: "balanced",
     rewards: {
       pointValue: 0,
-      rank1: 0,
-      rank2: 0,
-      rank3: 0,
-      mvp: 0
+      fixed: 0,
+      goal: 0,
+      idealLineup: 0,
+      gameMvp: 0,
+      roundRank1: 0,
+      roundRank2: 0,
+      roundRank3: 0,
+      leagueRank1: 0,
+      leagueRank2: 0,
+      leagueRank3: 0
     }
   }
 };
@@ -183,6 +192,7 @@ const deviceKey = (() => {
 })();
 const apiFetch = (path, options = {}) => fetch(apiUrl(path), {
   credentials: "include",
+  cache: "no-store",
   ...options,
   headers: {
     "X-FMS-Device-Key": deviceKey,
@@ -404,10 +414,16 @@ const normalizedRewardPreferences = () => {
   const rewards = state.preferences?.rewards || {};
   return {
     pointValue: numericPreference(rewards.pointValue),
-    rank1: numericPreference(rewards.rank1),
-    rank2: numericPreference(rewards.rank2),
-    rank3: numericPreference(rewards.rank3),
-    mvp: numericPreference(rewards.mvp)
+    fixed: numericPreference(rewards.fixed),
+    goal: numericPreference(rewards.goal),
+    idealLineup: numericPreference(rewards.idealLineup),
+    gameMvp: numericPreference(rewards.gameMvp),
+    roundRank1: numericPreference(rewards.roundRank1 ?? rewards.rank1),
+    roundRank2: numericPreference(rewards.roundRank2 ?? rewards.rank2),
+    roundRank3: numericPreference(rewards.roundRank3 ?? rewards.rank3),
+    leagueRank1: numericPreference(rewards.leagueRank1),
+    leagueRank2: numericPreference(rewards.leagueRank2),
+    leagueRank3: numericPreference(rewards.leagueRank3)
   };
 };
 
@@ -461,9 +477,16 @@ const bindCurrencyInputs = (container = document) => {
 };
 
 const mergeFinance = (finance = {}) => {
+  const validEntries = Object.entries(finance).filter(([key, value]) => {
+    if (value === undefined || value === null || value === "") return false;
+    if (["balance", "teamValue", "maximumBid", "activeBids", "bidTotal"].includes(key)) {
+      return Number.isFinite(Number(value));
+    }
+    return true;
+  });
   state.finance = {
     ...state.finance,
-    ...Object.fromEntries(Object.entries(finance).filter(([, value]) => value !== undefined)),
+    ...Object.fromEntries(validEntries),
     updatedAt: finance.updatedAt || new Date().toISOString()
   };
 };
@@ -583,6 +606,20 @@ const hasUpcomingFixtureEvents = (fixtures = state.leagueFixtures) => {
   return Array.isArray(events) && events.some((event) => Number(event.timestamp || 0) >= nowSeconds - (3 * 60 * 60));
 };
 
+const fixtureDataNeedsRefresh = (fixtures = state.leagueFixtures) => Number(fixtures?.schemaVersion || 0) < 2 || !hasUpcomingFixtureEvents(fixtures);
+
+const upcomingFixtureCoverage = (fixtures = state.leagueFixtures) => {
+  const events = fixtures?.events || [];
+  const nowSeconds = Date.now() / 1000;
+  const teams = new Set();
+  events
+    .filter((event) => Number(event.timestamp || 0) >= nowSeconds - (3 * 60 * 60))
+    .forEach((event) => {
+      [event.home?.name, event.away?.name].filter(Boolean).forEach((name) => teams.add(canonicalTeamName(name)));
+    });
+  return teams.size;
+};
+
 const nextMatchForPlayer = (player) => {
   const events = state.leagueFixtures?.events || [];
   const nowSeconds = Date.now() / 1000;
@@ -670,8 +707,11 @@ const fixtureEaseForPlayer = (player) => {
 const marketIntelligenceForPlayer = (player, system, price, fit) => {
   const calendar = fixtureEaseForPlayer(player);
   const starterFactor = clamp(Number(player.starter || 0)) / 100;
-  const fixturesKnown = Array.isArray(state.leagueFixtures?.events) && state.leagueFixtures.events.length > 0;
-  const noNextMatch = fixturesKnown && !calendar.matches.length;
+  const fixturesKnown = hasUpcomingFixtureEvents();
+  const explicitlyOut = player.outOfCompetition === true || player.activeInCompetition === false;
+  const comprehensiveTournamentCalendar = state.competition === "worldcup" && upcomingFixtureCoverage() >= 12;
+  const noNextMatch = explicitlyOut || (comprehensiveTournamentCalendar && !calendar.matches.length);
+  const fixtureUnresolved = fixturesKnown && !calendar.matches.length && !noNextMatch;
   const healthStatus = player.health?.status || "unknown";
   const availability = healthStatus === "suspended" || noNextMatch
     ? 0.02
@@ -731,6 +771,9 @@ const marketIntelligenceForPlayer = (player, system, price, fit) => {
   if (noNextMatch) {
     contextualRisk += 38;
     contextualReasons.push("sin partido proximo localizado en la jornada");
+  } else if (fixtureUnresolved) {
+    contextualRisk += 5;
+    contextualReasons.push("partido pendiente de enlazar; no se penaliza como ausencia");
   }
   contextualRisk = Math.round(clamp(contextualRisk));
 
@@ -750,13 +793,18 @@ const marketIntelligenceForPlayer = (player, system, price, fit) => {
     contextualReasons,
     role,
     noNextMatch,
+    fixtureUnresolved,
     fixturesKnown
   };
 };
 
 const renderNextMatch = (player, compact = false) => {
   const match = nextMatchForPlayer(player);
-  if (!match) return `<span class="next-match unavailable">Sin partido localizado</span>`;
+  if (!match) {
+    const intel = player.marketIntelligence;
+    const label = intel?.noNextMatch ? "Sin próximo partido" : intel?.fixtureUnresolved ? "Partido pendiente de enlazar" : "Calendario pendiente";
+    return `<span class="next-match unavailable">${escapeHtml(label)}</span>`;
+  }
   const date = new Date(match.timestamp * 1000);
   const day = date.toLocaleDateString("es-ES", { weekday: "short", day: "2-digit", month: "2-digit", timeZone: "Europe/Madrid" });
   const time = date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Madrid" });
@@ -771,7 +819,11 @@ const renderNextMatch = (player, compact = false) => {
 
 const nextMatchPlainText = (player) => {
   const match = nextMatchForPlayer(player);
-  if (!match) return "Sin partido localizado";
+  if (!match) {
+    if (player.marketIntelligence?.noNextMatch) return "Sin próximo partido";
+    if (player.marketIntelligence?.fixtureUnresolved) return "Partido pendiente de enlazar";
+    return "Calendario pendiente";
+  }
   const date = new Date(match.timestamp * 1000);
   const day = date.toLocaleDateString("es-ES", { weekday: "short", day: "2-digit", month: "2-digit", timeZone: "Europe/Madrid" });
   const time = date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Madrid" });
@@ -813,9 +865,9 @@ const renderMarketSignals = (player) => {
 const renderTopFiveRecommendations = (players) => {
   const target = qs("#market-top-five-list");
   if (!target) return;
-  const top = players.slice(0, 5);
+  const top = marketTopCandidates(players);
   if (!top.length) {
-    target.innerHTML = `<p class="muted-empty compact">No hay jugadores que cumplan los filtros.</p>`;
+    target.innerHTML = `<p class="muted-empty compact">Ahora mismo no hay fichajes recomendables. Los perfiles sin minutos recientes o con decisión Evitar quedan fuera del Top 5.</p>`;
     return;
   }
   target.innerHTML = top.map((player, index) => {
@@ -961,7 +1013,7 @@ const smartBidPlan = (player) => {
   let recommendedBid = roundBidAmount(baseRecommended * (1 - confidenceDiscount - healthDiscount));
   let rationalMax = roundBidAmount(rationalBase * (1 - Math.max(confidenceDiscount * 0.5, healthDiscount * 0.5)));
   let aggressiveBid = roundBidAmount(Math.max(recommendedBid, rationalMax) * (1 + demandBoost));
-  if (!recommendedBid && decision.type !== "avoid" && decision.type !== "watch" && price > 0) recommendedBid = price;
+  if (decision.type !== "avoid" && decision.type !== "watch" && price > 0) recommendedBid = Math.max(price, recommendedBid || price);
   rationalMax = Math.max(rationalMax, recommendedBid);
   aggressiveBid = Math.max(aggressiveBid, rationalMax);
   if (hasMaximumBid && !hasOwnBid) {
@@ -1157,6 +1209,11 @@ const renderMarketAlerts = (players) => {
   const target = qs("#market-alerts");
   if (!target) return;
   const alerts = marketAlertsForPlayers(players);
+  const badge = qs("#market-alert-count");
+  if (badge) {
+    badge.textContent = String(alerts.length);
+    badge.hidden = alerts.length === 0;
+  }
   if (!alerts.length) {
     target.innerHTML = `<p class="muted-empty compact">Sin alertas relevantes.</p>`;
     return;
@@ -1168,6 +1225,44 @@ const renderMarketAlerts = (players) => {
     </button>
   `).join("");
   bindStrategyPlayerLinks(target);
+};
+
+const MARKET_ANALYSIS_TAB_KEY = "radar-fantasy.market-analysis-tab.v1";
+const MARKET_ANALYSIS_COLLAPSED_KEY = "radar-fantasy.market-analysis-collapsed.v1";
+const MARKET_ANALYSIS_TABS = ["plan", "radar", "alerts", "sources", "history"];
+
+const activateMarketAnalysisTab = (tabName, persist = true) => {
+  const selected = MARKET_ANALYSIS_TABS.includes(tabName) ? tabName : "plan";
+  qsa("[data-analysis-tab]").forEach((button) => {
+    const active = button.dataset.analysisTab === selected;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  qsa("[data-analysis-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.analysisPanel !== selected;
+  });
+  if (persist) window.localStorage.setItem(MARKET_ANALYSIS_TAB_KEY, selected);
+};
+
+const setMarketAnalysisCollapsed = (collapsed, persist = true) => {
+  const body = qs("#market-analysis-body");
+  const button = qs("#market-analysis-toggle");
+  if (!body || !button) return;
+  body.hidden = Boolean(collapsed);
+  button.setAttribute("aria-expanded", String(!collapsed));
+  button.textContent = collapsed ? "Mostrar" : "Ocultar";
+  if (persist) window.localStorage.setItem(MARKET_ANALYSIS_COLLAPSED_KEY, collapsed ? "1" : "0");
+};
+
+const initMarketAnalysisCenter = () => {
+  activateMarketAnalysisTab(window.localStorage.getItem(MARKET_ANALYSIS_TAB_KEY) || "plan", false);
+  setMarketAnalysisCollapsed(window.localStorage.getItem(MARKET_ANALYSIS_COLLAPSED_KEY) === "1", false);
+  qsa("[data-analysis-tab]").forEach((button) => button.addEventListener("click", () => {
+    activateMarketAnalysisTab(button.dataset.analysisTab);
+  }));
+  qs("#market-analysis-toggle")?.addEventListener("click", () => {
+    setMarketAnalysisCollapsed(!qs("#market-analysis-body")?.hidden);
+  });
 };
 
 const teamNeedPositions = () => {
@@ -1256,7 +1351,7 @@ const assistantMarketPlayers = () => {
   return competitionPlayers
     .map((player) => analyzePlayer(player, competitionPlayers))
     .filter((player) => !playerIsAlreadyInTeam(player))
-    .sort((a, b) => b.recommendation - a.recommendation);
+    .sort(compareMarketRecommendations);
 };
 
 const assistantTeamPlayers = () => {
@@ -1295,8 +1390,24 @@ const isIncomingOffer = (offer) => {
   return false;
 };
 
-const activeIncomingOffers = (offers = state.biwengerOperations?.offers || []) =>
-  offers.filter(isIncomingOffer);
+const incomingOfferRank = (offer) => (
+  Math.max(0, Number(offer?.expiresTs || 0)) * 1_000_000
+  + Math.max(0, Number(offer?.timestampTs || 0)) * 1_000
+  + Math.max(0, Number(offer?.offerId || 0))
+);
+
+const activeIncomingOffers = (offers = state.biwengerOperations?.offers || []) => {
+  const byParty = new Map();
+  offers.filter(isIncomingOffer).forEach((offer) => {
+    const playerId = Number(offer.playerId || 0);
+    const fromId = Number(offer.fromId || 0);
+    const toId = Number(offer.toId || state.biwenger.userId || 0);
+    const key = `${playerId}:${fromId}:${toId}`;
+    const previous = byParty.get(key);
+    if (!previous || incomingOfferRank(offer) > incomingOfferRank(previous)) byParty.set(key, offer);
+  });
+  return [...byParty.values()];
+};
 
 const currentLiveRoundOwnTeam = () => {
   const teams = state.liveRound?.teams || [];
@@ -1317,7 +1428,21 @@ const currentLiveRoundOwnTeam = () => {
 };
 
 const estimatedRoundReward = () => {
-  const rewards = normalizedRewardPreferences();
+  const fallbackRewards = normalizedRewardPreferences();
+  const officialSettings = state.liveRound?.rewardSettings || state.biwenger.rewardSettings || {};
+  const rewards = officialSettings.available ? {
+    pointValue: numericPreference(officialSettings.pointValue),
+    fixed: numericPreference(officialSettings.fixed),
+    goal: numericPreference(officialSettings.goal),
+    idealLineup: numericPreference(officialSettings.idealLineup),
+    gameMvp: numericPreference(officialSettings.gameMvp),
+    roundRank1: numericPreference(officialSettings.roundRank1),
+    roundRank2: numericPreference(officialSettings.roundRank2),
+    roundRank3: numericPreference(officialSettings.roundRank3),
+    leagueRank1: numericPreference(officialSettings.leagueRank1),
+    leagueRank2: numericPreference(officialSettings.leagueRank2),
+    leagueRank3: numericPreference(officialSettings.leagueRank3)
+  } : fallbackRewards;
   const team = currentLiveRoundOwnTeam();
   const reliablePoints = Number(team?.points);
   const derivedPoints = Array.isArray(team?.players)
@@ -1327,17 +1452,32 @@ const estimatedRoundReward = () => {
   const hasDerivedPoints = derivedPoints !== 0;
   const points = hasReliablePoints ? reliablePoints : (hasDerivedPoints ? derivedPoints : (Number.isFinite(reliablePoints) ? reliablePoints : 0));
   const rank = Number(team?.provisionalRank || team?.rank || 0);
+  const leagueRow = (state.leagueOverview?.standings || []).find((row) => row.isMe || Number(row.userId || 0) === Number(state.biwenger.userId || 0));
+  const leagueRank = Number(leagueRow?.position || 0);
   const hasRoundData = Boolean(team && (hasReliablePoints || hasDerivedPoints || Number(points) !== 0));
   const pointsReward = Math.max(0, Math.round((Number.isFinite(points) ? points : 0) * rewards.pointValue));
-  const positionReward = !hasRoundData ? 0 : rank === 1
-    ? rewards.rank1
+  const roundPositionReward = !hasRoundData ? 0 : rank === 1
+    ? rewards.roundRank1
     : rank === 2
-      ? rewards.rank2
+      ? rewards.roundRank2
       : rank === 3
-        ? rewards.rank3
+        ? rewards.roundRank3
         : 0;
-  const mvpPlayers = Array.isArray(team?.players)
-    ? team.players.filter((player) => player.isMvp || player.mvp || player.roundMvp)
+  const leaguePositionReward = !hasRoundData ? 0 : leagueRank === 1
+    ? rewards.leagueRank1
+    : leagueRank === 2
+      ? rewards.leagueRank2
+      : leagueRank === 3
+        ? rewards.leagueRank3
+        : 0;
+  const roundGoals = Array.isArray(team?.players)
+    ? team.players.reduce((sum, player) => sum + Math.max(0, Number(player.roundGoals || 0)), 0)
+    : 0;
+  const idealPlayers = Array.isArray(team?.players)
+    ? team.players.filter((player) => player.isIdeal || player.idealLineup)
+    : [];
+  const gameMvpPlayers = Array.isArray(team?.players)
+    ? team.players.filter((player) => player.isGameMvp || player.gameMVP || player.mvp)
     : [];
   const officialReward = state.liveRound?.officialReward || state.liveRound?.roundReward || null;
   const officialAmount = moneyAmount(officialReward?.amount);
@@ -1352,8 +1492,6 @@ const estimatedRoundReward = () => {
       amount: officialAmount,
       pointsReward: 0,
       positionReward: 0,
-      mvpReward: 0,
-      mvpCount: mvpPlayers.length,
       points: Number.isFinite(points) ? Math.round(points) : 0,
       rank: rank || null,
       configured: true,
@@ -1366,7 +1504,11 @@ const estimatedRoundReward = () => {
       details
     };
   }
-  const mvpReward = mvpPlayers.length * rewards.mvp;
+  const fixedReward = hasRoundData ? rewards.fixed : 0;
+  const goalReward = hasRoundData ? roundGoals * rewards.goal : 0;
+  const idealReward = hasRoundData ? idealPlayers.length * rewards.idealLineup : 0;
+  const gameMvpReward = hasRoundData ? gameMvpPlayers.length * rewards.gameMvp : 0;
+  const positionReward = roundPositionReward + leaguePositionReward;
   const configured = Object.values(rewards).some((value) => value > 0);
   const source = !state.biwenger.connected
     ? "Conecta Biwenger"
@@ -1378,23 +1520,29 @@ const estimatedRoundReward = () => {
           ? "Suma de jugadores"
           : "Sin puntos expuestos";
   return {
-    amount: pointsReward + positionReward + mvpReward,
+    amount: fixedReward + pointsReward + positionReward + goalReward + idealReward + gameMvpReward,
+    fixedReward,
     pointsReward,
     positionReward,
-    mvpReward,
-    mvpCount: mvpPlayers.length,
+    goalReward,
+    idealReward,
+    gameMvpReward,
     points: Number.isFinite(points) ? Math.round(points) : 0,
     rank: rank || null,
     configured,
     reliable: hasReliablePoints,
     hasRoundData,
-    source,
+    source: officialSettings.available ? "Ajustes de liga Biwenger" : source,
     teamName: team?.name || "",
     updatedAt: state.liveRound?.updatedAt || "",
     details: [
+      fixedReward > 0 ? `fijo: ${formatFinanceMoney(fixedReward)}` : null,
       rewards.pointValue > 0 ? `${Math.round(points)} pts x ${formatFinanceMoney(rewards.pointValue)} = ${formatFinanceMoney(pointsReward)}` : null,
-      positionReward > 0 ? `puesto #${rank}: ${formatFinanceMoney(positionReward)}` : null,
-      mvpReward > 0 ? `${mvpPlayers.length} MVP x ${formatFinanceMoney(rewards.mvp)} = ${formatFinanceMoney(mvpReward)}` : null,
+      roundPositionReward > 0 ? `puesto jornada #${rank}: ${formatFinanceMoney(roundPositionReward)}` : null,
+      leaguePositionReward > 0 ? `puesto liga #${leagueRank}: ${formatFinanceMoney(leaguePositionReward)}` : null,
+      goalReward > 0 ? `${roundGoals} gol(es): ${formatFinanceMoney(goalReward)}` : null,
+      idealReward > 0 ? `${idealPlayers.length} en once ideal: ${formatFinanceMoney(idealReward)}` : null,
+      gameMvpReward > 0 ? `${gameMvpPlayers.length} MVP de partido: ${formatFinanceMoney(gameMvpReward)}` : null,
       configured && !hasRoundData ? "pendiente de puntos de jornada" : null
     ].filter(Boolean)
   };
@@ -1934,6 +2082,8 @@ const renderDailyPlan = (marketPlayers = null) => {
             <small>${escapeHtml(action.reason)}</small>
             <div class="daily-plan-action-meta">
               ${action.player ? renderPositionBadge(action.player.position) : ""}
+              ${action.player ? renderScoringBadge(action.player) : ""}
+              ${action.player ? renderRecentFormDots(action.player) : ""}
               ${action.amount ? `<span class="daily-confidence">${formatFinanceMoney(action.amount)}</span>` : ""}
               <span class="daily-confidence ${reliability.score < 55 ? "low" : ""}">Conf. ${Math.round(reliability.score)}/100</span>
               ${expectedRange ? `<span class="daily-confidence">${escapeHtml(expectedRange)}</span>` : ""}
@@ -2129,7 +2279,7 @@ const renderBidSaleAssistant = () => {
         <header><strong>Jugadores a vender</strong><small>${sales.length ? "Precio de salida sugerido." : "Plantilla sin ventas urgentes."}</small></header>
         ${sales.length ? sales.map((row) => {
           const listed = Boolean(row.existingSale);
-          const activeSalePrice = moneyAmount(row.existingSale?.price || row.sale.suggestedPrice);
+          const activeSalePrice = row.existingSale ? saleListingPrice(row.existingSale) : moneyAmount(row.sale.suggestedPrice);
           return `
           <form class="assistant-action-row assistant-sale-form ${row.sale.action === "Mantener" ? "muted" : ""} ${listed ? "listed" : ""}" data-player-id="${row.player.biwengerPlayerId || ""}">
             ${renderAssistantPlayerRow(row.player, `${row.sale.score}/100 venta`)}
@@ -2151,8 +2301,8 @@ const renderBidSaleAssistant = () => {
               <strong>${escapeHtml(row.action)} · ${formatFinanceMoney(row.amount)}</strong>
               <small>${escapeHtml(row.reason)}</small>
             </div>
-            <button class="ghost-button assistant-offer-response" type="button" data-offer-id="${row.offer.offerId}" data-status="accepted" ${!state.biwenger.connected || row.action === "Rechazar" ? "disabled" : ""}>Aceptar</button>
-            <button class="danger-button assistant-offer-response" type="button" data-offer-id="${row.offer.offerId}" data-status="rejected" ${!state.biwenger.connected || row.action === "Aceptar" ? "disabled" : ""}>Rechazar</button>
+            <button class="ghost-button assistant-offer-response" type="button" data-offer-id="${row.offer.offerId}" data-offer-player-id="${row.offer.playerId || 0}" data-offer-from-id="${row.offer.fromId || 0}" data-offer-amount="${moneyAmount(row.offer.amount)}" data-status="accepted" ${!state.biwenger.connected || row.action === "Rechazar" ? "disabled" : ""}>Aceptar</button>
+            <button class="danger-button assistant-offer-response" type="button" data-offer-id="${row.offer.offerId}" data-offer-player-id="${row.offer.playerId || 0}" data-offer-from-id="${row.offer.fromId || 0}" data-offer-amount="${moneyAmount(row.offer.amount)}" data-status="rejected" ${!state.biwenger.connected || row.action === "Aceptar" ? "disabled" : ""}>Rechazar</button>
           </div>
         `).join("") : `<p class="muted-empty compact">Cuando Biwenger devuelva ofertas, aqui aparecera la recomendacion exacta.</p>`}
       </section>
@@ -2169,6 +2319,7 @@ const postBiwengerAssistantAction = async (path, payload = {}) => {
     body: JSON.stringify(payload)
   });
   const result = await response.json().catch(() => ({}));
+  if (result.operations) applyBiwengerOperations(result.operations);
   if (!response.ok) throw new Error(result.error || "Biwenger no ha aceptado la accion");
   return result;
 };
@@ -2176,6 +2327,12 @@ const postBiwengerAssistantAction = async (path, payload = {}) => {
 const executeAssistantPlan = async () => {
   if (!state.biwenger.connected) {
     setLeagueOperationStatus("Conecta Biwenger antes de ejecutar acciones del asistente.", "error");
+    return;
+  }
+  setLeagueOperationStatus("Comprobando mercado y ofertas actuales antes de ejecutar...", "busy");
+  const freshOperations = await loadBiwengerOperations(false);
+  if (!freshOperations) {
+    setLeagueOperationStatus("No se pudo verificar el estado actual de Biwenger. No se ha ejecutado ninguna accion.", "error");
     return;
   }
   const plan = assistantPlanSnapshot();
@@ -2257,6 +2414,9 @@ const executeAssistantPlan = async () => {
   for (const row of offerActions) {
     await runStep(`${row.action.toLowerCase()} oferta por ${row.offer.playerName || "jugador"}`, () => postBiwengerAssistantAction("/api/biwenger/offer-status", {
       offerId: Number(row.offer.offerId),
+      playerId: Number(row.offer.playerId || 0),
+      fromId: Number(row.offer.fromId || 0),
+      amount: moneyAmount(row.offer.amount),
       status: row.action === "Aceptar" ? "accepted" : "rejected"
     }));
   }
@@ -2310,7 +2470,13 @@ const bindAssistantActions = (target) => {
   target.querySelectorAll(".assistant-offer-response").forEach((button) => button.addEventListener("click", async () => {
     try {
       const accepted = button.dataset.status === "accepted";
-      await biwengerOperation("/api/biwenger/offer-status", { offerId: Number(button.dataset.offerId), status: button.dataset.status }, accepted ? "Oferta aceptada desde el asistente." : "Oferta rechazada desde el asistente.");
+      await biwengerOperation("/api/biwenger/offer-status", {
+        offerId: Number(button.dataset.offerId),
+        playerId: Number(button.dataset.offerPlayerId || 0),
+        fromId: Number(button.dataset.offerFromId || 0),
+        amount: Number(button.dataset.offerAmount || 0),
+        status: button.dataset.status
+      }, accepted ? "Oferta aceptada desde el asistente." : "Oferta rechazada desde el asistente.");
       if (accepted) await refreshBiwengerStatus("Oferta aceptada. Finanzas sincronizadas con Biwenger.");
       await loadBiwengerOperations(false);
     } catch (error) {
@@ -2636,10 +2802,16 @@ const POSITION_NAMES = { POR: "Porteros", DF: "Defensas", MC: "Centrocampistas",
 const FORMATIONS = [
   { name: "4-3-3", slots: { POR: 1, DF: 4, MC: 3, DL: 3 } },
   { name: "4-4-2", slots: { POR: 1, DF: 4, MC: 4, DL: 2 } },
+  { name: "4-5-1", slots: { POR: 1, DF: 4, MC: 5, DL: 1 } },
   { name: "3-5-2", slots: { POR: 1, DF: 3, MC: 5, DL: 2 } },
   { name: "3-4-3", slots: { POR: 1, DF: 3, MC: 4, DL: 3 } },
   { name: "5-3-2", slots: { POR: 1, DF: 5, MC: 3, DL: 2 } },
-  { name: "5-4-1", slots: { POR: 1, DF: 5, MC: 4, DL: 1 } }
+  { name: "5-4-1", slots: { POR: 1, DF: 5, MC: 4, DL: 1 } },
+  { name: "3-3-4", slots: { POR: 1, DF: 3, MC: 3, DL: 4 }, premium: true },
+  { name: "3-6-1", slots: { POR: 1, DF: 3, MC: 6, DL: 1 }, premium: true },
+  { name: "4-2-4", slots: { POR: 1, DF: 4, MC: 2, DL: 4 }, premium: true },
+  { name: "4-6-0", slots: { POR: 1, DF: 4, MC: 6, DL: 0 }, premium: true },
+  { name: "5-2-3", slots: { POR: 1, DF: 5, MC: 2, DL: 3 }, premium: true }
 ];
 
 const competitionMeta = () => COMPETITIONS[state.competition] || COMPETITIONS.club;
@@ -2941,23 +3113,29 @@ const renderPlayerMedia = (player, size = "sm", options = {}) => {
   const media = player.media || {};
   const initials = initialsFor(player.name);
   const teamName = String(player.team || "?");
-  const overlayMode = options.overlay || "emblem";
   const playerImg = media.playerImage
     ? `<img class="player-photo-img" src="${escapeHtml(media.playerImage)}" alt="Foto de ${escapeHtml(player.name)}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false" /><span class="player-photo-fallback" hidden>${escapeHtml(initials)}</span>`
     : media.emblemImage
       ? `<img class="player-photo-img proxy" src="${escapeHtml(media.emblemImage)}" alt="Escudo o bandera de ${escapeHtml(teamName)}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false" /><span class="player-photo-fallback" hidden>${escapeHtml(initials)}</span>`
       : `<span class="player-photo-fallback">${escapeHtml(initials)}</span>`;
-  const points = Number(player.competitionPoints ?? player.points ?? 0).toLocaleString("es-ES");
-  const emblem = overlayMode === "points"
-    ? `<span class="player-points-badge" title="Puntos totales en Biwenger con el sistema configurado">${escapeHtml(points)}</span>`
-    : media.emblemImage
+  const hasExplicitPoints = Object.prototype.hasOwnProperty.call(options, "pointsValue");
+  const pointsValue = hasExplicitPoints ? options.pointsValue : (player.competitionPoints ?? player.points ?? 0);
+  const numericPoints = Number(pointsValue);
+  const points = pointsValue !== null && pointsValue !== undefined && Number.isFinite(numericPoints)
+    ? numericPoints.toLocaleString("es-ES")
+    : "–";
+  const emblem = media.emblemImage
       ? `<img class="player-emblem-img" src="${escapeHtml(media.emblemImage)}" alt="${media.emblemKind === "selection" ? "Bandera o escudo de seleccion" : "Escudo de club"} de ${escapeHtml(teamName)}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false" /><span class="player-emblem-fallback" hidden>${escapeHtml(teamName.slice(0, 2).toUpperCase())}</span>`
       : `<span class="player-emblem-fallback">${escapeHtml(teamName.slice(0, 2).toUpperCase())}</span>`;
+  const pointsBadge = options.showPoints === false
+    ? ""
+    : `<span class="player-points-overlay" title="${escapeHtml(options.pointsTitle || "Puntos acumulados en Biwenger")}">${escapeHtml(points)}</span>`;
 
   return `
     <span class="player-media ${size}">
       <span class="player-photo">${playerImg}</span>
       <span class="player-emblem">${emblem}</span>
+      ${pointsBadge}
     </span>
   `;
 };
@@ -3498,7 +3676,7 @@ const formatSignedMoney = (value) => {
   return `${sign} ${Math.abs(Math.round(value)).toLocaleString("es-ES")} €`;
 };
 
-const TERMINAL_OWN_BID_STATUSES = new Set(["accepted", "rejected", "cancelled", "canceled", "expired", "completed", "closed"]);
+const TERMINAL_OWN_BID_STATUSES = new Set(["accepted", "processed", "waitingmarket", "rejected", "cancelled", "canceled", "expired", "completed", "closed"]);
 
 const isTerminalOwnBidStatus = (status) => TERMINAL_OWN_BID_STATUSES.has(String(status || "").toLowerCase());
 
@@ -3510,6 +3688,7 @@ const teamPlayerByBiwengerId = (playerId) =>
 
 const isActiveOwnBidOffer = (offer) => {
   if (!offer?.isMine || offer?.isIncoming) return false;
+  if (String(offer.status || "").toLowerCase() !== "waiting") return false;
   if (isTerminalOwnBidStatus(offer.status)) return false;
   if (moneyAmount(offer.amount) <= 0) return false;
   const playerId = Number(offer.playerId || 0);
@@ -3524,6 +3703,7 @@ const isActiveOwnBidOffer = (offer) => {
   const offerId = Number(offer.offerId || offer.id || 0);
   if (offerId <= 0 && !/outgoing|sent|own-check/.test(sourceOnly)) return false;
   if (teamPlayerByBiwengerId(playerId)) return false;
+  if (offer.isCurrentMarket === true || offer.isAuthoritativeOutgoing === true) return true;
   if (marketPlayerByBiwengerId(playerId)) return true;
   if (/market sale|market-sale|sale|sell|venta|sales/.test(source) && !/bid|puja|purchase|buy|outgoing|sent|own-check/.test(source)) {
     return false;
@@ -3588,7 +3768,7 @@ const playerHasOwnBid = (player) => {
   const status = String(player?.myBidStatus || player?.bidStatus || "").toLowerCase();
   if (isTerminalOwnBidStatus(status)) return false;
   const hasOfferId = Number(player?.offerId || 0) > 0;
-  const hasActiveStatus = Boolean(status && !/sin|none|no bid|rechaz|cancel|expir|cerrad|acept/i.test(status));
+  const hasActiveStatus = status === "waiting";
   if (player?.hasBid && (hasOfferId || hasActiveStatus)) return true;
   if (hasOfferId) return true;
   return false;
@@ -3647,7 +3827,7 @@ const renderMaximumBidBadge = (player, compact = false) => {
 const roundBidAmount = (value) => {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric) || numeric <= 0) return 0;
-  return Math.max(0, Math.round(numeric / 10000) * 10000);
+  return Math.max(0, Math.ceil(numeric / 10000) * 10000);
 };
 
 const roundSaleAmount = (value) => {
@@ -3662,6 +3842,19 @@ const decisionLabels = {
   watch: { label: "Mantener vigilado", className: "watch", short: "Vigilar" },
   avoid: { label: "Evitar", className: "avoid", short: "Evitar" }
 };
+
+const marketDecisionPriority = (player) => ({ buy: 4, limited: 3, watch: 2, avoid: 1 }[player?.marketDecision?.type] || 0);
+
+const compareMarketRecommendations = (a, b) => (
+  marketDecisionPriority(b) - marketDecisionPriority(a)
+  || Number(b?.recommendation || 0) - Number(a?.recommendation || 0)
+);
+
+const marketTopCandidates = (players, limit = 5) => players
+  .filter((player) => ["buy", "limited"].includes(player?.marketDecision?.type))
+  .filter((player) => !player?.recentForm?.noRecentMinutes)
+  .sort(compareMarketRecommendations)
+  .slice(0, limit);
 
 const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) => {
   const price = Number(player.price || player.biwengerValue || 0);
@@ -4235,6 +4428,50 @@ const setLeagueStatus = (message) => {
   if (status) status.textContent = message;
 };
 
+let dataSyncDepth = 0;
+let dataSyncShowTimer = null;
+let dataSyncHideTimer = null;
+
+const updateDataSync = (message, mode = "busy") => {
+  const popup = qs("#data-sync-popup");
+  if (!popup) return;
+  const title = qs("#data-sync-popup-title");
+  const detail = qs("#data-sync-popup-message");
+  popup.dataset.mode = mode;
+  if (title) title.textContent = mode === "error" ? "Actualización incompleta" : mode === "ready" ? "Datos actualizados" : "Actualizando datos";
+  if (detail) detail.textContent = message || "Sincronizando la información más reciente...";
+};
+
+const beginDataSync = (message = "Sincronizando la información más reciente...") => {
+  dataSyncDepth += 1;
+  window.clearTimeout(dataSyncHideTimer);
+  updateDataSync(message, "busy");
+  if (dataSyncShowTimer) return;
+  dataSyncShowTimer = window.setTimeout(() => {
+    dataSyncShowTimer = null;
+    const popup = qs("#data-sync-popup");
+    if (popup && dataSyncDepth > 0) popup.hidden = false;
+  }, 250);
+};
+
+const endDataSync = ({ error = "" } = {}) => {
+  dataSyncDepth = Math.max(0, dataSyncDepth - 1);
+  if (dataSyncDepth > 0) return;
+  window.clearTimeout(dataSyncShowTimer);
+  dataSyncShowTimer = null;
+  const popup = qs("#data-sync-popup");
+  if (!popup) return;
+  if (error) {
+    updateDataSync(error, "error");
+    popup.hidden = false;
+    dataSyncHideTimer = window.setTimeout(() => { popup.hidden = true; }, 3500);
+    return;
+  }
+  if (popup.hidden) return;
+  updateDataSync("La información visible ya está al día.", "ready");
+  dataSyncHideTimer = window.setTimeout(() => { popup.hidden = true; }, 900);
+};
+
 const setAnalyzeBusy = (busy, label = "Recalcular") => {
   state.isAnalyzing = busy;
   const button = qs("#analyze-market");
@@ -4337,9 +4574,7 @@ const entityIconUrl = (entity = {}) => {
       || entity.profileImage || entity.profileImageUrl || ""
   );
   if (direct) return direct;
-  return Number(entity.userId || 0) > 0 || (Number(entity.id || 0) > 0 && entity.isUser)
-    ? biwengerDefaultUserIconUrl
-    : "";
+  return "";
 };
 
 const renderEntityAvatar = (entity = {}, className = "") => {
@@ -4424,6 +4659,13 @@ const applyBiwengerSession = (payload) => {
     ? payload.availableLeagues
     : (payload?.connected ? state.biwenger.availableLeagues : []);
   state.biwenger.competition = payload?.competition || "";
+  state.biwenger.credits = payload?.credits !== null && payload?.credits !== undefined && Number.isFinite(Number(payload.credits))
+    ? Number(payload.credits)
+    : state.biwenger.credits;
+  state.biwenger.bidCountFree = Boolean(payload?.bidCountFree);
+  state.biwenger.rewardSettings = payload?.rewardSettings && typeof payload.rewardSettings === "object"
+    ? payload.rewardSettings
+    : state.biwenger.rewardSettings;
   mergeFinance({
     balance: Number.isFinite(payload?.balance) ? payload.balance : state.finance.balance,
     teamValue: Number.isFinite(payload?.teamValue) ? payload.teamValue : state.finance.teamValue,
@@ -4473,7 +4715,7 @@ const refreshBiwengerStatus = async (preferredMessage = "") => {
         preferredMessage || `Conectado como ${payload.userName || "usuario"} en ${payload.leagueName || "tu liga"}.`,
         "ready"
       );
-      if (state.players.length && !hasUpcomingFixtureEvents()) {
+      if (state.players.length && fixtureDataNeedsRefresh()) {
         await loadLeagueFixtures(false);
       }
     } else {
@@ -5102,6 +5344,7 @@ const enrichCurrentMarket = async (forceRefresh = false) => {
     return;
   }
 
+  beginDataSync(forceRefresh ? "Actualizando mercado y fuentes..." : "Consultando fuentes y datos de jugadores...");
   setSourceBusy(true, forceRefresh ? "Actualizando" : "Consultando");
   setSourceStatus(
     forceRefresh
@@ -5135,6 +5378,7 @@ const enrichCurrentMarket = async (forceRefresh = false) => {
     }
 
     const { payload, players } = await enrichPlayerListBatched(state.players, forceRefresh, (done, total) => {
+      updateDataSync(`Actualizando fuentes: ${done}/${total} jugadores...`);
       setSourceStatus(`Actualizando fuentes por lotes: ${done}/${total} jugadores...`, "busy");
     });
     state.players = removeTeamPlayersFromMarket(players, state.teamPlayers);
@@ -5162,6 +5406,7 @@ const enrichCurrentMarket = async (forceRefresh = false) => {
     setSourceStatus(`${error.message || "No se pudieron consultar fuentes"}. Se mantiene estimacion local.`, "error");
   } finally {
     setSourceBusy(false);
+    endDataSync();
   }
 };
 
@@ -5367,6 +5612,7 @@ const importFromBiwenger = async (kind) => {
     return false;
   }
   const label = kind === "team" ? "Trayendo equipo" : "Trayendo mercado";
+  beginDataSync(kind === "team" ? "Importando y revisando tu plantilla..." : "Importando el mercado de Biwenger...");
   setBiwengerBusy(true, label);
   setBiwengerStatus(kind === "team" ? "Importando tu plantilla real..." : "Importando el mercado real...", "busy");
   try {
@@ -5404,6 +5650,19 @@ const importFromBiwenger = async (kind) => {
 
     if (kind === "team") {
       state.teamPlayers = importedPlayers;
+      if (payload.lineup?.type && Array.isArray(payload.lineup.playersID)) {
+        const localIdByBiwengerId = new Map(importedPlayers.map((player) => [Number(player.biwengerPlayerId || 0), player.id]));
+        const formation = FORMATIONS.find((item) => item.name === payload.lineup.type);
+        const playerIds = payload.lineup.playersID.map((id) => localIdByBiwengerId.get(Number(id))).filter(Boolean);
+        if (formation && playerIds.length) {
+          state.editableLineup = {
+            formationName: formation.name,
+            playerIds,
+            captainId: localIdByBiwengerId.get(Number(payload.lineup.captain || 0)) || null,
+            strikerId: localIdByBiwengerId.get(Number(payload.lineup.striker || 0)) || null
+          };
+        }
+      }
       state.teamDepartures = hydrateImportedPlayers(payload.departedPlayers || []);
       state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
       qs("#team-text").value = biwengerPlayersToText(importedPlayers);
@@ -5414,6 +5673,7 @@ const importFromBiwenger = async (kind) => {
       setTeamStatus(`Plantilla importada desde Biwenger: ${importedPlayers.length} jugadores.`, importedPlayers.length ? "ready" : "error");
       if (importedPlayers.length && canUseApi()) {
         const { players: enriched } = await enrichPlayerListBatched(importedPlayers, false, (done, total) => {
+          updateDataSync(`Enriqueciendo plantilla: ${done}/${total} jugadores...`);
           setTeamStatus(`Enriqueciendo plantilla: ${done}/${total} jugadores...`, "busy");
         });
         state.teamPlayers = enriched;
@@ -5463,6 +5723,7 @@ const importFromBiwenger = async (kind) => {
     return false;
   } finally {
     setBiwengerBusy(false);
+    endDataSync();
   }
 };
 
@@ -5532,6 +5793,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   }
   state.autoSync.running = true;
   state.autoSync.status = "running";
+  beginDataSync(reason === "startup" ? "Cargando mercado, equipo, partidos y fuentes..." : "Sincronizando los datos de la liga...");
   renderDailyPlan(filteredPlayers());
   let success = false;
   try {
@@ -5562,6 +5824,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   } finally {
     state.autoSync.running = false;
     renderDailyPlan(filteredPlayers());
+    endDataSync({ error: state.autoSync.status === "error" ? "No se pudieron actualizar todos los datos; se mantienen los últimos valores válidos." : "" });
   }
 };
 
@@ -5638,10 +5901,8 @@ const biwengerOperation = async (path, payload = {}, successMessage = "Operacion
     body: JSON.stringify(payload)
   });
   const result = await response.json().catch(() => ({}));
+  if (result.operations) applyBiwengerOperations(result.operations);
   if (!response.ok) throw new Error(result.error || "Biwenger no ha aceptado la operacion");
-  if (result.operations) {
-    applyBiwengerOperations(result.operations);
-  }
   setLeagueOperationStatus(successMessage, "ready");
   return result;
 };
@@ -5775,10 +6036,15 @@ const renderLeagueActivityEntry = (entry = {}) => {
 };
 
 const teamPlayerBiwengerValue = (player) => Number(
-  player.biwengerPlayerId
-    ? (player.price || player.biwengerValue || 0)
-    : (player.biwengerValue || player.price || 0)
+  player.biwengerValue || player.price || player.referenceValue || 0
 );
+
+const saleListingPrice = (sale = {}) => {
+  const value = moneyAmount(sale.value);
+  const source = normalize(sale.priceSource || "");
+  if (source === "amount" && value > 0) return value;
+  return moneyAmount(sale.price) || value;
+};
 
 const operationCurrentValue = (entry) => {
   const player = operationPlayerData(entry);
@@ -6008,8 +6274,8 @@ const renderBiwengerOperations = () => {
           })()}
         </div>
         <label class="offer-row-sim"><input class="offer-sim-checkbox" type="checkbox" value="${escapeHtml(offerIdKey(offer))}" ${state.offerSimulation.selectedOfferIds.includes(offerIdKey(offer)) ? "checked" : ""} /> Simular</label>
-        <button class="ghost-button offer-response" type="button" data-offer-id="${offer.offerId}" data-status="accepted">Aceptar</button>
-        <button class="danger-button offer-response" type="button" data-offer-id="${offer.offerId}" data-status="rejected">Rechazar</button>
+        <button class="ghost-button offer-response" type="button" data-offer-id="${offer.offerId}" data-offer-player-id="${offer.playerId || 0}" data-offer-from-id="${offer.fromId || 0}" data-offer-amount="${moneyAmount(offer.amount)}" data-status="accepted">Aceptar</button>
+        <button class="danger-button offer-response" type="button" data-offer-id="${offer.offerId}" data-offer-player-id="${offer.playerId || 0}" data-offer-from-id="${offer.fromId || 0}" data-offer-amount="${moneyAmount(offer.amount)}" data-status="rejected">Rechazar</button>
       </div>
     `).join("")}` : ""}
   `;
@@ -6021,7 +6287,7 @@ const renderBiwengerOperations = () => {
     ${sales.length ? sales.map((sale) => `
       <div class="operation-row">
         ${renderOperationIdentity(sale)}
-        <div class="operation-comparison" title="Precio solicitado leído de Biwenger (${escapeHtml(sale.priceSource || "price")})"><span>Precio de venta</span><strong>${formatFinanceMoney(sale.price)}</strong><small>Valor ${formatFinanceMoney(sale.value)} · <b class="${sale.price - sale.value >= 0 ? "positive" : "negative"}">${formatSignedMoney(sale.price - sale.value)}</b></small></div>
+        <div class="operation-comparison" title="Precio solicitado leído de Biwenger (${escapeHtml(sale.priceSource || "price")})"><span>Precio de venta</span><strong>${formatFinanceMoney(saleListingPrice(sale))}</strong><small>Valor ${formatFinanceMoney(sale.value)} · <b class="${saleListingPrice(sale) - sale.value >= 0 ? "positive" : "negative"}">${formatSignedMoney(saleListingPrice(sale) - sale.value)}</b></small></div>
         <button class="danger-button remove-sale" type="button" data-player-id="${sale.playerId}">Retirar</button>
       </div>
     `).join("") : `<p class="muted-empty">No tienes jugadores puestos a la venta.</p>`}
@@ -6066,7 +6332,13 @@ const renderBiwengerOperations = () => {
   }));
   bidsTarget.querySelectorAll(".offer-response").forEach((button) => button.addEventListener("click", async () => {
     try {
-      await biwengerOperation("/api/biwenger/offer-status", { offerId: Number(button.dataset.offerId), status: button.dataset.status }, button.dataset.status === "accepted" ? "Oferta aceptada correctamente. Puja maxima y saldo actualizados." : "Oferta rechazada correctamente.");
+      await biwengerOperation("/api/biwenger/offer-status", {
+        offerId: Number(button.dataset.offerId),
+        playerId: Number(button.dataset.offerPlayerId || 0),
+        fromId: Number(button.dataset.offerFromId || 0),
+        amount: Number(button.dataset.offerAmount || 0),
+        status: button.dataset.status
+      }, button.dataset.status === "accepted" ? "Oferta aceptada correctamente. Puja maxima y saldo actualizados." : "Oferta rechazada correctamente.");
       if (button.dataset.status === "accepted") {
         await refreshBiwengerStatus("Oferta aceptada. Finanzas sincronizadas con Biwenger.");
         renderFinance();
@@ -6698,6 +6970,7 @@ const loadLeagueFixtures = async (showFeedback = true) => {
     if (target) target.innerHTML = `<p class="muted-empty">Conecta Biwenger para consultar la jornada actual.</p>`;
     return;
   }
+  beginDataSync("Actualizando próximos partidos y resultados...");
   if (showFeedback) setLeagueOperationStatus("Consultando partidos de la jornada...", "busy");
   if (target) target.innerHTML = `<p class="muted-empty">Cargando partidos y resultados...</p>`;
   try {
@@ -6712,6 +6985,8 @@ const loadLeagueFixtures = async (showFeedback = true) => {
   } catch (error) {
     if (target) target.innerHTML = `<p class="muted-empty">${escapeHtml(error.message || "No se pudo cargar la jornada actual.")}</p>`;
     if (showFeedback) setLeagueOperationStatus(error.message || "No se pudo cargar la jornada actual.", "error");
+  } finally {
+    endDataSync();
   }
 };
 
@@ -6792,6 +7067,7 @@ const loadLiveRound = async (showFeedback = true) => {
     state.selectedLiveRoundUserId = Number((payload.teams || [])[0]?.userId || 0);
     state.liveRoundDebug = null;
     renderLiveRound();
+    renderLineup();
     renderBidSaleAssistant();
     if (state.biwengerOperations) renderBiwengerOperations();
     if (showFeedback) {
@@ -7915,7 +8191,7 @@ const filteredPlayers = () => {
   const competitionPlayers = state.players.map(playerForCompetition);
   const analyzed = competitionPlayers
     .map((player) => analyzePlayer(player, competitionPlayers))
-    .sort((a, b) => b.recommendation - a.recommendation);
+    .sort(compareMarketRecommendations);
 
   return analyzed.filter((player) => {
     const notInTeam = !playerIsAlreadyInTeam(player);
@@ -7965,10 +8241,16 @@ const syncSettingsControls = () => {
   const rewards = normalizedRewardPreferences();
   const rewardInputs = {
     "#reward-point-value": rewards.pointValue,
-    "#reward-rank-1": rewards.rank1,
-    "#reward-rank-2": rewards.rank2,
-    "#reward-rank-3": rewards.rank3,
-    "#reward-mvp": rewards.mvp
+    "#reward-fixed": rewards.fixed,
+    "#reward-goal": rewards.goal,
+    "#reward-ideal-lineup": rewards.idealLineup,
+    "#reward-game-mvp": rewards.gameMvp,
+    "#reward-round-rank-1": rewards.roundRank1,
+    "#reward-round-rank-2": rewards.roundRank2,
+    "#reward-round-rank-3": rewards.roundRank3,
+    "#reward-league-rank-1": rewards.leagueRank1,
+    "#reward-league-rank-2": rewards.leagueRank2,
+    "#reward-league-rank-3": rewards.leagueRank3
   };
   Object.entries(rewardInputs).forEach(([selector, value]) => {
     const input = qs(selector);
@@ -7987,7 +8269,7 @@ const updateWeightLabels = () => {
 
 const renderSummary = (players) => {
   qs("#metric-count").textContent = String(players.length);
-  qs("#metric-best").textContent = players[0]?.name || "Pendiente";
+  qs("#metric-best").textContent = marketTopCandidates(players, 1)[0]?.name || "Sin fichajes recomendables";
   const averageValue = players.length
     ? players.reduce((sum, player) => sum + (player.price || 0), 0) / players.length
     : 0;
@@ -7997,6 +8279,22 @@ const renderSummary = (players) => {
   renderTopFiveRecommendations(players);
   renderStrategicMarket(players);
   renderFinance();
+};
+
+const renderMarketOrderSummary = (players) => {
+  const actionableCount = players.filter((player) => ["buy", "limited"].includes(player?.marketDecision?.type)).length;
+  const kicker = qs("#market-order-kicker");
+  const title = qs("#market-order-title");
+  const description = qs("#market-order-description");
+  if (actionableCount > 0) {
+    if (kicker) kicker.textContent = "Prioridad real";
+    if (title) title.textContent = "Candidatos primero";
+    if (description) description.textContent = `${actionableCount} opción${actionableCount === 1 ? "" : "es"} pujable${actionableCount === 1 ? "" : "s"}. Los perfiles descartados aparecen después.`;
+    return;
+  }
+  if (kicker) kicker.textContent = "Mercado sin opciones";
+  if (title) title.textContent = "No hay fichajes recomendables";
+  if (description) description.textContent = "Los jugadores mostrados debajo están descartados y se ordenan solo para poder analizarlos.";
 };
 
 const renderFinance = () => {
@@ -8021,7 +8319,10 @@ const renderFinance = () => {
     "#metric-future-balance": formatFinanceMoney(futureBalance),
     "#team-finance-balance": formatFinanceMoney(state.finance.balance),
     "#team-finance-value": formatFinanceMoney(state.finance.teamValue),
-    "#team-finance-revaluation": state.teamPlayers.length ? formatSignedMoney(teamRevaluation) : "S/D"
+    "#team-finance-revaluation": state.teamPlayers.length ? formatSignedMoney(teamRevaluation) : "S/D",
+    "#team-biwenger-credits": state.biwenger.credits !== null && Number.isFinite(Number(state.biwenger.credits))
+      ? Number(state.biwenger.credits).toLocaleString("es-ES")
+      : "S/D"
   };
   Object.entries(values).forEach(([selector, value]) => {
     const node = qs(selector);
@@ -8055,18 +8356,93 @@ const renderBid = (player) => {
   return `<span class="bid-badge active" title="${escapeHtml(player.myBidStatus || player.bidStatus || "Puja activa")}">${formatFinanceMoney(amount)}</span>`;
 };
 
-const renderRivalBids = (player) => {
+const renderRivalBids = (player, queryable = false) => {
   const totalVisible = Number(player.bidCount || 0);
   const ownText = playerHasOwnBid(player) ? " · incluye tu puja" : "";
   const sourceText = player.bidCountSource ? ` · ${player.bidCountSource}` : "";
+  const asBadge = (content, className, title) => queryable
+    ? `<button class="bid-badge ${className} query-player-bid-count" type="button" data-query-bid-player="${escapeHtml(player.id)}" title="${escapeHtml(title)}">${content}</button>`
+    : `<span class="bid-badge ${className}" title="${escapeHtml(title)}">${content}</span>`;
   if (player.rivalBidVisibility === "amounts" && Number.isFinite(player.highestRivalBid)) {
-    return `<span class="bid-badge rival" title="${escapeHtml(`${totalVisible || player.rivalBidCount} pujas visibles${ownText}${sourceText}`)}">Máx. ${formatFinanceMoney(player.highestRivalBid)}</span>`;
+    return asBadge(`Máx. ${formatFinanceMoney(player.highestRivalBid)}`, "rival", `${totalVisible || player.rivalBidCount} pujas visibles${ownText}${sourceText}`);
   }
   if (totalVisible > 0) {
-    return `<span class="bid-badge rival" title="${escapeHtml(`${player.rivalBidCount || 0} de rivales${ownText}${sourceText}`)}">${totalVisible} puja${totalVisible === 1 ? "" : "s"}</span>`;
+    return asBadge(`${totalVisible} puja${totalVisible === 1 ? "" : "s"}`, "rival", `${player.rivalBidCount || 0} de rivales${ownText}${sourceText}`);
   }
-  if (player.rivalBidVisibility === "count") return `<span class="bid-badge muted" title="${sourceText ? escapeHtml(sourceText.slice(3)) : "Contador consultado"}">0 pujas</span>`;
-  return `<span class="bid-badge muted" title="Pulsa actualizar pujas para consultar el contador visible de Biwenger">Consultar</span>`;
+  if (player.rivalBidVisibility === "count") return asBadge("0 pujas", "muted", sourceText ? sourceText.slice(3) : "Contador consultado");
+  return asBadge("Consultar", "muted", "Consultar el contador visible de Biwenger");
+};
+
+const closeBidCountPopup = () => {
+  const popup = qs("#bid-count-popup");
+  if (popup) popup.hidden = true;
+};
+
+const showBidCountPopup = (title, message, mode = "ready") => {
+  const popup = qs("#bid-count-popup");
+  if (!popup) return;
+  const titleNode = qs("#bid-count-popup-title");
+  const messageNode = qs("#bid-count-popup-message");
+  const dialog = popup.querySelector(".bid-count-dialog");
+  if (titleNode) titleNode.textContent = title;
+  if (messageNode) messageNode.textContent = message;
+  if (dialog) dialog.dataset.mode = mode;
+  popup.hidden = false;
+  qs("#close-bid-count-popup")?.focus();
+};
+
+const queryPlayerBidCount = async (player, button) => {
+  if (!state.biwenger.connected || !player?.biwengerPlayerId) {
+    showBidCountPopup("Pujas rivales", "Conecta Biwenger para consultar las pujas visibles de este jugador.", "error");
+    return;
+  }
+  button.disabled = true;
+  showBidCountPopup(`Pujas de ${player.name}`, "Consultando la información visible en Biwenger...", "busy");
+  try {
+    const requestBidCount = async (confirmedCreditCost = false) => {
+      const response = await apiFetch("/api/biwenger/bid-count", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          playerId: Number(player.biwengerPlayerId),
+          ownerId: Number(player.marketOwnerId || 0),
+          confirmedCreditCost
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      return { response, payload };
+    };
+    let { response, payload } = await requestBidCount();
+    if (response.status === 402 && payload.requiresConfirmation) {
+      const accepted = window.confirm("Biwenger cobra 1 moneda por consultar el número de pujas en cuentas básicas. ¿Quieres continuar?");
+      if (!accepted) {
+        showBidCountPopup(`Pujas de ${player.name}`, "Consulta cancelada. No se ha gastado ninguna moneda.", "ready");
+        return;
+      }
+      ({ response, payload } = await requestBidCount(true));
+    }
+    if (!response.ok) throw new Error(payload.error || "Biwenger no ha mostrado las pujas de este jugador.");
+    const totalCount = Math.max(0, Number(payload.count || 0));
+    const rivalCount = Number.isFinite(Number(payload.rivalCount))
+      ? Math.max(0, Number(payload.rivalCount || 0))
+      : Math.max(0, totalCount - (payload.hasOwnBid || playerHasOwnBid(player) ? 1 : 0));
+    state.players = state.players.map((item) => item.id === player.id ? {
+      ...item,
+      bidCount: totalCount,
+      bidCountSource: payload.source || item.bidCountSource || "",
+      rivalBidCount: rivalCount,
+      rivalBidVisibility: "count"
+    } : item);
+    const message = totalCount > 0
+      ? `${totalCount} puja${totalCount === 1 ? "" : "s"} visible${totalCount === 1 ? "" : "s"}${rivalCount !== totalCount ? `; ${rivalCount} de rivales` : ""}.`
+      : "No tiene pujas visibles ahora mismo.";
+    showBidCountPopup(`Pujas de ${player.name}`, message, "ready");
+    renderTable();
+  } catch (error) {
+    showBidCountPopup(`Pujas de ${player.name}`, error.message || "No se pudieron consultar las pujas.", "error");
+  } finally {
+    button.disabled = false;
+  }
 };
 
 const marketSellerInfo = (player) => {
@@ -8093,6 +8469,7 @@ const renderTable = () => {
   const players = filteredPlayers();
   syncMarketPositionFilter();
   renderSummary(players);
+  renderMarketOrderSummary(players);
   renderCompareOptions(players);
 
   if (!players.length) {
@@ -8133,7 +8510,7 @@ const renderTable = () => {
       <td>${renderDecisionBadge(player)}</td>
       <td>${renderMaximumBidBadge(player)}</td>
       <td>${renderBid(player)}</td>
-      <td>${renderRivalBids(player)}</td>
+      <td>${renderRivalBids(player, true)}</td>
       <td>${player.starter}%</td>
       <td>${player.form}%</td>
       <td>${renderHealthBadge(player)}</td>
@@ -8163,7 +8540,7 @@ const renderTable = () => {
             </div>
           </div>
           <div class="market-card-score">
-            <span class="market-card-score-label">Nota</span>
+            <span class="market-card-score-label">Análisis</span>
             <strong>${player.recommendation}</strong>
           </div>
         </div>
@@ -8200,7 +8577,7 @@ const renderTable = () => {
           </div>
           <div class="market-card-stat">
             <span>Rivales</span>
-            <strong>${renderRivalBids(player)}</strong>
+            <strong>${renderRivalBids(player, true)}</strong>
           </div>
           <div class="market-card-stat">
             <span>Titular</span>
@@ -8258,6 +8635,14 @@ const renderTable = () => {
   }
 
   [body, cards].filter(Boolean).forEach((container) => {
+    container.querySelectorAll(".query-player-bid-count").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const player = players.find((item) => item.id === button.dataset.queryBidPlayer);
+        if (player) queryPlayerBidCount(player, button);
+      });
+    });
     container.querySelectorAll("[data-player-id]").forEach((node) => {
       node.addEventListener("click", () => {
         state.selectedPlayerId = node.dataset.playerId;
@@ -8270,17 +8655,26 @@ const renderTable = () => {
   const shouldOpenMobileDetail = state.pendingMobileDetailOpen;
   state.pendingMobileDetailOpen = false;
   if (!state.selectedPlayerId || !players.some((player) => player.id === state.selectedPlayerId)) {
-    state.selectedPlayerId = players[0].id;
-    renderDetail(players[0], { openSheet: false });
+    const firstCandidate = marketTopCandidates(players, 1)[0];
+    if (!firstCandidate) {
+      state.selectedPlayerId = null;
+      renderEmptyDetail(
+        "Sin fichajes recomendables",
+        "Todos los jugadores del listado están descartados ahora mismo. Puedes abrir cualquiera para consultar el motivo, pero el sistema no recomienda pujar."
+      );
+      return;
+    }
+    state.selectedPlayerId = firstCandidate.id;
+    renderDetail(firstCandidate, { openSheet: false });
   } else {
     renderDetail(players.find((player) => player.id === state.selectedPlayerId), { openSheet: shouldOpenMobileDetail });
   }
 };
 
-const detailEmptyMarkup = () => `
+const detailEmptyMarkup = (title = "Selecciona un jugador", description = "Veras la lectura de titularidad, encaje por sistema, precio objetivo y argumentos de fichaje.") => `
   <div class="pitch-visual" aria-hidden="true"><span></span><span></span><span></span></div>
-  <h3>Selecciona un jugador</h3>
-  <p>Veras la lectura de titularidad, encaje por sistema, precio objetivo y argumentos de fichaje.</p>
+  <h3>${escapeHtml(title)}</h3>
+  <p>${escapeHtml(description)}</p>
 `;
 
 const buildDetailMarkup = (player) => {
@@ -8416,7 +8810,6 @@ const buildDetailMarkup = (player) => {
         <input class="bid-amount-input currency-input" type="text" inputmode="numeric" value="${formatCurrencyInput(Math.max(player.price || 0, playerOwnBidAmount(player) || 0, player.marketDecision?.recommendedBid || 0))}" />
       </label>
       <button class="primary-button place-bid-button" type="submit" ${!state.biwenger.connected || !player.biwengerPlayerId || player.exceedsMaximumBid ? "disabled" : ""}>${player.exceedsMaximumBid ? "Supera puja maxima" : "Enviar a Biwenger"}</button>
-      <button class="ghost-button query-bid-count" type="button" ${!state.biwenger.connected || !player.biwengerPlayerId || !player.marketOwnerId ? "disabled" : ""}>Consultar pujas rivales</button>
       <small>${player.exceedsMaximumBid ? `Tu puja maxima actual es ${formatFinanceMoney(state.finance.maximumBid)} y el precio minimo supera ese limite.` : (player.rivalBidCount ? "Se muestran solo las pujas rivales que Biwenger revela." : "Biwenger puede ocultar las pujas rivales hasta el cierre.")}</small>
     </form>
     ${rivalBidDetails.length ? `<div class="rival-bid-list"><strong>Pujas rivales visibles</strong>${rivalBidDetails.map((bid) => `<span>${bid}</span>`).join("")}</div>` : ""}
@@ -8449,16 +8842,16 @@ const openMobileDetail = () => {
   document.body.classList.add("sheet-open");
 };
 
-const renderEmptyDetail = () => {
+const renderEmptyDetail = (title, description) => {
   const detail = qs("#player-detail");
   const mobileDetail = qs("#mobile-player-detail");
   if (detail) {
     detail.className = "detail-empty";
-    detail.innerHTML = detailEmptyMarkup();
+    detail.innerHTML = detailEmptyMarkup(title, description);
   }
   if (mobileDetail) {
     mobileDetail.className = "detail-empty";
-    mobileDetail.innerHTML = detailEmptyMarkup();
+    mobileDetail.innerHTML = detailEmptyMarkup(title, description);
   }
   closeMobileDetail();
 };
@@ -8487,45 +8880,6 @@ const renderDetail = (player, options = {}) => {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       placeBiwengerBid(form);
-    });
-    form.querySelector(".query-bid-count")?.addEventListener("click", async () => {
-      const button = form.querySelector(".query-bid-count");
-      button.disabled = true;
-      setOcrStatus("Consultando pujas visibles en Biwenger...", "busy");
-      try {
-        const response = await apiFetch("/api/biwenger/bid-count", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            playerId: Number(form.dataset.bidPlayerId),
-            ownerId: Number(form.dataset.bidOwnerId)
-          })
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.error || "Biwenger oculta las pujas");
-        const totalCount = Math.max(0, Number(payload.count || 0));
-        const rivalCount = Number.isFinite(Number(payload.rivalCount))
-          ? Math.max(0, Number(payload.rivalCount || 0))
-          : Math.max(0, totalCount - (payload.hasOwnBid || playerHasOwnBid(player) ? 1 : 0));
-        state.players = state.players.map((item) => item.id === player.id ? {
-          ...item,
-          bidCount: totalCount,
-          bidCountSource: payload.source || item.bidCountSource || "",
-          rivalBidCount: rivalCount,
-          rivalBidVisibility: "count"
-        } : item);
-        setOcrStatus(
-          totalCount > 0
-            ? `${player.name}: ${totalCount} puja(s) visibles${rivalCount !== totalCount ? `, ${rivalCount} de rivales` : ""}.`
-            : `${player.name} no tiene pujas visibles ahora mismo.`,
-          "ready"
-        );
-        renderTable();
-      } catch (error) {
-        setOcrStatus(error.message || "No se pudieron consultar las pujas.", "error");
-      } finally {
-        button.disabled = false;
-      }
     });
   });
   if (options.openSheet && isCompactMarketLayout()) {
@@ -8798,8 +9152,21 @@ const liveRoundScoreClass = (value) => {
   return "elite";
 };
 
+const latestRoundPointsForPlayer = (player, scoreKey = "roundPoints") => {
+  const direct = player?.[scoreKey];
+  if (direct !== null && direct !== undefined && Number.isFinite(Number(direct))) return Number(direct);
+  const playerId = Number(player?.biwengerPlayerId || player?.playerId || 0);
+  if (playerId <= 0) return null;
+  const ownTeam = currentLiveRoundOwnTeam();
+  const roundPlayer = (ownTeam?.players || []).find((item) => Number(item.biwengerPlayerId || item.playerId || 0) === playerId);
+  const roundPoints = roundPlayer?.roundPoints;
+  return roundPoints !== null && roundPoints !== undefined && Number.isFinite(Number(roundPoints))
+    ? Number(roundPoints)
+    : null;
+};
+
 const renderLineupPitch = (groups, options = {}) => {
-  const scoreKey = options.scoreKey || "competitionPoints";
+  const scoreKey = options.scoreKey || "roundPoints";
   const positions = [
     ...distributePitchLine(groups.DL || [], 18),
     ...distributePitchLine(groups.MC || [], 42),
@@ -8821,10 +9188,9 @@ const renderLineupPitch = (groups, options = {}) => {
               ${player.isStriker || String(player.id) === String(options.strikerId || "") ? `<b class="pitch-role-badge striker" title="Ariete" aria-label="Ariete">👟</b>` : ""}
             </span>
           ` : ""}
-          <b class="pitch-score pitch-score-top ${liveRoundScoreClass(player[scoreKey])}">${Number(player[scoreKey] || 0)} pts</b>
-          ${renderPlayerMedia(player, "sm")}
+          ${renderPlayerMedia(player, "sm", { pointsValue: latestRoundPointsForPlayer(player, scoreKey), pointsTitle: "Puntos en la ultima jornada cerrada" })}
           <strong>${escapeHtml(player.name)}</strong>
-          <div class="pitch-player-meta">${renderPositionBadge(player.position)} ${renderScoringBadge(player)}</div>
+          <div class="pitch-player-meta">${renderPositionBadge(player.position)}</div>
           ${renderRecentFormDots(player)}
         </div>
       `).join("")}
@@ -9325,7 +9691,13 @@ const initNavigation = () => {
     button.addEventListener("click", () => {
       openView(button.dataset.view);
       if (button.dataset.view === "league") loadLeagueOverview();
-      if (button.dataset.view === "team" && state.biwenger.connected) loadBiwengerOperations(false);
+      if (button.dataset.view === "team" && state.biwenger.connected) {
+        loadBiwengerOperations(false);
+        ensureLiveRoundForFinance(false).then(() => {
+          renderTeam();
+          renderLineup();
+        });
+      }
     });
   });
 };
@@ -9340,6 +9712,7 @@ const saveApiConfiguration = async (value) => {
 };
 
 const initEvents = () => {
+  initMarketAnalysisCenter();
   qs("#load-demo").addEventListener("click", loadDemo);
   qs("#sync-biwenger").addEventListener("click", () => refreshBiwengerStatus());
   qs("#biwenger-login").addEventListener("click", biwengerLogin);
@@ -9565,10 +9938,16 @@ const initEvents = () => {
   qs("#enable-notifications")?.addEventListener("click", requestDecisionNotifications);
   const rewardInputMap = {
     "#reward-point-value": "pointValue",
-    "#reward-rank-1": "rank1",
-    "#reward-rank-2": "rank2",
-    "#reward-rank-3": "rank3",
-    "#reward-mvp": "mvp"
+    "#reward-fixed": "fixed",
+    "#reward-goal": "goal",
+    "#reward-ideal-lineup": "idealLineup",
+    "#reward-game-mvp": "gameMvp",
+    "#reward-round-rank-1": "roundRank1",
+    "#reward-round-rank-2": "roundRank2",
+    "#reward-round-rank-3": "roundRank3",
+    "#reward-league-rank-1": "leagueRank1",
+    "#reward-league-rank-2": "leagueRank2",
+    "#reward-league-rank-3": "leagueRank3"
   };
   Object.entries(rewardInputMap).forEach(([selector, key]) => {
     const input = qs(selector);
@@ -9603,6 +9982,9 @@ const initEvents = () => {
   qs("#team-alerts-button")?.addEventListener("click", openTeamAlerts);
   qs("#close-team-alerts")?.addEventListener("click", closeTeamAlerts);
   qs("#team-alerts-backdrop")?.addEventListener("click", closeTeamAlerts);
+  qs("#close-bid-count-popup")?.addEventListener("click", closeBidCountPopup);
+  qs("#accept-bid-count-popup")?.addEventListener("click", closeBidCountPopup);
+  qs("#bid-count-popup-backdrop")?.addEventListener("click", closeBidCountPopup);
   qs("#close-fixture-video")?.addEventListener("click", closeFixtureVideo);
   qs("#fixture-video-backdrop")?.addEventListener("click", closeFixtureVideo);
   document.addEventListener("click", handleRecentDotInteraction, true);
@@ -9611,6 +9993,7 @@ const initEvents = () => {
     if (event.key === "Escape") {
       closeRecentFormPopover();
       closeTeamAlerts();
+      closeBidCountPopup();
     }
   });
   window.addEventListener("resize", () => {
@@ -9651,23 +10034,28 @@ const initEvents = () => {
 };
 
 const init = async () => {
-  initNavigation();
-  initEvents();
-  initScorebatWidget();
-  registerRadarServiceWorker();
-  syncApiConfigUi();
-  updateWeightLabels();
-  refreshOcrAvailability();
-  renderTable();
-  renderTeam();
-  renderLineup();
-  setSourceBusy(false);
-  refreshSourceDbStatus();
-  await loadLeagues();
-  await refreshBiwengerStatus();
-  await refreshFutbolFantasyStatus();
-  await runAutomaticSync({ force: false, reason: "startup" });
-  window.setInterval(() => runAutomaticSync({ force: false, reason: "periodic" }), 10 * 60 * 1000);
+  beginDataSync("Preparando la aplicación y cargando tus datos...");
+  try {
+    initNavigation();
+    initEvents();
+    initScorebatWidget();
+    registerRadarServiceWorker();
+    syncApiConfigUi();
+    updateWeightLabels();
+    refreshOcrAvailability();
+    renderTable();
+    renderTeam();
+    renderLineup();
+    setSourceBusy(false);
+    refreshSourceDbStatus();
+    await loadLeagues();
+    await refreshBiwengerStatus();
+    await refreshFutbolFantasyStatus();
+    await runAutomaticSync({ force: false, reason: "startup" });
+    window.setInterval(() => runAutomaticSync({ force: false, reason: "periodic" }), 10 * 60 * 1000);
+  } finally {
+    endDataSync();
+  }
 };
 
 init();

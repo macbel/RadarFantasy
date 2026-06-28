@@ -605,6 +605,16 @@ textarea {
   background: rgba(4, 25, 29, 0.72);
 }
 
+.daily-scenario {
+  color: #f4fbfb;
+  font: inherit;
+  text-align: left;
+}
+
+.daily-scenario header strong {
+  color: #ffffff;
+}
+
 .daily-scenario.active {
   border-color: rgba(242, 184, 76, 0.52);
 }
@@ -622,6 +632,11 @@ textarea {
 .daily-rival-insight small {
   color: var(--muted);
   font-size: 11px;
+}
+
+.daily-scenario span,
+.daily-scenario small {
+  color: #b9d2d4;
 }
 
 .daily-rival-intel::before {
@@ -772,6 +787,13 @@ textarea {
   margin-top: 3px;
   font-size: 18px;
   line-height: 1.2;
+}
+
+.market-order-description {
+  max-width: 620px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .compact-heading {
@@ -1126,8 +1148,8 @@ input[type="range"] {
 }
 
 .position-count small,
-.mini-player-row span,
-.lineup-player span,
+.mini-player-row > div:nth-child(2) > span,
+.lineup-player > div > span,
 .muted-empty {
   color: var(--muted);
   font-size: 13px;
@@ -1182,7 +1204,7 @@ input[type="range"] {
 
 .team-finance-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -1210,6 +1232,14 @@ input[type="range"] {
 
 .team-finance-summary strong.finance-negative {
   color: #ff808c;
+}
+
+.team-finance-summary small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.25;
 }
 
 .team-roster,
@@ -1494,6 +1524,16 @@ input[type="range"] {
   margin-bottom: 4px;
   min-width: 38px;
   justify-content: center;
+}
+
+.pitch-player .player-points-overlay {
+  left: -4px;
+  bottom: -2px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 3px;
+  border-color: rgba(255, 255, 255, 0.9);
+  font-size: 7px;
 }
 
 .pitch-role-badges {
@@ -1797,6 +1837,97 @@ tr.over-maximum-bid td,
   grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr);
   gap: 12px;
   margin: 14px 0;
+}
+
+.market-analysis-center {
+  margin: 14px 0;
+  border: 1px solid rgba(37, 201, 197, .22);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .035);
+  overflow: hidden;
+}
+
+.market-analysis-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.market-analysis-header h3 {
+  margin: 2px 0 0;
+}
+
+#market-analysis-body[hidden],
+.market-analysis-panel[hidden] {
+  display: none;
+}
+
+.market-analysis-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+  scrollbar-width: thin;
+}
+
+.market-analysis-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.market-analysis-tabs button[aria-selected="true"] {
+  border-color: rgba(37, 201, 197, .42);
+  background: rgba(37, 201, 197, .13);
+  color: #a8fff5;
+}
+
+.analysis-tab-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ed4555;
+  color: #fff;
+  font-size: 10px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.market-analysis-content {
+  max-height: 330px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.market-analysis-panel {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .market-analysis-content {
+    max-height: 390px;
+    padding: 10px;
+  }
+
+  .market-analysis-header {
+    padding: 10px;
+  }
 }
 
 .strategy-panel {
@@ -2506,6 +2637,32 @@ tbody tr.selected .player-cell span {
   box-shadow: 0 4px 10px rgba(32, 36, 38, 0.14);
 }
 
+.player-points-overlay {
+  position: absolute;
+  left: -5px;
+  bottom: -2px;
+  z-index: 2;
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0 4px;
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #1a7f74, #14594f);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 4px 10px rgba(32, 36, 38, 0.18);
+}
+
+.player-media.lg .player-points-overlay {
+  min-width: 26px;
+  height: 26px;
+  font-size: 10px;
+}
+
 .player-points-badge {
   display: inline-grid;
   min-width: 18px;
@@ -2540,7 +2697,7 @@ tbody tr.selected .player-cell span {
   font-size: 14px;
 }
 
-.player-cell span {
+.player-cell > div > span {
   display: block;
   margin-top: 2px;
   color: var(--muted);
@@ -3087,6 +3244,24 @@ tbody tr.selected .player-cell span {
 .bid-badge.muted {
   background: rgba(255, 255, 255, 0.06);
   color: var(--muted);
+}
+
+button.query-player-bid-count {
+  border: 1px solid rgba(37, 201, 197, 0.22);
+  font: inherit;
+  cursor: pointer;
+}
+
+button.query-player-bid-count:hover,
+button.query-player-bid-count:focus-visible {
+  border-color: rgba(37, 201, 197, 0.72);
+  color: #a8fff5;
+  outline: none;
+}
+
+button.query-player-bid-count:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 .seller-badge {
@@ -4063,6 +4238,132 @@ body.sheet-open {
 
 .team-alerts-modal[hidden] {
   display: none;
+}
+
+.bid-count-popup[hidden] {
+  display: none;
+}
+
+.data-sync-popup[hidden] {
+  display: none;
+}
+
+.data-sync-popup {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  z-index: 130;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: min(460px, calc(100vw - 28px));
+  padding: 14px 16px;
+  border: 1px solid rgba(37, 201, 197, 0.52);
+  border-radius: 12px;
+  background: rgba(7, 26, 32, 0.97);
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.52);
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+}
+
+.data-sync-popup[data-mode="ready"] { border-color: rgba(54, 211, 153, 0.58); }
+.data-sync-popup[data-mode="error"] { border-color: rgba(237, 69, 85, 0.64); }
+
+.data-sync-popup strong {
+  display: block;
+  color: #fff;
+  font-size: 14px;
+}
+
+.data-sync-popup p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.data-sync-spinner {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(37, 201, 197, 0.22);
+  border-top-color: #25c9c5;
+  border-radius: 50%;
+  animation: data-sync-spin 0.8s linear infinite;
+}
+
+.data-sync-popup[data-mode="ready"] .data-sync-spinner,
+.data-sync-popup[data-mode="error"] .data-sync-spinner {
+  animation: none;
+}
+
+@keyframes data-sync-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 640px) {
+  .data-sync-popup {
+    top: 10px;
+    width: calc(100vw - 20px);
+  }
+}
+
+.bid-count-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.bid-count-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(1, 12, 16, 0.82);
+  backdrop-filter: blur(8px);
+}
+
+.bid-count-dialog {
+  position: relative;
+  z-index: 1;
+  width: min(440px, 100%);
+  padding: 20px;
+  border: 1px solid rgba(37, 201, 197, 0.42);
+  border-radius: 12px;
+  background: #071a20;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.58);
+}
+
+.bid-count-dialog[data-mode="error"] {
+  border-color: rgba(237, 69, 85, 0.58);
+}
+
+.bid-count-dialog[data-mode="busy"] {
+  border-color: rgba(242, 184, 76, 0.58);
+}
+
+.bid-count-dialog header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.bid-count-dialog h3 {
+  margin: 3px 0 0;
+  color: #fff;
+}
+
+.bid-count-dialog > p {
+  margin: 18px 0;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.bid-count-dialog > .primary-button {
+  width: 100%;
 }
 
 .team-alerts-modal {
@@ -6029,8 +6330,17 @@ tr.has-rival-bids.has-rival-sale {
   }
 
   .pitch-player .player-media.sm {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
+  }
+
+  .pitch-player {
+    width: 44px;
+  }
+
+  .pitch-player .scoring-badge,
+  .pitch-player .recent-form-dots {
+    display: none;
   }
 
   .position-counts {

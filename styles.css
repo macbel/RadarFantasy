@@ -1114,6 +1114,50 @@ input[type="range"] {
   line-height: 1.45;
 }
 
+.app-version-badge {
+  align-self: center;
+  border: 1px solid rgba(62, 219, 176, 0.35);
+  border-radius: 999px;
+  color: var(--mint);
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 0.35rem 0.65rem;
+}
+
+.app-update-popup[hidden] { display: none; }
+
+.app-update-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.app-update-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(2, 12, 17, 0.78);
+  backdrop-filter: blur(4px);
+}
+
+.app-update-dialog {
+  position: relative;
+  width: min(440px, 100%);
+  border: 1px solid rgba(62, 219, 176, 0.4);
+  border-radius: 18px;
+  background: #0d262e;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+  padding: 1.25rem;
+}
+
+.app-update-dialog header { margin-bottom: 0.8rem; }
+.app-update-dialog h3 { margin: 0.15rem 0 0; }
+.app-update-dialog > p { color: var(--muted); line-height: 1.5; }
+.app-update-actions { display: flex; justify-content: flex-end; gap: 0.65rem; margin-top: 1.2rem; }
+
 .position-counts {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

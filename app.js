@@ -109,6 +109,11 @@ const APP_CONFIG = window.APP_CONFIG || {};
 const LOCAL_LEAGUES_KEY = "fantasy-market-scout.leagues.v1";
 const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
+const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
+const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
+const APP_VERSION = "3.2.0";
+const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
+const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
 const TEAM_ALERTS_READ_KEY = "radar-fantasy.team-alerts-read.v1";
 const DAILY_FEEDBACK_KEY = "radar-fantasy.daily-feedback.v1";
@@ -167,6 +172,7 @@ const normalizeApiBase = (value) => {
 const configuredApiBase = () => trimTrailingSlash(
   normalizeApiBase(readStoredApiBase())
   || normalizeApiBase(isNativeRuntime() ? APP_CONFIG.mobileApiBaseUrl : "")
+  || normalizeApiBase(isNativeRuntime() ? DEFAULT_MOBILE_API_BASE_URL : "")
   || normalizeApiBase(APP_CONFIG.apiBaseUrl)
   || normalizeApiBase(APP_CONFIG.mobileApiBaseUrl)
   || ""
@@ -176,26 +182,62 @@ const apiUrl = (path) => {
   const cleanPath = `/${String(path || "").replace(/^\/+/, "")}`;
   return configuredApiBase() ? `${configuredApiBase()}${cleanPath}` : relativeApiUrl(cleanPath);
 };
-const deviceKey = (() => {
+const nativePreferences = () => window.Capacitor?.Plugins?.Preferences || null;
+const readLocalValue = (key) => {
   try {
-    let key = window.localStorage.getItem(LOCAL_DEVICE_KEY);
-    if (!key) {
-      const bytes = new Uint8Array(24);
-      window.crypto.getRandomValues(bytes);
-      key = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-      window.localStorage.setItem(LOCAL_DEVICE_KEY, key);
-    }
-    return key;
+    return window.localStorage.getItem(key) || "";
+  } catch (error) {
+    return "";
+  }
+};
+const writeLocalValue = (key, value) => {
+  try {
+    if (value) window.localStorage.setItem(key, value);
+    else window.localStorage.removeItem(key);
+  } catch (error) {
+    // Native Preferences remains authoritative when WebView storage is unavailable.
+  }
+};
+const createDeviceKey = () => {
+  try {
+    const bytes = new Uint8Array(24);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
   } catch (error) {
     return `device-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
   }
-})();
-const apiFetch = (path, options = {}) => fetch(apiUrl(path), {
+};
+let deviceKey = "";
+let deviceKeyPromise = null;
+const ensureDeviceKey = async () => {
+  if (deviceKey) return deviceKey;
+  if (deviceKeyPromise) return deviceKeyPromise;
+  deviceKeyPromise = (async () => {
+    const preferences = nativePreferences();
+    let stableKey = "";
+    if (isNativeRuntime() && preferences) {
+      try {
+        stableKey = String((await preferences.get({ key: LOCAL_DEVICE_KEY }))?.value || "");
+      } catch (error) {
+        // Fall through to the existing WebView key for migration.
+      }
+    }
+    stableKey = stableKey || readLocalValue(LOCAL_DEVICE_KEY) || createDeviceKey();
+    writeLocalValue(LOCAL_DEVICE_KEY, stableKey);
+    if (isNativeRuntime() && preferences) {
+      try { await preferences.set({ key: LOCAL_DEVICE_KEY, value: stableKey }); } catch (error) { /* local fallback kept */ }
+    }
+    deviceKey = stableKey;
+    return stableKey;
+  })();
+  return deviceKeyPromise;
+};
+const apiFetch = async (path, options = {}) => fetch(apiUrl(path), {
   credentials: "include",
   cache: "no-store",
   ...options,
   headers: {
-    "X-FMS-Device-Key": deviceKey,
+    "X-FMS-Device-Key": await ensureDeviceKey(),
     ...(options.headers || {})
   }
 });
@@ -4728,6 +4770,34 @@ const refreshBiwengerStatus = async (preferredMessage = "") => {
   }
 };
 
+const restoreRememberedBiwengerAccount = async () => {
+  await ensureDeviceKey();
+  let email = readLocalValue(REMEMBERED_BIWENGER_EMAIL_KEY);
+  const preferences = nativePreferences();
+  if (isNativeRuntime() && preferences) {
+    try {
+      email = String((await preferences.get({ key: REMEMBERED_BIWENGER_EMAIL_KEY }))?.value || email);
+    } catch (error) {
+      // Keep the WebView fallback.
+    }
+  }
+  if (email) {
+    writeLocalValue(REMEMBERED_BIWENGER_EMAIL_KEY, email);
+    const input = qs("#biwenger-email");
+    if (input && !input.value) input.value = email;
+  }
+};
+
+const rememberBiwengerAccount = async (email) => {
+  const rememberedEmail = String(email || "").trim();
+  if (!rememberedEmail) return;
+  writeLocalValue(REMEMBERED_BIWENGER_EMAIL_KEY, rememberedEmail);
+  const preferences = nativePreferences();
+  if (isNativeRuntime() && preferences) {
+    try { await preferences.set({ key: REMEMBERED_BIWENGER_EMAIL_KEY, value: rememberedEmail }); } catch (error) { /* local fallback kept */ }
+  }
+};
+
 const activeLeague = () => state.leagues.find((league) => league.id === state.activeLeagueId) || null;
 const activeLeagueName = () => activeLeague()?.name?.trim() || "";
 
@@ -5434,6 +5504,7 @@ const biwengerLogin = async () => {
       throw new Error(payload.error || describeApiError(response.status, "/api/biwenger/login"));
     }
     applyBiwengerSession(payload);
+    await rememberBiwengerAccount(email);
     if (payload.competition) {
       state.competition = biwengerCompetitionToLocal(payload.competition);
       qs("#competition-select").value = state.competition;
@@ -5441,7 +5512,7 @@ const biwengerLogin = async () => {
     const passwordInput = qs("#biwenger-password");
     if (passwordInput) passwordInput.value = "";
     await saveActiveLeague();
-    setBiwengerStatus(`Sesion conectada: ${payload.userName || "usuario"} en ${payload.leagueName || "tu liga"}.`, "ready");
+    setBiwengerStatus(`Sesion conectada y guardada: ${payload.userName || "usuario"} en ${payload.leagueName || "tu liga"}.`, "ready");
   } catch (error) {
     setBiwengerStatus(error.message || "No se pudo iniciar sesion en Biwenger.", "error");
   } finally {
@@ -9711,6 +9782,83 @@ const saveApiConfiguration = async (value) => {
   }
 };
 
+const compareAppVersions = (left, right) => {
+  const a = String(left || "").replace(/^v/i, "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const b = String(right || "").replace(/^v/i, "").split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    if ((a[index] || 0) !== (b[index] || 0)) return (a[index] || 0) > (b[index] || 0) ? 1 : -1;
+  }
+  return 0;
+};
+
+let pendingAppUpdateUrl = "";
+const setAppUpdateStatus = (message, mode = "") => {
+  const status = qs("#app-update-status");
+  if (!status) return;
+  status.dataset.mode = mode;
+  const text = status.querySelector("span:last-child");
+  if (text) text.textContent = message;
+};
+const closeAppUpdatePopup = () => {
+  const popup = qs("#app-update-popup");
+  if (popup) popup.hidden = true;
+};
+const showAppUpdatePopup = (version, url) => {
+  pendingAppUpdateUrl = url;
+  const popup = qs("#app-update-popup");
+  const message = qs("#app-update-message");
+  if (!popup || !message) return;
+  const platform = window.Capacitor?.getPlatform?.() || "web";
+  message.textContent = platform === "android"
+    ? `La versi\u00f3n ${version} est\u00e1 lista. Se descargar\u00e1 el nuevo APK y Android te pedir\u00e1 permiso para instalarlo.`
+    : `La versi\u00f3n ${version} est\u00e1 disponible. Se abrir\u00e1 la p\u00e1gina oficial para completar la actualizaci\u00f3n.`;
+  popup.hidden = false;
+};
+const openPendingAppUpdate = async () => {
+  if (!pendingAppUpdateUrl) return;
+  const browser = window.Capacitor?.Plugins?.Browser;
+  try {
+    if (isNativeRuntime() && browser) await browser.open({ url: pendingAppUpdateUrl });
+    else window.open(pendingAppUpdateUrl, "_blank", "noopener");
+    closeAppUpdatePopup();
+  } catch (error) {
+    setAppUpdateStatus("No se pudo abrir la descarga. Int\u00e9ntalo de nuevo.", "error");
+  }
+};
+const checkForAppUpdate = async ({ manual = false } = {}) => {
+  if (!isNativeRuntime()) {
+    if (manual) setAppUpdateStatus("La versi\u00f3n web se actualiza autom\u00e1ticamente al recargar.", "ready");
+    return;
+  }
+  const lastCheck = Number(readLocalValue(APP_UPDATE_CHECK_KEY) || 0);
+  if (!manual && Date.now() - lastCheck < 6 * 60 * 60 * 1000) return;
+  setAppUpdateStatus("Buscando una versi\u00f3n nueva...", "busy");
+  try {
+    const response = await fetch(LATEST_RELEASE_API_URL, { cache: "no-store", headers: { Accept: "application/vnd.github+json" } });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const release = await response.json();
+    const latestVersion = String(release.tag_name || release.name || "").replace(/^v/i, "");
+    writeLocalValue(APP_UPDATE_CHECK_KEY, String(Date.now()));
+    if (!latestVersion || compareAppVersions(latestVersion, APP_VERSION) <= 0) {
+      setAppUpdateStatus(`Radar Fantasy v${APP_VERSION} est\u00e1 actualizada.`, "ready");
+      return;
+    }
+    const platform = window.Capacitor?.getPlatform?.() || "";
+    const apk = Array.isArray(release.assets)
+      ? release.assets.find((asset) => /\.apk$/i.test(asset.name || ""))
+      : null;
+    const updateUrl = platform === "android" && apk?.browser_download_url
+      ? apk.browser_download_url
+      : release.html_url;
+    if (!updateUrl) throw new Error("La versi\u00f3n publicada no tiene enlace de instalaci\u00f3n.");
+    setAppUpdateStatus(`Nueva versi\u00f3n v${latestVersion} disponible.`, "ready");
+    showAppUpdatePopup(latestVersion, updateUrl);
+  } catch (error) {
+    if (manual) setAppUpdateStatus("No se pudo comprobar la actualizaci\u00f3n ahora mismo.", "error");
+  }
+};
+
 const initEvents = () => {
   initMarketAnalysisCenter();
   qs("#load-demo").addEventListener("click", loadDemo);
@@ -9721,6 +9869,10 @@ const initEvents = () => {
   qs("#market-refresh-inline")?.addEventListener("click", () => importFromBiwenger("market"));
   qs("#team-refresh-inline")?.addEventListener("click", () => importFromBiwenger("team"));
   qs("#biwenger-logout").addEventListener("click", biwengerLogout);
+  qs("#check-app-update")?.addEventListener("click", () => checkForAppUpdate({ manual: true }));
+  qs("#later-app-update")?.addEventListener("click", closeAppUpdatePopup);
+  qs("#app-update-backdrop")?.addEventListener("click", closeAppUpdatePopup);
+  qs("#install-app-update")?.addEventListener("click", openPendingAppUpdate);
   qs("#ff-login").addEventListener("click", futbolFantasyLogin);
   qs("#ff-cookie-login").addEventListener("click", futbolFantasyCookieLogin);
   qs("#ff-sync-team").addEventListener("click", syncTeamToFutbolFantasy);
@@ -9994,6 +10146,7 @@ const initEvents = () => {
       closeRecentFormPopover();
       closeTeamAlerts();
       closeBidCountPopup();
+      closeAppUpdatePopup();
     }
   });
   window.addEventListener("resize", () => {
@@ -10039,6 +10192,7 @@ const init = async () => {
     initNavigation();
     initEvents();
     initScorebatWidget();
+    await restoreRememberedBiwengerAccount();
     registerRadarServiceWorker();
     syncApiConfigUi();
     updateWeightLabels();
@@ -10052,6 +10206,7 @@ const init = async () => {
     await refreshBiwengerStatus();
     await refreshFutbolFantasyStatus();
     await runAutomaticSync({ force: false, reason: "startup" });
+    window.setTimeout(() => checkForAppUpdate(), 1500);
     window.setInterval(() => runAutomaticSync({ force: false, reason: "periodic" }), 10 * 60 * 1000);
   } finally {
     endDataSync();

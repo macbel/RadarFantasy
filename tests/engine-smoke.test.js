@@ -528,6 +528,10 @@ if (requiredFormations.some((name) => !FORMATIONS.some((formation) => formation.
   throw new Error("All official Biwenger extra formations must be selectable: " + JSON.stringify(FORMATIONS));
 }
 
+if (compareAppVersions("3.2.0", "3.1.9") !== 1 || compareAppVersions("3.2", "3.2.0") !== 0 || compareAppVersions("3.1.9", "3.2.0") !== -1) {
+  throw new Error("Mobile release version comparison is not reliable");
+}
+
 state.biwenger = { ...state.biwenger, connected: true, userId: 77, rewardSettings: {} };
 state.liveRound = {
   teams: [{

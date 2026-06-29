@@ -26,6 +26,18 @@ if (!html.includes('id="data-sync-popup"') || !js.includes("beginDataSync") || !
   throw new Error("Long data refreshes must expose a visible global progress popup");
 }
 
+if (!html.includes('id="app-update-popup"') || !html.includes('id="check-app-update"') || !js.includes("checkForAppUpdate")) {
+  throw new Error("The mobile app must expose automatic update checks and an installation popup");
+}
+
+if (!js.includes("nativePreferences") || !js.includes("REMEMBERED_BIWENGER_EMAIL_KEY") || !js.includes("await rememberBiwengerAccount(email)")) {
+  throw new Error("A successful Biwenger login must persist its device identity and remembered email natively");
+}
+
+if (!js.includes('DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms"')) {
+  throw new Error("A clean mobile install must know the production API URL");
+}
+
 if (!html.includes('id="market-analysis-center"') || !html.includes('data-analysis-tab="plan"') || !html.includes('data-analysis-panel="history"')) {
   throw new Error("The market analysis tools must live in the compact tabbed center");
 }

@@ -32,6 +32,24 @@ if (parseCurrencyInput("5.500.000 €") !== 5500000
 }
 
 state.players = parseMarketText(sample);
+const favoriteSample = hydrateImportedPlayers([{
+  id: "favorite-sample",
+  biwengerPlayerId: 9876,
+  name: "Jugador seguido",
+  team: "Equipo A",
+  position: "DL",
+  price: 5000000,
+  watchStatus: { inMarket: true, marketSellerType: "rival", marketOwnerName: "Rival A", salePrice: 5500000, clauseAvailable: true, clause: 9000000 }
+}])[0];
+state.favorites = [favoriteStoredPlayer(favoriteSample)];
+const favoriteStatus = favoriteWatchStatus(favoriteSample);
+if (favoritePlayerKey(favoriteSample) !== "biwenger:9876" || !favoriteStatus.inMarket || !favoriteStatus.clauseAvailable || favoriteStatus.sellerName !== "Rival A") {
+  throw new Error("Favorite identity or Biwenger market/clause status normalization failed");
+}
+if (!renderFavoriteButton(favoriteSample).includes("Quitar de favoritos")) {
+  throw new Error("Favorite players must render an active star control");
+}
+state.favorites = [];
 const analyzed = state.players
   .map((player) => analyzePlayer(player, state.players))
   .sort((a, b) => b.recommendation - a.recommendation);

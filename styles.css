@@ -1158,6 +1158,141 @@ input[type="range"] {
 .app-update-dialog > p { color: var(--muted); line-height: 1.5; }
 .app-update-actions { display: flex; justify-content: flex-end; gap: 0.65rem; margin-top: 1.2rem; }
 
+.favorite-nav-star {
+  color: #ffd56a;
+  font-size: 1.08rem;
+  line-height: 1;
+}
+
+.nav-count {
+  min-width: 1.35rem;
+  height: 1.35rem;
+  margin-left: auto;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255, 205, 92, 0.18);
+  color: #ffe39b;
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.favorite-toggle {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(255, 213, 106, 0.25);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 1.15rem;
+  cursor: pointer;
+  transition: transform 0.16s ease, color 0.16s ease, background 0.16s ease;
+}
+
+.favorite-toggle:hover { transform: scale(1.08); color: #ffe39b; }
+.favorite-toggle.active { color: #ffd159; background: rgba(255, 205, 92, 0.16); border-color: rgba(255, 205, 92, 0.48); }
+.favorite-toggle.compact { width: 1.72rem; height: 1.72rem; font-size: 1rem; }
+
+.favorites-layout {
+  display: grid;
+  gap: 1rem;
+}
+
+.favorites-heading,
+.favorite-alerts-panel,
+.favorite-current-panel,
+.favorite-search-panel {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  padding: 1rem;
+}
+
+.favorites-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.favorites-heading h3,
+.favorites-heading p { margin: 0; }
+.favorites-heading > div:first-child > p:last-child { margin-top: 0.35rem; color: var(--muted); }
+.favorites-heading-actions { display: flex; gap: 0.55rem; flex-wrap: wrap; justify-content: flex-end; }
+
+.favorite-search-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(170px, 0.35fr);
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.favorite-search-controls label { display: grid; gap: 0.35rem; color: var(--muted); font-size: 0.78rem; font-weight: 800; }
+.favorite-search-controls input,
+.favorite-search-controls select { width: 100%; }
+
+.favorite-player-grid,
+.favorite-search-results,
+.favorite-alerts-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.favorite-player-grid { grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+.favorite-search-results { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); max-height: 480px; overflow: auto; padding-right: 0.2rem; }
+
+.favorite-player-row,
+.favorite-alert-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+  border: 1px solid rgba(101, 190, 196, 0.16);
+  border-radius: 13px;
+  background: rgba(10, 38, 46, 0.72);
+  padding: 0.7rem;
+}
+
+.favorite-player-copy,
+.favorite-alert-copy { min-width: 0; flex: 1; }
+.favorite-player-copy strong,
+.favorite-alert-copy strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.favorite-player-copy > span,
+.favorite-alert-copy > span { display: block; margin-top: 0.18rem; color: var(--muted); font-size: 0.76rem; }
+
+.favorite-watch-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  padding: 0.25rem 0.48rem;
+  background: rgba(125, 145, 152, 0.16);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.favorite-watch-badge.market { color: #7be7c0; background: rgba(54, 211, 153, 0.14); }
+.favorite-watch-badge.rival { color: #ffd178; background: rgba(255, 193, 71, 0.14); }
+.favorite-watch-badge.clause { color: #8bc5ff; background: rgba(74, 156, 255, 0.14); }
+.favorite-watch-badge.mine { color: #b9a7ff; background: rgba(151, 122, 255, 0.14); }
+
+.favorite-alert-row time { color: var(--muted); font-size: 0.68rem; white-space: nowrap; }
+.favorite-alert-row.market { border-color: rgba(54, 211, 153, 0.32); }
+.favorite-alert-row.clause { border-color: rgba(74, 156, 255, 0.35); }
+
+@media (max-width: 720px) {
+  .favorites-heading { align-items: flex-start; flex-direction: column; }
+  .favorites-heading-actions { width: 100%; justify-content: stretch; }
+  .favorites-heading-actions button { flex: 1; }
+  .favorite-search-controls { grid-template-columns: 1fr; }
+  .favorite-player-grid,
+  .favorite-search-results { grid-template-columns: 1fr; }
+}
+
 .position-counts {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

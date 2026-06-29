@@ -406,6 +406,15 @@ if ($route === '/biwenger/import' && $requestMethod === 'POST') {
     }
 }
 
+if ($route === '/biwenger/watchlist' && $requestMethod === 'GET') {
+    $sessionState = require_biwenger_session();
+    try {
+        send_json(200, biwenger_watchlist_catalog($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls));
+    } catch (Throwable $error) {
+        send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar el catalogo para favoritos']);
+    }
+}
+
 if ($route === '/biwenger/bid' && $requestMethod === 'POST') {
     $sessionState = require_biwenger_session();
     $payload = read_json_body();
@@ -1926,6 +1935,71 @@ function biwenger_fetch_competition_catalog(string $competition, int $timeoutSec
     ];
 }
 
+function biwenger_watchlist_catalog(array $session, int $timeoutSeconds, array $headers, bool $strictTls): array
+{
+    $competition = (string)($session['competition'] ?? '');
+    $catalog = biwenger_fetch_competition_catalog($competition, $timeoutSeconds, $headers, $strictTls, (int)($session['scoreId'] ?? 2));
+    $marketById = [];
+    $marketDataAvailable = false;
+    try {
+        $market = biwenger_import_players($session, 'market', $timeoutSeconds, $headers, $strictTls);
+        $marketDataAvailable = true;
+        foreach ((array)($market['players'] ?? []) as $player) {
+            $playerId = (int)($player['biwengerPlayerId'] ?? 0);
+            if ($playerId > 0) $marketById[$playerId] = $player;
+        }
+    } catch (Throwable $error) {
+        // The searchable catalog remains useful if the private market is temporarily unavailable.
+    }
+
+    $clauses = [];
+    $clauseDataAvailable = false;
+    try {
+        $clauseResponse = biwenger_private_get_json('https://biwenger.as.com/api/v2/owners/league/clause', $session, $timeoutSeconds, $headers, $strictTls);
+        $clauseData = is_array($clauseResponse['data'] ?? null) ? $clauseResponse['data'] : $clauseResponse;
+        biwenger_collect_clause_entries((array)$clauseData, $clauses);
+        $clauseDataAvailable = true;
+    } catch (Throwable $error) {
+        try {
+            $ownerResponse = biwenger_private_get_json('https://biwenger.as.com/api/v2/owners/league', $session, $timeoutSeconds, $headers, $strictTls);
+            $ownerData = is_array($ownerResponse['data'] ?? null) ? $ownerResponse['data'] : $ownerResponse;
+            biwenger_collect_clause_entries((array)$ownerData, $clauses);
+            $clauseDataAvailable = true;
+        } catch (Throwable $fallbackError) {
+            // Some leagues disable or hide clauses.
+        }
+    }
+
+    $players = [];
+    foreach ($catalog['playersById'] as $playerId => $entry) {
+        $normalized = biwenger_normalize_player((array)$entry, $catalog, $competition, false);
+        $marketPlayer = $marketById[(int)$playerId] ?? null;
+        if (is_array($marketPlayer)) {
+            $normalized = array_merge($normalized, $marketPlayer);
+        }
+        $clause = isset($clauses[(int)$playerId]) ? (int)$clauses[(int)$playerId] : 0;
+        $normalized['watchStatus'] = [
+            'inMarket' => is_array($marketPlayer),
+            'marketSellerType' => (string)($marketPlayer['marketSellerType'] ?? ''),
+            'marketOwnerId' => (int)($marketPlayer['marketOwnerId'] ?? 0),
+            'marketOwnerName' => (string)($marketPlayer['marketOwnerName'] ?? ''),
+            'salePrice' => isset($marketPlayer['salePrice']) ? (int)$marketPlayer['salePrice'] : null,
+            'clauseAvailable' => $clause > 0,
+            'clause' => $clause > 0 ? $clause : null
+        ];
+        $players[] = $normalized;
+    }
+    usort($players, static fn($left, $right) => strcasecmp((string)($left['name'] ?? ''), (string)($right['name'] ?? '')));
+    return [
+        'ok' => true,
+        'competition' => $competition,
+        'updatedAt' => gmdate('c'),
+        'marketDataAvailable' => $marketDataAvailable,
+        'clauseDataAvailable' => $clauseDataAvailable,
+        'players' => $players
+    ];
+}
+
 function biwenger_competition_slug(string $competition): string
 {
     $value = trim($competition);
@@ -2232,7 +2306,8 @@ function sanitize_league_payload(array $payload): array
         'icon' => sanitize_media_url($payload['icon'] ?? null),
         'cover' => sanitize_media_url($payload['cover'] ?? null),
         'biwengerLeagueId' => isset($payload['biwengerLeagueId']) ? (int)$payload['biwengerLeagueId'] : null,
-        'editableLineup' => sanitize_editable_lineup($payload['editableLineup'] ?? null)
+        'editableLineup' => sanitize_editable_lineup($payload['editableLineup'] ?? null),
+        'favorites' => $sanitizePlayers(array_slice((array)($payload['favorites'] ?? []), 0, 100))
     ];
 }
 

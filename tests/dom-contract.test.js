@@ -38,6 +38,18 @@ if (!js.includes('DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms"')) {
   throw new Error("A clean mobile install must know the production API URL");
 }
 
+if (!html.includes('data-view="favorites"') || !html.includes('id="favorite-search-name"') || !html.includes('id="favorite-search-position"')) {
+  throw new Error("Favorites must have their own menu with incremental name and position search");
+}
+
+if (!js.includes("renderFavoriteButton") || !js.includes("processFavoriteWatchTransitions") || !php.includes("/biwenger/watchlist")) {
+  throw new Error("Favorites must be actionable from player lists and backed by real market/clause status checks");
+}
+
+if (!php.includes("clauseDataAvailable") || !js.includes("FAVORITE_WATCH_STATE_KEY")) {
+  throw new Error("Clause alerts need an authoritative availability signal and a deduplicated transition snapshot");
+}
+
 if (!html.includes('id="market-analysis-center"') || !html.includes('data-analysis-tab="plan"') || !html.includes('data-analysis-panel="history"')) {
   throw new Error("The market analysis tools must live in the compact tabbed center");
 }

@@ -58,6 +58,11 @@
     selectedOfferIds: []
   },
   teamAlerts: [],
+  favorites: [],
+  favoriteCatalog: [],
+  favoriteAlerts: [],
+  favoriteCatalogLoading: false,
+  favoriteClauseDataAvailable: false,
   dailyPlanMode: "balanced",
   autoSync: {
     running: false,
@@ -111,7 +116,7 @@ const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
-const APP_VERSION = "3.2.0";
+const APP_VERSION = "3.3.0";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -119,6 +124,8 @@ const TEAM_ALERTS_READ_KEY = "radar-fantasy.team-alerts-read.v1";
 const DAILY_FEEDBACK_KEY = "radar-fantasy.daily-feedback.v1";
 const AUTO_SYNC_KEY = "radar-fantasy.auto-sync.v1";
 const NOTIFICATION_SIGNATURE_KEY = "radar-fantasy.notification-signatures.v1";
+const FAVORITE_WATCH_STATE_KEY = "radar-fantasy.favorite-watch-state.v1";
+const FAVORITE_ALERT_HISTORY_KEY = "radar-fantasy.favorite-alert-history.v1";
 let lastDecisionHistorySignature = "";
 const trimTrailingSlash = (value) => String(value || "").replace(/\/+$/, "");
 const currentProtocol = window.location?.protocol || "http:";
@@ -319,6 +326,7 @@ const ensureLocalLeagueDb = () => {
         marketPlayers: [],
         teamPlayers: [],
         teamDepartures: [],
+        favorites: [],
         finance: { ...state.finance },
         weights: { ...state.weights },
         filters: { ...state.filters },
@@ -348,6 +356,7 @@ const saveLocalLeagueSnapshot = () => {
     marketPlayers: state.players,
     teamPlayers: state.teamPlayers,
     teamDepartures: state.teamDepartures,
+    favorites: state.favorites,
     finance: { ...state.finance },
     weights: { ...state.weights },
     filters: { ...state.filters },
@@ -378,6 +387,7 @@ const createLocalLeague = (name) => {
     marketPlayers: [],
     teamPlayers: [],
     teamDepartures: [],
+    favorites: [],
     finance: { ...state.finance },
     weights: { ...state.weights },
     filters: { ...state.filters },
@@ -414,6 +424,7 @@ const deleteLocalLeague = (leagueId) => {
       marketPlayers: [],
       teamPlayers: [],
       teamDepartures: [],
+      favorites: [],
       finance: { ...state.finance },
       weights: { ...state.weights },
       filters: { ...state.filters },
@@ -3182,6 +3193,285 @@ const renderPlayerMedia = (player, size = "sm", options = {}) => {
   `;
 };
 
+const favoritePlayerKey = (player) => {
+  const biwengerId = Number(player?.biwengerPlayerId || 0);
+  if (biwengerId > 0) return `biwenger:${biwengerId}`;
+  return `player:${normalize(player?.name || "")}:${normalize(player?.team || "")}:${String(player?.position || "")}`;
+};
+
+const isFavoritePlayer = (player) => state.favorites.some((favorite) => favoritePlayerKey(favorite) === favoritePlayerKey(player));
+
+const renderFavoriteButton = (player, compact = false) => {
+  const active = isFavoritePlayer(player);
+  return `<button class="favorite-toggle ${compact ? "compact" : ""} ${active ? "active" : ""}" type="button" data-favorite-player="${escapeHtml(favoritePlayerKey(player))}" aria-label="${active ? "Quitar de favoritos" : "Añadir a favoritos"}" title="${active ? "Quitar de favoritos" : "Seguir jugador"}">★</button>`;
+};
+
+const favoritePlayerFromKey = (key) => {
+  const allPlayers = [...state.favoriteCatalog, ...state.players, ...state.teamPlayers, ...state.favorites];
+  return allPlayers.find((player) => favoritePlayerKey(player) === key) || null;
+};
+
+const favoriteStoredPlayer = (player) => {
+  const clean = cleanWorldcupPlayerIdentity(playerForCompetition(player));
+  return {
+    id: clean.id,
+    biwengerPlayerId: clean.biwengerPlayerId || null,
+    name: clean.name,
+    team: clean.team,
+    clubTeam: clean.clubTeam || null,
+    nationalTeam: clean.nationalTeam || null,
+    position: clean.position,
+    biwengerPosition: clean.biwengerPosition || clean.position,
+    price: clean.price || 0,
+    biwengerValue: clean.biwengerValue || clean.price || 0,
+    competitionPoints: clean.competitionPoints || 0,
+    media: clean.media || {},
+    sourceLinks: clean.sourceLinks || {},
+    competitionScope: clean.competitionScope || state.competition
+  };
+};
+
+const setFavoritesStatus = (message, mode = "") => {
+  const status = qs("#favorites-status");
+  if (!status) return;
+  status.dataset.mode = mode;
+  const text = status.querySelector("span:last-child");
+  if (text) text.textContent = message;
+};
+
+const currentFavoritePlayer = (favorite) => {
+  const key = favoritePlayerKey(favorite);
+  return state.favoriteCatalog.find((player) => favoritePlayerKey(player) === key)
+    || state.players.find((player) => favoritePlayerKey(player) === key)
+    || state.teamPlayers.find((player) => favoritePlayerKey(player) === key)
+    || favorite;
+};
+
+const favoriteWatchStatus = (player) => {
+  const key = favoritePlayerKey(player);
+  const inMyTeam = state.teamPlayers.some((teamPlayer) => favoritePlayerKey(teamPlayer) === key);
+  const watch = player.watchStatus || {};
+  if (inMyTeam) return { inMyTeam: true, inMarket: false, sellerType: "", clauseAvailable: false, clause: null };
+  return {
+    inMyTeam: false,
+    inMarket: Boolean(watch.inMarket || state.players.some((marketPlayer) => favoritePlayerKey(marketPlayer) === key)),
+    sellerType: watch.marketSellerType || (state.players.find((marketPlayer) => favoritePlayerKey(marketPlayer) === key)?.marketSellerType || ""),
+    sellerName: watch.marketOwnerName || (state.players.find((marketPlayer) => favoritePlayerKey(marketPlayer) === key)?.marketOwnerName || ""),
+    salePrice: Number(watch.salePrice || state.players.find((marketPlayer) => favoritePlayerKey(marketPlayer) === key)?.salePrice || 0) || null,
+    clauseAvailable: Boolean(watch.clauseAvailable),
+    clause: Number(watch.clause || 0) || null
+  };
+};
+
+const renderFavoriteStatusBadges = (player) => {
+  const status = favoriteWatchStatus(player);
+  const badges = [];
+  if (status.inMyTeam) badges.push('<span class="favorite-watch-badge mine">En tu equipo</span>');
+  if (status.inMarket && status.sellerType === "rival") {
+    badges.push(`<span class="favorite-watch-badge rival">En venta por ${escapeHtml(status.sellerName || "un rival")}${status.salePrice ? ` · ${formatFinanceMoney(status.salePrice)}` : ""}</span>`);
+  } else if (status.inMarket) {
+    badges.push(`<span class="favorite-watch-badge market">Libre en el mercado${status.salePrice ? ` · ${formatFinanceMoney(status.salePrice)}` : ""}</span>`);
+  }
+  if (status.clauseAvailable) badges.push(`<span class="favorite-watch-badge clause">Cláusula disponible${status.clause ? ` · ${formatFinanceMoney(status.clause)}` : ""}</span>`);
+  if (!badges.length) badges.push('<span class="favorite-watch-badge">En seguimiento</span>');
+  return badges.join("");
+};
+
+const renderFavoritePlayerRow = (player, options = {}) => `
+  <article class="favorite-player-row" data-favorite-row="${escapeHtml(favoritePlayerKey(player))}">
+    ${renderPlayerMedia(player, "sm")}
+    <div class="favorite-player-copy">
+      <div class="player-name-line"><strong>${escapeHtml(player.name)}</strong>${renderRecentFormDots(player)}</div>
+      <span>${renderPositionBadge(player.position)} ${escapeHtml(player.team || "Sin equipo")} · ${formatMoney(Number(player.biwengerValue || player.price || 0))}</span>
+      ${options.showStatus === false ? "" : renderFavoriteStatusBadges(player)}
+    </div>
+    ${renderFavoriteButton(player)}
+  </article>
+`;
+
+const favoriteAlertHistory = () => {
+  const history = readJsonStorage(FAVORITE_ALERT_HISTORY_KEY, {});
+  return Array.isArray(history[String(state.activeLeagueId || "default")])
+    ? history[String(state.activeLeagueId || "default")]
+    : [];
+};
+
+const writeFavoriteAlertHistory = (alerts) => {
+  const history = readJsonStorage(FAVORITE_ALERT_HISTORY_KEY, {});
+  history[String(state.activeLeagueId || "default")] = alerts.slice(0, 50);
+  writeJsonStorage(FAVORITE_ALERT_HISTORY_KEY, history);
+};
+
+const renderFavorites = () => {
+  const currentList = qs("#favorite-current-list");
+  const results = qs("#favorite-search-results");
+  const alertList = qs("#favorite-alerts-list");
+  const total = qs("#favorite-total");
+  const navCount = qs("#favorite-nav-count");
+  if (!currentList || !results || !alertList) return;
+
+  const favorites = state.favorites.map(currentFavoritePlayer);
+  currentList.innerHTML = favorites.length
+    ? favorites.map((player) => renderFavoritePlayerRow(player)).join("")
+    : '<p class="muted-empty">Todavía no sigues a ningún jugador. Utiliza el buscador o pulsa la estrella en Mercado y Mi equipo.</p>';
+  if (total) total.textContent = `${favorites.length} jugador${favorites.length === 1 ? "" : "es"}`;
+  if (navCount) {
+    navCount.hidden = favorites.length === 0;
+    navCount.textContent = String(favorites.length);
+  }
+
+  const alerts = favoriteAlertHistory();
+  state.favoriteAlerts = alerts;
+  alertList.innerHTML = alerts.length ? alerts.slice(0, 12).map((alert) => {
+    const player = favoritePlayerFromKey(alert.playerKey) || { name: alert.playerName, team: "", position: "MC", media: {} };
+    return `<article class="favorite-alert-row ${escapeHtml(alert.kind)}">
+      ${renderPlayerMedia(player, "sm")}
+      <div class="favorite-alert-copy"><strong>${escapeHtml(alert.playerName)}</strong><span>${escapeHtml(alert.message)}</span></div>
+      <time datetime="${escapeHtml(alert.occurredAt)}">${formatActivityDate(alert.occurredAt)}</time>
+    </article>`;
+  }).join("") : '<p class="muted-empty">Aún no se han detectado movimientos de tus favoritos.</p>';
+
+  const query = normalize(qs("#favorite-search-name")?.value || "");
+  const position = qs("#favorite-search-position")?.value || "all";
+  if (!query && position === "all") {
+    results.innerHTML = '<p class="muted-empty">Escribe un nombre o selecciona una demarcación para buscar jugadores.</p>';
+    return;
+  }
+  const filtered = state.favoriteCatalog.filter((player) => {
+    const nameMatches = !query || normalize(player.name).includes(query);
+    const positionMatches = position === "all" || player.position === position;
+    return nameMatches && positionMatches;
+  }).slice(0, 80);
+  results.innerHTML = filtered.length
+    ? filtered.map((player) => renderFavoritePlayerRow(player, { showStatus: true })).join("")
+    : '<p class="muted-empty">No hay jugadores que coincidan con esta búsqueda.</p>';
+};
+
+const processFavoriteWatchTransitions = async (payload) => {
+  const leagueKey = String(state.activeLeagueId || "default");
+  const snapshots = readJsonStorage(FAVORITE_WATCH_STATE_KEY, {});
+  const previous = snapshots[leagueKey] || null;
+  const catalogMap = new Map((payload.players || []).map((player) => [favoritePlayerKey(player), player]));
+  const currentPlayers = {};
+  const newAlerts = [];
+  state.favorites.forEach((favorite) => {
+    const key = favoritePlayerKey(favorite);
+    const player = catalogMap.get(key) || favorite;
+    const status = favoriteWatchStatus(player);
+    const before = previous?.players?.[key];
+    const current = {
+      inMarket: status.inMarket,
+      sellerType: status.sellerType || "",
+      sellerName: status.sellerName || "",
+      salePrice: status.salePrice || null,
+      clauseAvailable: status.clauseAvailable,
+      clause: status.clause || null
+    };
+    if (payload.marketDataAvailable === false && before) {
+      current.inMarket = Boolean(before.inMarket);
+      current.sellerType = before.sellerType || "";
+      current.sellerName = before.sellerName || "";
+      current.salePrice = before.salePrice || null;
+    }
+    if (!payload.clauseDataAvailable && before) {
+      current.clauseAvailable = Boolean(before.clauseAvailable);
+      current.clause = before.clause || null;
+    }
+    currentPlayers[key] = current;
+    if (!before) return;
+    if (current.inMarket && (!before.inMarket || before.sellerType !== current.sellerType || before.sellerName !== current.sellerName)) {
+      const rival = current.sellerType === "rival";
+      newAlerts.push({
+        id: `${Date.now()}-${key}-market`,
+        playerKey: key,
+        playerName: player.name,
+        kind: "market",
+        message: rival
+          ? `${current.sellerName || "Un rival"} lo ha puesto en venta${current.salePrice ? ` por ${formatFinanceMoney(current.salePrice)}` : ""}.`
+          : "Ha salido libre al mercado de Biwenger.",
+        occurredAt: new Date().toISOString()
+      });
+    }
+    if (payload.clauseDataAvailable && previous.clauseDataAvailable && current.clauseAvailable && !before.clauseAvailable) {
+      newAlerts.push({
+        id: `${Date.now()}-${key}-clause`,
+        playerKey: key,
+        playerName: player.name,
+        kind: "clause",
+        message: `Su cláusula ya está disponible${current.clause ? ` por ${formatFinanceMoney(current.clause)}` : ""}.`,
+        occurredAt: new Date().toISOString()
+      });
+    }
+  });
+  snapshots[leagueKey] = {
+    updatedAt: new Date().toISOString(),
+    marketDataAvailable: payload.marketDataAvailable === false ? Boolean(previous?.marketDataAvailable) : true,
+    clauseDataAvailable: payload.clauseDataAvailable ? true : Boolean(previous?.clauseDataAvailable),
+    players: currentPlayers
+  };
+  writeJsonStorage(FAVORITE_WATCH_STATE_KEY, snapshots);
+  if (!newAlerts.length) return;
+  writeFavoriteAlertHistory([...newAlerts.reverse(), ...favoriteAlertHistory()]);
+  for (const alert of newAlerts) {
+    await showDecisionNotification(`Favorito · ${alert.playerName}`, alert.message, `${leagueKey}:${alert.kind}:${alert.playerKey}:${alert.occurredAt}`, "favorites");
+  }
+};
+
+const loadFavoriteCatalog = async ({ force = false, notify = true } = {}) => {
+  if (state.favoriteCatalogLoading) return false;
+  if (!force && state.favoriteCatalog.length) {
+    renderFavorites();
+    return true;
+  }
+  state.favoriteCatalogLoading = true;
+  setFavoritesStatus("Actualizando jugadores, mercado y cláusulas...", "busy");
+  try {
+    let payload;
+    if (state.biwenger.connected && canUseApi()) {
+      const response = await apiFetch("/api/biwenger/watchlist");
+      payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "No se pudo cargar el catálogo de Biwenger.");
+      payload.players = hydrateImportedPlayers(payload.players || []);
+    } else {
+      const combined = [...state.players, ...state.teamPlayers, ...state.favorites];
+      const unique = new Map(combined.map((player) => [favoritePlayerKey(player), player]));
+      payload = { players: [...unique.values()], marketDataAvailable: false, clauseDataAvailable: false };
+    }
+    if (notify) await processFavoriteWatchTransitions(payload);
+    state.favoriteCatalog = payload.players;
+    state.favoriteClauseDataAvailable = Boolean(payload.clauseDataAvailable);
+    setFavoritesStatus(
+      state.biwenger.connected
+        ? `${state.favoriteCatalog.length} jugadores disponibles para buscar. Seguimiento actualizado.`
+        : "Conecta Biwenger para buscar todo el catálogo y vigilar mercado y cláusulas.",
+      state.biwenger.connected ? "ready" : ""
+    );
+    renderFavorites();
+    return true;
+  } catch (error) {
+    setFavoritesStatus(error.message || "No se pudieron actualizar los favoritos.", "error");
+    renderFavorites();
+    return false;
+  } finally {
+    state.favoriteCatalogLoading = false;
+  }
+};
+
+const toggleFavoritePlayer = async (player) => {
+  if (!player) return;
+  const key = favoritePlayerKey(player);
+  const existingIndex = state.favorites.findIndex((favorite) => favoritePlayerKey(favorite) === key);
+  if (existingIndex >= 0) state.favorites.splice(existingIndex, 1);
+  else state.favorites.push(favoriteStoredPlayer(player));
+  const catalog = state.favoriteCatalog;
+  await saveActiveLeague();
+  if (!state.favoriteCatalog.length) state.favoriteCatalog = catalog;
+  renderTable();
+  renderTeam();
+  renderFavorites();
+  setFavoritesStatus(existingIndex >= 0 ? `${player.name} eliminado de favoritos.` : `${player.name} añadido a favoritos.`, "ready");
+};
+
 const healthMeta = (player) => {
   const health = player.health || {};
   if (health.status === "injured") return { className: "injured", mark: "X", label: "Lesionado" };
@@ -3428,20 +3718,20 @@ const notificationIdFrom = (value) => {
   return Math.max(1, Math.abs(hash % 2147483000));
 };
 
-const showDecisionNotification = async (title, body, tag) => {
+const showDecisionNotification = async (title, body, tag, view = "market") => {
   if (!state.preferences.notifications) return false;
   try {
     const nativePlugin = window.Capacitor?.Plugins?.LocalNotifications;
     if (nativePlugin) {
-      await nativePlugin.schedule({ notifications: [{ title, body, id: notificationIdFrom(tag), extra: { view: "market" } }] });
+      await nativePlugin.schedule({ notifications: [{ title, body, id: notificationIdFrom(tag), extra: { view } }] });
       return true;
     }
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
     const registration = await navigator.serviceWorker?.ready;
     if (registration?.showNotification) {
-      await registration.showNotification(title, { body, tag, icon: assetUrl("assets/app-icon.png"), badge: assetUrl("assets/app-icon.png"), data: { url: assetUrl("index.html") } });
+      await registration.showNotification(title, { body, tag, icon: assetUrl("assets/app-icon.png"), badge: assetUrl("assets/app-icon.png"), data: { url: assetUrl(`index.html#${view}`) } });
     } else {
-      new Notification(title, { body, tag, icon: assetUrl("assets/app-icon.png") });
+      new Notification(title, { body, tag, icon: assetUrl("assets/app-icon.png"), data: { view } });
     }
     return true;
   } catch (error) {
@@ -4284,6 +4574,7 @@ const hydrateImportedPlayers = (players) => (players || []).map((player, index) 
   offerId: Number(player.offerId || 0) || null,
   ownerId: Number(player.ownerId || 0) || null,
   clause: Number(player.clause || 0) || null,
+  watchStatus: player.watchStatus && typeof player.watchStatus === "object" ? { ...player.watchStatus } : null,
   name: player.name,
   team: player.team || competitionMeta().teamFallback,
   nationalTeam: player.nationalTeam || null,
@@ -4832,6 +5123,12 @@ const applyLeague = (league) => {
   state.teamDepartures = Array.isArray(league.teamDepartures)
     ? league.teamDepartures.map(cleanWorldcupPlayerIdentity)
     : [];
+  state.favorites = Array.isArray(league.favorites)
+    ? league.favorites.map(cleanWorldcupPlayerIdentity)
+    : [];
+  state.favoriteCatalog = [];
+  state.favoriteAlerts = [];
+  state.favoriteClauseDataAvailable = false;
   state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
   state.finance = {
     balance: null,
@@ -4879,6 +5176,7 @@ const applyLeague = (league) => {
   renderTable();
   renderTeam();
   renderLineup();
+  renderFavorites();
 };
 
 const renderLeagueSelector = () => {
@@ -4986,6 +5284,7 @@ const saveActiveLeague = async () => {
         marketPlayers: state.players,
         teamPlayers: state.teamPlayers,
         teamDepartures: state.teamDepartures,
+        favorites: state.favorites,
         finance: state.finance,
         weights: state.weights,
         filters: state.filters,
@@ -5781,6 +6080,7 @@ const importFromBiwenger = async (kind) => {
         ? `Equipo importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
         : `Mercado importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
     );
+    if (kind === "market" && state.favorites.length) await loadFavoriteCatalog({ force: true });
     if (kind === "team") await notifyDailyPlanIfNeeded();
     return true;
   } catch (error) {
@@ -5885,6 +6185,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
     state.autoSync.status = "ready";
     saveAutoSyncRecord({ completedAt, reason, leagueId: state.activeLeagueId, playerCount: state.players.length, teamCount: state.teamPlayers.length });
     renderDailyPlan(filteredPlayers());
+    if (state.favorites.length) await loadFavoriteCatalog({ force: true });
     await notifyDailyPlanIfNeeded();
     return true;
   } catch (error) {
@@ -8562,7 +8863,7 @@ const renderTable = () => {
         <div class="player-cell">
           ${renderPlayerMedia(player, "sm")}
           <div>
-            <div class="player-name-line"><strong>${player.name}</strong>${renderRecentFormDots(player)}</div>
+            <div class="player-name-line"><strong>${player.name}</strong>${renderRecentFormDots(player)}${renderFavoriteButton(player, true)}</div>
             <span>${player.team} - ${player.contextLabel} - ${player.label} ${renderScoringBadge(player)}</span>
             ${player.exceedsMaximumBid ? `<span class="market-warning">Supera tu puja maxima por ${formatFinanceMoney(player.maximumBidGap)}</span>` : ""}
             ${renderMarketSignals(player)}
@@ -8604,7 +8905,7 @@ const renderTable = () => {
           <div class="player-cell">
             ${renderPlayerMedia(player, "sm")}
             <div>
-              <div class="player-name-line"><strong>${player.name}</strong>${renderRecentFormDots(player)}</div>
+              <div class="player-name-line"><strong>${player.name}</strong>${renderRecentFormDots(player)}${renderFavoriteButton(player, true)}</div>
               <span>${player.team} - ${player.contextLabel} - ${player.label} ${renderScoringBadge(player)}</span>
               ${player.exceedsMaximumBid ? `<span class="market-warning">No pujable con tu puja maxima actual</span>` : ""}
               ${renderMarketSignals(player)}
@@ -9063,6 +9364,7 @@ const renderTeam = () => {
               <span>${renderPositionIcon(player.position, compactPoints(playerAccumulatedPoints(player)), { title: `${playerAccumulatedPoints(player).toLocaleString("es-ES")} puntos Biwenger` })} ${renderScoringBadge(player)} ${escapeHtml(player.team)} · ${player.starter}% titular${hasOffer ? ` · <button class="team-offer-chip" type="button" data-open-offer-player="${player.biwengerPlayerId}">Ver oferta ${formatFinanceMoney(incomingOffer.amount)}</button>` : ""}</span>
             </div>
             <div class="mini-player-actions">
+              ${renderFavoriteButton(player, true)}
               ${renderValueTrend(player, { compact: true })}
               ${renderHealthBadge(player)}
               ${renderProfileLink(player)}
@@ -9761,6 +10063,7 @@ const initNavigation = () => {
   qsa(".nav-item").forEach((button) => {
     button.addEventListener("click", () => {
       openView(button.dataset.view);
+      if (button.dataset.view === "favorites") loadFavoriteCatalog({ force: !state.favoriteCatalog.length });
       if (button.dataset.view === "league") loadLeagueOverview();
       if (button.dataset.view === "team" && state.biwenger.connected) {
         loadBiwengerOperations(false);
@@ -9869,6 +10172,13 @@ const initEvents = () => {
   qs("#market-refresh-inline")?.addEventListener("click", () => importFromBiwenger("market"));
   qs("#team-refresh-inline")?.addEventListener("click", () => importFromBiwenger("team"));
   qs("#biwenger-logout").addEventListener("click", biwengerLogout);
+  qs("#refresh-favorites")?.addEventListener("click", () => loadFavoriteCatalog({ force: true }));
+  qs("#favorite-enable-notifications")?.addEventListener("click", async () => {
+    const enabled = await requestDecisionNotifications();
+    setFavoritesStatus(enabled ? "Avisos de favoritos activados en este dispositivo." : "No se ha concedido permiso para mostrar avisos.", enabled ? "ready" : "error");
+  });
+  qs("#favorite-search-name")?.addEventListener("input", renderFavorites);
+  qs("#favorite-search-position")?.addEventListener("change", renderFavorites);
   qs("#check-app-update")?.addEventListener("click", () => checkForAppUpdate({ manual: true }));
   qs("#later-app-update")?.addEventListener("click", closeAppUpdatePopup);
   qs("#app-update-backdrop")?.addEventListener("click", closeAppUpdatePopup);
@@ -10140,6 +10450,14 @@ const initEvents = () => {
   qs("#close-fixture-video")?.addEventListener("click", closeFixtureVideo);
   qs("#fixture-video-backdrop")?.addEventListener("click", closeFixtureVideo);
   document.addEventListener("click", handleRecentDotInteraction, true);
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-favorite-player]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const player = favoritePlayerFromKey(button.dataset.favoritePlayer);
+    if (player) toggleFavoritePlayer(player);
+  }, true);
   document.addEventListener("mouseover", handleRecentDotHover, true);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -10206,6 +10524,7 @@ const init = async () => {
     await refreshBiwengerStatus();
     await refreshFutbolFantasyStatus();
     await runAutomaticSync({ force: false, reason: "startup" });
+    if (state.favorites.length) await loadFavoriteCatalog({ force: true });
     window.setTimeout(() => checkForAppUpdate(), 1500);
     window.setInterval(() => runAutomaticSync({ force: false, reason: "periodic" }), 10 * 60 * 1000);
   } finally {

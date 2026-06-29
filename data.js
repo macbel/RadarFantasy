@@ -759,6 +759,8 @@ window.NATIONAL_TEAM_ALIASES = {
   "republica democratica del congo": "RD Congo",
   "dr congo": "RD Congo",
   "congo dr": "RD Congo",
+  "congo rdc": "RD Congo",
+  "congo (rdc)": "RD Congo",
   "rd congo": "RD Congo",
   "tunez": "Tunez",
   "tunisia": "Tunez",

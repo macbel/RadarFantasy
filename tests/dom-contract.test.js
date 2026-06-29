@@ -50,6 +50,14 @@ if (!php.includes("clauseDataAvailable") || !js.includes("FAVORITE_WATCH_STATE_K
   throw new Error("Clause alerts need an authoritative availability signal and a deduplicated transition snapshot");
 }
 
+if (!php.includes("/player-catalog") || !php.includes("biwenger_public_catalog_payload") || !js.includes("/api/player-catalog?competition=")) {
+  throw new Error("Favorite search must use Biwenger's complete public competition catalog even without a private session");
+}
+
+if (!html.includes('id="startup-sync-enabled"') || !js.includes("preferences.startupSync") || !php.includes("'startupSync'")) {
+  throw new Error("Full startup synchronization must be independently configurable");
+}
+
 if (!html.includes('id="market-analysis-center"') || !html.includes('data-analysis-tab="plan"') || !html.includes('data-analysis-panel="history"')) {
   throw new Error("The market analysis tools must live in the compact tabbed center");
 }
@@ -74,7 +82,7 @@ if (!js.includes("fixtureUnresolved") || !js.includes("upcomingFixtureCoverage")
   throw new Error("An unresolved fixture link must be distinct from a confirmed missing next match");
 }
 
-if (!php.includes("$fixtures['schemaVersion'] = 2") || !js.includes("fixtureDataNeedsRefresh")) {
+if (!php.includes("$fixtures['schemaVersion'] = 3") || !php.includes("for ($page = 0; $page < 6; $page++)") || !js.includes("45 * 60 * 1000")) {
   throw new Error("Old incomplete fixture snapshots must be invalidated after the calendar fix");
 }
 

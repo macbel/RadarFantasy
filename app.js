@@ -88,6 +88,7 @@
     strictBudget: true,
     riskAverse: false,
     investmentMode: false,
+    startupSync: true,
     autoSync: true,
     notifications: false,
     planMode: "balanced",
@@ -116,7 +117,7 @@ const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
-const APP_VERSION = "3.3.0";
+const APP_VERSION = "3.4.0";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -659,7 +660,11 @@ const hasUpcomingFixtureEvents = (fixtures = state.leagueFixtures) => {
   return Array.isArray(events) && events.some((event) => Number(event.timestamp || 0) >= nowSeconds - (3 * 60 * 60));
 };
 
-const fixtureDataNeedsRefresh = (fixtures = state.leagueFixtures) => Number(fixtures?.schemaVersion || 0) < 2 || !hasUpcomingFixtureEvents(fixtures);
+const fixtureDataNeedsRefresh = (fixtures = state.leagueFixtures) => {
+  const fetchedAtMs = Number(fixtures?.fetchedAtTs || 0) * 1000;
+  const stale = !Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0 || Date.now() - fetchedAtMs > 45 * 60 * 1000;
+  return Number(fixtures?.schemaVersion || 0) < 3 || stale || !hasUpcomingFixtureEvents(fixtures);
+};
 
 const upcomingFixtureCoverage = (fixtures = state.leagueFixtures) => {
   const events = fixtures?.events || [];
@@ -3426,13 +3431,38 @@ const loadFavoriteCatalog = async ({ force = false, notify = true } = {}) => {
   state.favoriteCatalogLoading = true;
   setFavoritesStatus("Actualizando jugadores, mercado y cláusulas...", "busy");
   try {
-    let payload;
-    if (state.biwenger.connected && canUseApi()) {
-      const response = await apiFetch("/api/biwenger/watchlist");
-      payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || "No se pudo cargar el catálogo de Biwenger.");
-      payload.players = hydrateImportedPlayers(payload.players || []);
-    } else {
+    let payload = null;
+    const competition = state.biwenger.competition || (state.competition === "worldcup" ? "world-cup" : "la-liga");
+    if (canUseApi()) {
+      const publicResponse = await apiFetch(`/api/player-catalog?competition=${encodeURIComponent(competition)}&score=2`);
+      const publicPayload = await publicResponse.json().catch(() => ({}));
+      if (publicResponse.ok) {
+        payload = {
+          ...publicPayload,
+          players: hydrateImportedPlayers(publicPayload.players || []),
+          marketDataAvailable: false,
+          clauseDataAvailable: false
+        };
+      }
+      if (state.biwenger.connected) {
+        const privateResponse = await apiFetch("/api/biwenger/watchlist");
+        const privatePayload = await privateResponse.json().catch(() => ({}));
+        if (privateResponse.ok) {
+          const privatePlayers = hydrateImportedPlayers(privatePayload.players || []);
+          const privateById = new Map(privatePlayers.map((player) => [favoritePlayerKey(player), player]));
+          const publicPlayers = payload?.players || [];
+          payload = {
+            ...privatePayload,
+            players: publicPlayers.length
+              ? publicPlayers.map((player) => ({ ...player, ...(privateById.get(favoritePlayerKey(player)) || {}) }))
+              : privatePlayers
+          };
+        } else if (!payload) {
+          throw new Error(privatePayload.error || "No se pudo cargar el catálogo de Biwenger.");
+        }
+      }
+    }
+    if (!payload) {
       const combined = [...state.players, ...state.teamPlayers, ...state.favorites];
       const unique = new Map(combined.map((player) => [favoritePlayerKey(player), player]));
       payload = { players: [...unique.values()], marketDataAvailable: false, clauseDataAvailable: false };
@@ -3441,10 +3471,10 @@ const loadFavoriteCatalog = async ({ force = false, notify = true } = {}) => {
     state.favoriteCatalog = payload.players;
     state.favoriteClauseDataAvailable = Boolean(payload.clauseDataAvailable);
     setFavoritesStatus(
-      state.biwenger.connected
-        ? `${state.favoriteCatalog.length} jugadores disponibles para buscar. Seguimiento actualizado.`
-        : "Conecta Biwenger para buscar todo el catálogo y vigilar mercado y cláusulas.",
-      state.biwenger.connected ? "ready" : ""
+      payload.source === "Biwenger catalogo publico" || state.favoriteCatalog.length > 100
+        ? `${state.favoriteCatalog.length} jugadores del catálogo completo de Biwenger. ${state.biwenger.connected ? "Mercado y cláusulas actualizados." : "Conecta tu liga para vigilar mercado y cláusulas."}`
+        : "No se pudo consultar el catálogo completo; se muestran temporalmente los jugadores guardados.",
+      state.favoriteCatalog.length > 100 ? "ready" : ""
     );
     renderFavorites();
     return true;
@@ -5026,7 +5056,7 @@ const applyBiwengerSession = (payload) => {
   renderLeagueIdentity();
 };
 
-const refreshBiwengerStatus = async (preferredMessage = "") => {
+const refreshBiwengerStatus = async (preferredMessage = "", options = {}) => {
   if (!canUseApi()) {
     setBiwengerStatus("Necesitas publicar la API PHP para usar la conexion con Biwenger.", "error");
     return;
@@ -5048,7 +5078,7 @@ const refreshBiwengerStatus = async (preferredMessage = "") => {
         preferredMessage || `Conectado como ${payload.userName || "usuario"} en ${payload.leagueName || "tu liga"}.`,
         "ready"
       );
-      if (state.players.length && fixtureDataNeedsRefresh()) {
+      if (options.refreshFixtures !== false && state.players.length && fixtureDataNeedsRefresh()) {
         await loadLeagueFixtures(false);
       }
     } else {
@@ -5259,7 +5289,7 @@ const loadLeagues = async () => {
       leagues: Object.fromEntries(mergedPayload.leagues.map((league) => [league.id, league]))
     });
     setLeagueStatus("Ligas locales y servidor sincronizados.");
-    if (state.players.length) enrichCurrentMarket(hasStaleStarterSignals(state.players));
+    if (state.preferences.startupSync !== false && state.players.length) enrichCurrentMarket(hasStaleStarterSignals(state.players));
   } catch (error) {
     setLeagueStatus("Sin API remota. Usando ligas guardadas en este dispositivo.");
   }
@@ -6171,6 +6201,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
     if (state.biwenger.authenticated) {
       success = await syncSelectedLeagueWithBiwenger();
       if (success) {
+        await loadLeagueFixtures(false);
         await loadLeagueOverview();
         await ensureLiveRoundForFinance(false);
       }
@@ -8606,6 +8637,8 @@ const syncSettingsControls = () => {
   if (investmentMode) investmentMode.checked = Boolean(state.preferences.investmentMode);
   const autoSync = qs("#auto-sync-enabled");
   if (autoSync) autoSync.checked = state.preferences.autoSync !== false;
+  const startupSync = qs("#startup-sync-enabled");
+  if (startupSync) startupSync.checked = state.preferences.startupSync !== false;
   const notifications = qs("#notifications-enabled");
   if (notifications) notifications.checked = Boolean(state.preferences.notifications);
   state.dailyPlanMode = state.preferences.planMode || state.dailyPlanMode || "balanced";
@@ -10388,6 +10421,10 @@ const initEvents = () => {
     persistLeagueSettings();
     if (event.target.checked) runAutomaticSync({ force: true, reason: "settings" });
   });
+  qs("#startup-sync-enabled")?.addEventListener("change", (event) => {
+    state.preferences.startupSync = event.target.checked;
+    persistLeagueSettings();
+  });
   qs("#notifications-enabled")?.addEventListener("change", async (event) => {
     if (event.target.checked) {
       await requestDecisionNotifications();
@@ -10521,10 +10558,18 @@ const init = async () => {
     setSourceBusy(false);
     refreshSourceDbStatus();
     await loadLeagues();
-    await refreshBiwengerStatus();
+    const shouldRefreshAtStartup = state.preferences.startupSync !== false;
+    await refreshBiwengerStatus("", { refreshFixtures: shouldRefreshAtStartup });
     await refreshFutbolFantasyStatus();
-    await runAutomaticSync({ force: false, reason: "startup" });
-    if (state.favorites.length) await loadFavoriteCatalog({ force: true });
+    if (shouldRefreshAtStartup) {
+      await runAutomaticSync({ force: false, reason: "startup" });
+      if (state.favorites.length) await loadFavoriteCatalog({ force: true });
+    } else {
+      state.autoSync.status = "startup-skipped";
+      const status = qs("#daily-plan-status");
+      if (status) status.textContent = "Datos guardados cargados. La actualización al iniciar está desactivada en Ajustes.";
+      renderDailyPlan(filteredPlayers());
+    }
     window.setTimeout(() => checkForAppUpdate(), 1500);
     window.setInterval(() => runAutomaticSync({ force: false, reason: "periodic" }), 10 * 60 * 1000);
   } finally {

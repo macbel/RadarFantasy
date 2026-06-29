@@ -197,10 +197,15 @@ const worldCupAliasPairs = [
   ["Curazao", "Curaçao"],
   ["Costa de Marfil", "Côte d'Ivoire"],
   ["Egipto", "Egypt"],
-  ["Suiza", "Switzerland"]
+  ["Suiza", "Switzerland"],
+  ["Congo (RDC)", "DR Congo"]
 ];
 if (worldCupAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(biwengerName, fixtureName) < 88)) {
   throw new Error("World Cup team translations must match SofaScore fixture names: " + JSON.stringify(worldCupAliasPairs));
+}
+if (!fixtureDataNeedsRefresh({ schemaVersion: 2, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
+  || fixtureDataNeedsRefresh({ schemaVersion: 3, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
+  throw new Error("Fixture cache freshness must invalidate old schemas without refetching a current complete snapshot");
 }
 
 state.competition = "club";

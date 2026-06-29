@@ -197,6 +197,16 @@ if ($route === '/healthz' && $requestMethod === 'GET') {
     ]);
 }
 
+if ($route === '/player-catalog' && $requestMethod === 'GET') {
+    $competition = trim((string)($_GET['competition'] ?? 'la-liga'));
+    $scoreId = max(1, (int)($_GET['score'] ?? 2));
+    try {
+        send_json(200, biwenger_public_catalog_payload($competition, $scoreId, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls, $dbDir));
+    } catch (Throwable $error) {
+        send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar el catalogo publico de Biwenger']);
+    }
+}
+
 if ($route === '/biwenger/status' && $requestMethod === 'GET') {
     if (!empty($_SESSION['biwenger']['token'])
         && (empty($_SESSION['biwenger']['scoreId'])
@@ -742,7 +752,8 @@ if ($route === '/biwenger/fixtures' && $requestMethod === 'GET') {
     $fixtures = array_shift($payloads);
     foreach ($payloads as $payload) $fixtures = merge_fixture_payloads($fixtures, $payload);
     $fixtures = scorebat_attach_highlights($fixtures, $sourceTimeoutSeconds, $sourceHeaders, $strictTls);
-    $fixtures['schemaVersion'] = 2;
+    $fixtures['schemaVersion'] = 3;
+    $fixtures['fetchedAtTs'] = time();
     $fixtures['diagnostics'] = $errors;
     send_json(200, $fixtures);
 }
@@ -1935,6 +1946,58 @@ function biwenger_fetch_competition_catalog(string $competition, int $timeoutSec
     ];
 }
 
+function biwenger_public_competition_slug(string $competition): string
+{
+    $normalized = normalize_text($competition);
+    if ($normalized === '' || in_array($normalized, ['club', 'laliga', 'la liga', 'primera division'], true)) return 'la-liga';
+    if (preg_match('/world|mundial|copa del mundo|selecciones/', $normalized)) return 'world-cup';
+    return biwenger_competition_slug($competition);
+}
+
+function biwenger_public_catalog_payload(string $competition, int $scoreId, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
+{
+    $slug = biwenger_public_competition_slug($competition);
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'biwenger-catalog-' . slugify($slug) . '-score-' . $scoreId . '.json';
+    $cached = read_json_file($cachePath, []);
+    if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 3600 && !empty($cached['players'])) {
+        $cached['cacheStatus'] = 'hit';
+        return $cached;
+    }
+    $catalog = biwenger_fetch_competition_catalog($slug, $timeoutSeconds, $headers, $strictTls, $scoreId);
+    $players = [];
+    foreach ($catalog['playersById'] as $entry) {
+        if (!is_array($entry)) continue;
+        $player = biwenger_normalize_player($entry, $catalog, $slug, false);
+        $players[] = [
+            'id' => $player['id'],
+            'biwengerPlayerId' => $player['biwengerPlayerId'],
+            'name' => $player['name'],
+            'team' => $player['team'],
+            'nationalTeam' => $player['nationalTeam'],
+            'clubTeam' => $player['clubTeam'],
+            'position' => $player['position'],
+            'biwengerPosition' => $player['biwengerPosition'],
+            'price' => $player['price'],
+            'biwengerValue' => $player['biwengerValue'],
+            'competitionPoints' => $player['competitionPoints'],
+            'media' => $player['media'],
+            'sourceLinks' => $player['sourceLinks'],
+            'competitionScope' => $player['competitionScope']
+        ];
+    }
+    usort($players, static fn($left, $right) => strcasecmp((string)($left['name'] ?? ''), (string)($right['name'] ?? '')));
+    $result = [
+        'ok' => true,
+        'competition' => $slug,
+        'players' => $players,
+        'fetchedAtTs' => time(),
+        'cacheStatus' => 'refresh',
+        'source' => 'Biwenger catalogo publico'
+    ];
+    write_json_file($cachePath, $result);
+    return $result;
+}
+
 function biwenger_watchlist_catalog(array $session, int $timeoutSeconds, array $headers, bool $strictTls): array
 {
     $competition = (string)($session['competition'] ?? '');
@@ -2350,6 +2413,7 @@ function sanitize_preferences_payload($preferences): array
         'strictBudget' => !array_key_exists('strictBudget', $preferences) || !empty($preferences['strictBudget']),
         'riskAverse' => !empty($preferences['riskAverse']),
         'investmentMode' => !empty($preferences['investmentMode']),
+        'startupSync' => !array_key_exists('startupSync', $preferences) || !empty($preferences['startupSync']),
         'autoSync' => !array_key_exists('autoSync', $preferences) || !empty($preferences['autoSync']),
         'notifications' => !empty($preferences['notifications']),
         'planMode' => in_array((string)($preferences['planMode'] ?? 'balanced'), ['conservative', 'balanced', 'aggressive'], true)
@@ -4057,7 +4121,7 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
 {
     $competition = trim((string)($session['competition'] ?? ''));
     $leagueName = trim((string)($session['leagueName'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v2-' . slugify($competition ?: $leagueName) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v3-' . slugify($competition ?: $leagueName) . '.json';
     $cached = read_json_file($cachePath, []);
     if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit';
@@ -4101,17 +4165,21 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
     }
 
     $eventRows = [];
-    foreach (['last/0', 'next/0'] as $page) {
-        try {
-            $path = $seasonId > 0
-                ? '/unique-tournament/' . $tournament['id'] . '/season/' . $seasonId . '/events/' . $page
-                : '/unique-tournament/' . $tournament['id'] . '/events/' . $page;
-            $payload = sofascore_api_json($path, $timeoutSeconds, $headers, $strictTls);
-            foreach ((array)($payload['events'] ?? []) as $event) {
-                if (is_array($event) && !empty($event['id'])) $eventRows[(int)$event['id']] = $event;
+    foreach (['last', 'next'] as $direction) {
+        for ($page = 0; $page < 6; $page++) {
+            try {
+                $path = $seasonId > 0
+                    ? '/unique-tournament/' . $tournament['id'] . '/season/' . $seasonId . '/events/' . $direction . '/' . $page
+                    : '/unique-tournament/' . $tournament['id'] . '/events/' . $direction . '/' . $page;
+                $payload = sofascore_api_json($path, $timeoutSeconds, $headers, $strictTls);
+                $pageEvents = array_values(array_filter((array)($payload['events'] ?? []), 'is_array'));
+                foreach ($pageEvents as $event) {
+                    if (!empty($event['id'])) $eventRows[(int)$event['id']] = $event;
+                }
+                if (!$pageEvents || empty($payload['hasNextPage'])) break;
+            } catch (Throwable $error) {
+                break;
             }
-        } catch (Throwable $error) {
-            continue;
         }
     }
     if (!$eventRows) throw new RuntimeException('SofaScore no ha devuelto partidos para esta competicion');

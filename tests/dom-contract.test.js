@@ -29,8 +29,12 @@ if (!html.includes('id="bid-count-popup"') || !html.includes('id="bid-count-popu
   throw new Error("The rival-bid result popup is missing from the market UI");
 }
 
-if (!html.includes('id="data-sync-popup"') || !js.includes("beginDataSync") || !js.includes("endDataSync")) {
+if (!html.includes('id="data-sync-popup"') || !html.includes('id="cancel-data-sync"') || !js.includes("beginDataSync") || !js.includes("endDataSync") || !js.includes("cancelDataSync")) {
   throw new Error("Long data refreshes must expose a visible global progress popup");
+}
+
+if (!js.includes("const batchSize = 12") || !js.includes("deferFollowUp") || !js.includes("activeDataSyncController")) {
+  throw new Error("Startup synchronization must avoid duplicate follow-up work and support request cancellation");
 }
 
 if (!html.includes('id="app-update-popup"') || !html.includes('id="check-app-update"') || !js.includes("checkForAppUpdate")) {

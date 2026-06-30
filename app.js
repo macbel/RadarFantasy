@@ -117,7 +117,7 @@ const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
-const APP_VERSION = "3.4.2";
+const APP_VERSION = "3.4.3";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -240,15 +240,19 @@ const ensureDeviceKey = async () => {
   })();
   return deviceKeyPromise;
 };
-const apiFetch = async (path, options = {}) => fetch(apiUrl(path), {
-  credentials: "include",
-  cache: "no-store",
-  ...options,
-  headers: {
-    "X-FMS-Device-Key": await ensureDeviceKey(),
-    ...(options.headers || {})
-  }
-});
+const apiFetch = async (path, options = {}) => {
+  const { headers = {}, signal = null, ...requestOptions } = options;
+  return fetch(apiUrl(path), {
+    credentials: "include",
+    cache: "no-store",
+    ...requestOptions,
+    signal: signal || activeDataSyncController?.signal,
+    headers: {
+      "X-FMS-Device-Key": await ensureDeviceKey(),
+      ...headers
+    }
+  });
+};
 const OCR_ENGINE_OPTIONS = {
   workerPath: assetUrl("vendor/tesseract/worker.min.js"),
   corePath: APP_CONFIG.ocrCoreUrl || "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js",
@@ -4794,6 +4798,25 @@ const setLeagueStatus = (message) => {
 let dataSyncDepth = 0;
 let dataSyncShowTimer = null;
 let dataSyncHideTimer = null;
+let activeDataSyncController = null;
+let dataSyncWasCancelled = false;
+
+const isDataSyncCancellation = (error = null) => dataSyncWasCancelled || error?.name === "AbortError";
+const throwIfDataSyncCancelled = () => {
+  if (dataSyncWasCancelled) throw new DOMException("Carga detenida por el usuario.", "AbortError");
+};
+
+const cancelDataSync = () => {
+  if (dataSyncDepth <= 0 || dataSyncWasCancelled) return;
+  dataSyncWasCancelled = true;
+  activeDataSyncController?.abort();
+  const title = qs("#data-sync-popup-title");
+  const detail = qs("#data-sync-popup-message");
+  const button = qs("#cancel-data-sync");
+  if (title) title.textContent = "Deteniendo carga";
+  if (detail) detail.textContent = "Cancelando las consultas pendientes y conservando los últimos datos válidos...";
+  if (button) button.disabled = true;
+};
 
 const updateDataSync = (message, mode = "busy") => {
   const popup = qs("#data-sync-popup");
@@ -4806,6 +4829,12 @@ const updateDataSync = (message, mode = "busy") => {
 };
 
 const beginDataSync = (message = "Sincronizando la información más reciente...") => {
+  if (dataSyncDepth === 0) {
+    activeDataSyncController = new AbortController();
+    dataSyncWasCancelled = false;
+    const cancelButton = qs("#cancel-data-sync");
+    if (cancelButton) cancelButton.disabled = false;
+  }
   dataSyncDepth += 1;
   window.clearTimeout(dataSyncHideTimer);
   updateDataSync(message, "busy");
@@ -4823,7 +4852,17 @@ const endDataSync = ({ error = "" } = {}) => {
   window.clearTimeout(dataSyncShowTimer);
   dataSyncShowTimer = null;
   const popup = qs("#data-sync-popup");
+  activeDataSyncController = null;
   if (!popup) return;
+  if (dataSyncWasCancelled) {
+    updateDataSync("Carga detenida. Se mantienen los últimos datos válidos.", "error");
+    const title = qs("#data-sync-popup-title");
+    if (title) title.textContent = "Carga detenida";
+    popup.hidden = false;
+    dataSyncWasCancelled = false;
+    dataSyncHideTimer = window.setTimeout(() => { popup.hidden = true; }, 2600);
+    return;
+  }
   if (error) {
     updateDataSync(error, "error");
     popup.hidden = false;
@@ -5289,7 +5328,6 @@ const loadLeagues = async () => {
       leagues: Object.fromEntries(mergedPayload.leagues.map((league) => [league.id, league]))
     });
     setLeagueStatus("Ligas locales y servidor sincronizados.");
-    if (state.preferences.startupSync !== false && state.players.length) enrichCurrentMarket(hasStaleStarterSignals(state.players));
   } catch (error) {
     setLeagueStatus("Sin API remota. Usando ligas guardadas en este dispositivo.");
   }
@@ -5677,9 +5715,10 @@ const enrichPlayerListBatched = async (players, forceRefresh = false, onProgress
   const candidates = players.filter((player) => player.position !== "ENT");
   const enrichedById = new Map(passthrough.map((player) => [player.id, player]));
   const totals = { cacheHits: 0, refreshed: 0, liveCount: 0, failedBatches: 0, errors: [] };
-  const batchSize = 5;
+  const batchSize = 12;
 
   for (let index = 0; index < candidates.length; index += batchSize) {
+    throwIfDataSyncCancelled();
     const batch = candidates.slice(index, index + batchSize);
     try {
       const result = await enrichPlayerList(batch, forceRefresh);
@@ -5688,6 +5727,7 @@ const enrichPlayerListBatched = async (players, forceRefresh = false, onProgress
       totals.refreshed += Number(result.payload.refreshed || 0);
       totals.liveCount += Number(result.payload.liveCount || 0);
     } catch (error) {
+      if (isDataSyncCancellation(error)) throw error;
       totals.failedBatches += 1;
       totals.errors.push(error.message || "Lote sin actualizar");
       batch.forEach((player) => enrichedById.set(player.id, player));
@@ -5802,7 +5842,11 @@ const enrichCurrentMarket = async (forceRefresh = false) => {
     renderTable();
     await saveActiveLeague();
   } catch (error) {
-    setSourceStatus(`${error.message || "No se pudieron consultar fuentes"}. Se mantiene estimacion local.`, "error");
+    if (isDataSyncCancellation(error)) {
+      setSourceStatus("Actualización detenida. Se mantienen los datos anteriores.", "");
+    } else {
+      setSourceStatus(`${error.message || "No se pudieron consultar fuentes"}. Se mantiene estimacion local.`, "error");
+    }
   } finally {
     setSourceBusy(false);
     endDataSync();
@@ -6006,7 +6050,7 @@ const syncTeamToFutbolFantasy = async () => {
   }
 };
 
-const importFromBiwenger = async (kind) => {
+const importFromBiwenger = async (kind, options = {}) => {
   if (!state.biwenger.connected) {
     setBiwengerStatus("Primero conecta tu cuenta de Biwenger.", "error");
     return false;
@@ -6037,6 +6081,7 @@ const importFromBiwenger = async (kind) => {
       body: JSON.stringify({ kind, knownTeamPlayers })
     });
     const payload = await response.json().catch(() => ({}));
+    throwIfDataSyncCancelled();
     if (!response.ok) {
       throw new Error(payload.error || describeApiError(response.status, "/api/biwenger/import"));
     }
@@ -6077,6 +6122,7 @@ const importFromBiwenger = async (kind) => {
           setTeamStatus(`Enriqueciendo plantilla: ${done}/${total} jugadores...`, "busy");
         });
         state.teamPlayers = enriched;
+        throwIfDataSyncCancelled();
         state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
         qs("#market-text").value = biwengerPlayersToText(state.players);
         renderTeam();
@@ -6098,23 +6144,29 @@ const importFromBiwenger = async (kind) => {
       setOcrStatus(`Mercado importado desde Biwenger: ${importedPlayers.length} jugadores.`, importedPlayers.length ? "ready" : "error");
       if (importedPlayers.length) {
         await enrichCurrentMarket(false);
-        await loadLeagueFixtures(false);
-        await loadBiwengerOperations(false);
+        throwIfDataSyncCancelled();
+        if (!options.deferFollowUp) {
+          await loadLeagueFixtures(false);
+          throwIfDataSyncCancelled();
+          await loadBiwengerOperations(false);
+        }
       }
     }
 
     renderFinance();
     await saveActiveLeague();
-    await refreshBiwengerStatus(
-      kind === "team"
-        ? `Equipo importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
-        : `Mercado importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
-    );
-    if (kind === "market" && state.favorites.length) await loadFavoriteCatalog({ force: true });
-    if (kind === "team") await notifyDailyPlanIfNeeded();
+    if (!options.deferFollowUp) {
+      await refreshBiwengerStatus(
+        kind === "team"
+          ? `Equipo importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
+          : `Mercado importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
+      );
+      if (kind === "market" && state.favorites.length) await loadFavoriteCatalog({ force: true });
+      if (kind === "team") await notifyDailyPlanIfNeeded();
+    }
     return true;
   } catch (error) {
-    const message = error.message || "No se pudo importar desde Biwenger.";
+    const message = isDataSyncCancellation(error) ? "Carga detenida; se mantienen los datos ya disponibles." : (error.message || "No se pudo importar desde Biwenger.");
     if (kind === "team") {
       setTeamStatus(message, "error");
     } else {
@@ -6131,25 +6183,31 @@ const importFromBiwenger = async (kind) => {
 const syncSelectedLeagueWithBiwenger = async () => {
   if (!state.biwenger.authenticated || !activeLeagueName()) return false;
   const leagueName = activeLeagueName();
-  setBiwengerBusy(true, "Cambiando liga");
-  setBiwengerStatus(`Cambiando a ${leagueName} y actualizando datos...`, "busy");
+  setBiwengerBusy(true, "Actualizando liga");
+  setBiwengerStatus(`Actualizando ${leagueName}...`, "busy");
   setLeagueStatus(`Sincronizando ${leagueName} con Biwenger...`);
   try {
-    const response = await apiFetch("/api/biwenger/switch-league", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        preferredLeagueName: leagueName,
-        preferredLeagueId: Number(activeLeague()?.biwengerLeagueId || 0)
-      })
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload.error || "No se pudo cambiar la liga activa de Biwenger.");
+    const preferredLeagueId = Number(activeLeague()?.biwengerLeagueId || 0);
+    const currentLeagueId = Number(state.biwenger.leagueId || 0);
+    const alreadySelected = preferredLeagueId > 0
+      ? preferredLeagueId === currentLeagueId
+      : normalize(state.biwenger.leagueName) === normalize(leagueName);
+    let payload = { leagueName };
+    if (!alreadySelected) {
+      const response = await apiFetch("/api/biwenger/switch-league", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preferredLeagueName: leagueName, preferredLeagueId })
+      });
+      payload = await response.json().catch(() => ({}));
+      throwIfDataSyncCancelled();
+      if (!response.ok) throw new Error(payload.error || "No se pudo cambiar la liga activa de Biwenger.");
+      applyBiwengerSession(payload);
     }
-    applyBiwengerSession(payload);
-    const marketImported = await importFromBiwenger("market");
-    const teamImported = await importFromBiwenger("team");
+    const marketImported = await importFromBiwenger("market", { deferFollowUp: true });
+    throwIfDataSyncCancelled();
+    const teamImported = await importFromBiwenger("team", { deferFollowUp: true });
+    throwIfDataSyncCancelled();
     await loadBiwengerOperations(false);
     if (!marketImported || !teamImported) {
       throw new Error(`Liga cambiada a ${payload.leagueName || leagueName}, pero no se pudieron actualizar todos sus datos.`);
@@ -6160,6 +6218,11 @@ const syncSelectedLeagueWithBiwenger = async () => {
     return true;
   } catch (error) {
     const message = error.message || "No se pudo sincronizar la liga seleccionada con Biwenger.";
+    if (isDataSyncCancellation(error)) {
+      setBiwengerStatus("Carga detenida; la sesión de Biwenger sigue conectada.", "");
+      setLeagueStatus("Carga detenida. Se conservan los últimos datos válidos.");
+      return false;
+    }
     state.biwenger.connected = false;
     document.body.classList.remove("biwenger-connected");
     setBiwengerStatus(message, "error");
@@ -6186,7 +6249,8 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   const previous = autoSyncRecord();
   const previousTime = new Date(previous?.completedAt || 0).getTime();
   const freshEnough = Number.isFinite(previousTime) && Date.now() - previousTime < 20 * 60 * 1000;
-  if (!force && (!state.preferences.autoSync || freshEnough)) {
+  const periodicDisabled = reason === "periodic" && !state.preferences.autoSync;
+  if (!force && (periodicDisabled || freshEnough)) {
     state.autoSync.lastAt = previous?.completedAt || state.autoSync.lastAt;
     state.autoSync.status = freshEnough ? "fresh" : "disabled";
     renderDailyPlan(filteredPlayers());
@@ -6200,14 +6264,19 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   try {
     if (state.biwenger.authenticated) {
       success = await syncSelectedLeagueWithBiwenger();
+      throwIfDataSyncCancelled();
       if (success) {
         await loadLeagueFixtures(false);
+        throwIfDataSyncCancelled();
         await loadLeagueOverview();
+        throwIfDataSyncCancelled();
         await ensureLiveRoundForFinance(false);
       }
     } else {
       if (state.players.length) await enrichCurrentMarket(false);
+      throwIfDataSyncCancelled();
       await refreshTeamAlertSources();
+      throwIfDataSyncCancelled();
       success = true;
     }
     if (!success) throw new Error("La sincronización no pudo completar todos los datos.");
@@ -6220,9 +6289,11 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
     await notifyDailyPlanIfNeeded();
     return true;
   } catch (error) {
-    state.autoSync.status = "error";
+    state.autoSync.status = isDataSyncCancellation(error) ? "cancelled" : "error";
     const target = qs("#daily-plan-status");
-    if (target) target.textContent = `${error.message || "Sincronización incompleta"} Se mantienen los últimos datos válidos.`;
+    if (target) target.textContent = isDataSyncCancellation(error)
+      ? "Carga detenida. Se mantienen los últimos datos válidos."
+      : `${error.message || "Sincronización incompleta"} Se mantienen los últimos datos válidos.`;
     return false;
   } finally {
     state.autoSync.running = false;
@@ -10241,6 +10312,7 @@ const initEvents = () => {
   qs("#favorite-search-name")?.addEventListener("input", renderFavorites);
   qs("#favorite-search-position")?.addEventListener("change", renderFavorites);
   qs("#check-app-update")?.addEventListener("click", () => checkForAppUpdate({ manual: true }));
+  qs("#cancel-data-sync")?.addEventListener("click", cancelDataSync);
   qs("#later-app-update")?.addEventListener("click", closeAppUpdatePopup);
   qs("#app-update-backdrop")?.addEventListener("click", closeAppUpdatePopup);
   qs("#install-app-update")?.addEventListener("click", openPendingAppUpdate);

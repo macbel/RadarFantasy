@@ -62,6 +62,8 @@
   favoriteCatalog: [],
   favoriteAlerts: [],
   favoriteCatalogLoading: false,
+  favoriteCatalogExtended: false,
+  favoriteCatalogExtending: false,
   favoriteClauseDataAvailable: false,
   dailyPlanMode: "balanced",
   autoSync: {
@@ -117,7 +119,7 @@ const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
-const APP_VERSION = "3.4.3";
+const APP_VERSION = "3.4.4";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -3346,14 +3348,77 @@ const renderFavorites = () => {
     results.innerHTML = '<p class="muted-empty">Escribe un nombre o selecciona una demarcación para buscar jugadores.</p>';
     return;
   }
-  const filtered = state.favoriteCatalog.filter((player) => {
-    const nameMatches = !query || normalize(player.name).includes(query);
+  const favoriteSearchDistance = (left, right, limit = 2) => {
+    if (Math.abs(left.length - right.length) > limit) return limit + 1;
+    let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+    for (let row = 1; row <= left.length; row += 1) {
+      const current = [row];
+      let rowMinimum = current[0];
+      for (let column = 1; column <= right.length; column += 1) {
+        const value = Math.min(
+          current[column - 1] + 1,
+          previous[column] + 1,
+          previous[column - 1] + (left[row - 1] === right[column - 1] ? 0 : 1)
+        );
+        current[column] = value;
+        rowMinimum = Math.min(rowMinimum, value);
+      }
+      if (rowMinimum > limit) return limit + 1;
+      previous = current;
+    }
+    return previous[right.length];
+  };
+  const favoriteNameScore = (name) => {
+    if (!query) return 0;
+    const candidate = normalize(name);
+    if (candidate === query) return 0;
+    if (candidate.startsWith(query)) return 1;
+    if (candidate.includes(query)) return 2;
+    const tokens = candidate.split(/\s+/).filter(Boolean);
+    const distance = Math.min(favoriteSearchDistance(candidate, query), ...tokens.map((token) => favoriteSearchDistance(token, query)));
+    return query.length >= 4 && distance <= 2 ? 10 + distance : Number.POSITIVE_INFINITY;
+  };
+  const filtered = state.favoriteCatalog.map((player) => ({ player, score: favoriteNameScore(player.name) })).filter(({ player, score }) => {
+    const nameMatches = !query || Number.isFinite(score);
     const positionMatches = position === "all" || player.position === position;
     return nameMatches && positionMatches;
-  }).slice(0, 80);
+  }).sort((left, right) => left.score - right.score || left.player.name.localeCompare(right.player.name, "es")).slice(0, 80).map(({ player }) => player);
   results.innerHTML = filtered.length
     ? filtered.map((player) => renderFavoritePlayerRow(player, { showStatus: true })).join("")
     : '<p class="muted-empty">No hay jugadores que coincidan con esta búsqueda.</p>';
+};
+
+let favoriteCatalogSearchTimer = null;
+const ensureExtendedFavoriteCatalog = async () => {
+  if (state.favoriteCatalogExtended || state.favoriteCatalogExtending || !canUseApi()) return;
+  if (state.favoriteCatalogLoading) {
+    window.clearTimeout(favoriteCatalogSearchTimer);
+    favoriteCatalogSearchTimer = window.setTimeout(ensureExtendedFavoriteCatalog, 250);
+    return;
+  }
+  state.favoriteCatalogExtending = true;
+  try {
+    const activeCompetition = state.competition === "worldcup" ? "world-cup" : "la-liga";
+    const alternateCompetition = activeCompetition === "world-cup" ? "la-liga" : "world-cup";
+    setFavoritesStatus("Buscando también en el catálogo completo de Biwenger...", "busy");
+    const response = await apiFetch(`/api/player-catalog?competition=${encodeURIComponent(alternateCompetition)}&score=2`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "No se pudo ampliar el catálogo de jugadores.");
+    const combined = [...state.favoriteCatalog, ...hydrateImportedPlayers(payload.players || [])];
+    const uniquePlayers = new Map();
+    combined.forEach((player) => {
+      const key = favoritePlayerKey(player);
+      if (!uniquePlayers.has(key)) uniquePlayers.set(key, player);
+    });
+    state.favoriteCatalog = [...uniquePlayers.values()];
+    state.favoriteCatalogExtended = true;
+    setFavoritesStatus(`${state.favoriteCatalog.length} jugadores disponibles en los catálogos completos de Biwenger.`, "ready");
+    renderFavorites();
+  } catch (error) {
+    setFavoritesStatus(error.message || "No se pudo ampliar la búsqueda de jugadores.", "error");
+  } finally {
+    state.favoriteCatalogExtending = false;
+  }
 };
 
 const processFavoriteWatchTransitions = async (payload) => {
@@ -3436,7 +3501,7 @@ const loadFavoriteCatalog = async ({ force = false, notify = true } = {}) => {
   setFavoritesStatus("Actualizando jugadores, mercado y cláusulas...", "busy");
   try {
     let payload = null;
-    const competition = state.biwenger.competition || (state.competition === "worldcup" ? "world-cup" : "la-liga");
+    const competition = state.competition === "worldcup" ? "world-cup" : "la-liga";
     if (canUseApi()) {
       const publicResponse = await apiFetch(`/api/player-catalog?competition=${encodeURIComponent(competition)}&score=2`);
       const publicPayload = await publicResponse.json().catch(() => ({}));
@@ -3473,6 +3538,7 @@ const loadFavoriteCatalog = async ({ force = false, notify = true } = {}) => {
     }
     if (notify) await processFavoriteWatchTransitions(payload);
     state.favoriteCatalog = payload.players;
+    state.favoriteCatalogExtended = false;
     state.favoriteClauseDataAvailable = Boolean(payload.clauseDataAvailable);
     setFavoritesStatus(
       payload.source === "Biwenger catalogo publico" || state.favoriteCatalog.length > 100
@@ -5196,6 +5262,8 @@ const applyLeague = (league) => {
     ? league.favorites.map(cleanWorldcupPlayerIdentity)
     : [];
   state.favoriteCatalog = [];
+  state.favoriteCatalogExtended = false;
+  state.favoriteCatalogExtending = false;
   state.favoriteAlerts = [];
   state.favoriteClauseDataAvailable = false;
   state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
@@ -10309,7 +10377,12 @@ const initEvents = () => {
     const enabled = await requestDecisionNotifications();
     setFavoritesStatus(enabled ? "Avisos de favoritos activados en este dispositivo." : "No se ha concedido permiso para mostrar avisos.", enabled ? "ready" : "error");
   });
-  qs("#favorite-search-name")?.addEventListener("input", renderFavorites);
+  qs("#favorite-search-name")?.addEventListener("input", () => {
+    renderFavorites();
+    window.clearTimeout(favoriteCatalogSearchTimer);
+    const query = normalize(qs("#favorite-search-name")?.value || "");
+    if (query.length >= 2) favoriteCatalogSearchTimer = window.setTimeout(ensureExtendedFavoriteCatalog, 220);
+  });
   qs("#favorite-search-position")?.addEventListener("change", renderFavorites);
   qs("#check-app-update")?.addEventListener("click", () => checkForAppUpdate({ manual: true }));
   qs("#cancel-data-sync")?.addEventListener("click", cancelDataSync);

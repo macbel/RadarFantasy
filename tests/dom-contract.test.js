@@ -73,6 +73,10 @@ if (!php.includes("/player-catalog") || !php.includes("biwenger_public_catalog_p
   throw new Error("Favorite search must use Biwenger's complete public competition catalog even without a private session");
 }
 
+if (!js.includes("ensureExtendedFavoriteCatalog") || !js.includes("favoriteSearchDistance") || !js.includes('state.competition === "worldcup" ? "world-cup" : "la-liga"')) {
+  throw new Error("Favorite search must expand beyond the local cache and tolerate small name misspellings");
+}
+
 if (!html.includes('id="startup-sync-enabled"') || !js.includes("preferences.startupSync") || !php.includes("'startupSync'")) {
   throw new Error("Full startup synchronization must be independently configurable");
 }

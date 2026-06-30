@@ -6121,6 +6121,27 @@ tr.has-rival-bids.has-rival-sale {
   .detail-panel {
     position: static;
   }
+
+  .top-five-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .top-five-card {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .top-five-side {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .top-five-side > b {
+    margin-right: auto;
+  }
+
+  .decision-lanes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -6411,20 +6432,43 @@ tr.has-rival-bids.has-rival-sale {
   }
 
   .decision-lanes {
-    display: flex;
-    gap: 10px;
-    overflow-x: auto;
-    padding-bottom: 4px;
-    scroll-snap-type: x proximity;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    overflow: visible;
+    padding-bottom: 0;
   }
 
   .decision-lane {
-    flex: 0 0 min(82vw, 320px);
-    scroll-snap-align: start;
+    width: 100%;
+  }
+
+  .decision-player {
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 7px;
   }
 
   .top-five-list {
     grid-template-columns: 1fr;
+  }
+
+  .top-five-card {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    padding: 8px;
+  }
+
+  .top-five-side {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    justify-content: initial;
+  }
+
+  .top-five-side > b {
+    margin-right: 0;
+  }
+
+  .top-five-side > small {
+    justify-self: end;
   }
 
   .team-finance-summary {

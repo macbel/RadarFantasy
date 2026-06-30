@@ -3,6 +3,7 @@ const fs = require("fs");
 const html = fs.readFileSync("index.html", "utf8");
 const js = fs.readFileSync("app.js", "utf8");
 const php = fs.readFileSync("api/index.php", "utf8");
+const css = fs.readFileSync("styles.css", "utf8");
 const androidUpdater = fs.readFileSync("android/app/src/main/java/com/fantasymarketscout/app/AppUpdaterPlugin.java", "utf8");
 const androidManifest = fs.readFileSync("android/app/src/main/AndroidManifest.xml", "utf8");
 
@@ -15,6 +16,10 @@ const queriedIds = Array.from(js.matchAll(/qs\(["']#([a-zA-Z0-9_-]+)["']\)/g))
   .filter((id) => !id.includes("$"));
 
 const missing = queriedIds.filter((id) => !ids.has(id));
+
+if (!css.includes(".top-five-list") || !css.includes("grid-template-columns: repeat(2, minmax(0, 1fr))") || !css.includes(".decision-lanes")) {
+  throw new Error("Top-five and decision-center cards must provide a tablet layout");
+}
 
 if (missing.length) {
   throw new Error(`Missing HTML ids: ${missing.join(", ")}`);

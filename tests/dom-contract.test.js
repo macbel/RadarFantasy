@@ -3,6 +3,8 @@ const fs = require("fs");
 const html = fs.readFileSync("index.html", "utf8");
 const js = fs.readFileSync("app.js", "utf8");
 const php = fs.readFileSync("api/index.php", "utf8");
+const androidUpdater = fs.readFileSync("android/app/src/main/java/com/fantasymarketscout/app/AppUpdaterPlugin.java", "utf8");
+const androidManifest = fs.readFileSync("android/app/src/main/AndroidManifest.xml", "utf8");
 
 const ids = new Set(
   Array.from(html.matchAll(/\sid="([^"]+)"/g)).map((match) => match[1])
@@ -28,6 +30,14 @@ if (!html.includes('id="data-sync-popup"') || !js.includes("beginDataSync") || !
 
 if (!html.includes('id="app-update-popup"') || !html.includes('id="check-app-update"') || !js.includes("checkForAppUpdate")) {
   throw new Error("The mobile app must expose automatic update checks and an installation popup");
+}
+
+if (!js.includes("AppUpdater") || !js.includes("downloadAndInstall") || !js.includes("appUpdateProgress")) {
+  throw new Error("Android updates must be downloaded natively with visible progress before opening the installer");
+}
+
+if (!androidUpdater.includes("DownloadManager") || !androidUpdater.includes("FileProvider") || !androidManifest.includes("REQUEST_INSTALL_PACKAGES")) {
+  throw new Error("The Android updater must finish a managed APK download before requesting installation");
 }
 
 if (!js.includes("nativePreferences") || !js.includes("REMEMBERED_BIWENGER_EMAIL_KEY") || !js.includes("await rememberBiwengerAccount(email)")) {

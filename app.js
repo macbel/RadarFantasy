@@ -117,7 +117,7 @@ const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
-const APP_VERSION = "3.4.0";
+const APP_VERSION = "3.4.1";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -10129,6 +10129,7 @@ const compareAppVersions = (left, right) => {
 };
 
 let pendingAppUpdateUrl = "";
+let pendingAppUpdateVersion = "";
 const setAppUpdateStatus = (message, mode = "") => {
   const status = qs("#app-update-status");
   if (!status) return;
@@ -10142,6 +10143,7 @@ const closeAppUpdatePopup = () => {
 };
 const showAppUpdatePopup = (version, url) => {
   pendingAppUpdateUrl = url;
+  pendingAppUpdateVersion = version;
   const popup = qs("#app-update-popup");
   const message = qs("#app-update-message");
   if (!popup || !message) return;
@@ -10153,13 +10155,39 @@ const showAppUpdatePopup = (version, url) => {
 };
 const openPendingAppUpdate = async () => {
   if (!pendingAppUpdateUrl) return;
+  const platform = window.Capacitor?.getPlatform?.() || "web";
   const browser = window.Capacitor?.Plugins?.Browser;
+  const updater = window.Capacitor?.Plugins?.AppUpdater;
+  const message = qs("#app-update-message");
+  const installButton = qs("#install-app-update");
+  const laterButton = qs("#later-app-update");
+  let progressListener = null;
   try {
+    if (platform === "android") {
+      if (!updater?.downloadAndInstall) throw new Error("El actualizador nativo no est\u00e1 disponible en esta versi\u00f3n.");
+      if (installButton) installButton.disabled = true;
+      if (laterButton) laterButton.disabled = true;
+      if (message) message.textContent = "Preparando la descarga segura del APK...";
+      progressListener = await updater.addListener("appUpdateProgress", ({ progress = 0, downloaded = 0, total = 0 } = {}) => {
+        const size = total > 0 ? ` \u00b7 ${(downloaded / 1048576).toFixed(1)} de ${(total / 1048576).toFixed(1)} MB` : "";
+        if (message) message.textContent = `Descargando actualizaci\u00f3n: ${Math.max(0, Math.min(100, progress))}%${size}`;
+      });
+      await updater.downloadAndInstall({ url: pendingAppUpdateUrl, version: pendingAppUpdateVersion || "latest" });
+      if (message) message.textContent = "Descarga completada. Confirma la instalaci\u00f3n en Android.";
+      setAppUpdateStatus("APK descargado; esperando confirmaci\u00f3n de Android.", "ready");
+      return;
+    }
     if (isNativeRuntime() && browser) await browser.open({ url: pendingAppUpdateUrl });
     else window.open(pendingAppUpdateUrl, "_blank", "noopener");
     closeAppUpdatePopup();
   } catch (error) {
-    setAppUpdateStatus("No se pudo abrir la descarga. Int\u00e9ntalo de nuevo.", "error");
+    const detail = error?.message ? ` ${error.message}` : "";
+    if (message) message.textContent = `No se pudo completar la actualizaci\u00f3n.${detail}`;
+    setAppUpdateStatus("No se pudo completar la descarga. Int\u00e9ntalo de nuevo.", "error");
+  } finally {
+    if (progressListener?.remove) await progressListener.remove();
+    if (installButton) installButton.disabled = false;
+    if (laterButton) laterButton.disabled = false;
   }
 };
 const checkForAppUpdate = async ({ manual = false } = {}) => {

@@ -1995,10 +1995,16 @@ input[type="range"] {
   grid-template-columns: minmax(0, 1fr) minmax(330px, 0.42fr);
   margin-top: 16px;
   align-items: start;
+  min-width: 0;
 }
 
 .table-wrap {
+  max-width: 100%;
   overflow-x: auto;
+}
+
+.table-panel {
+  min-width: 0;
 }
 
 .market-cards {
@@ -3752,10 +3758,11 @@ button.query-player-bid-count:disabled {
 
 .detail-sheet-dialog {
   position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  max-height: min(84vh, 880px);
+  top: 4vh;
+  left: 50%;
+  width: min(920px, calc(100% - 32px));
+  max-height: 92vh;
+  transform: translateX(-50%);
   overflow: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -3781,6 +3788,16 @@ button.query-player-bid-count:disabled {
 
 body.sheet-open {
   overflow: hidden;
+}
+
+@media (max-width: 1360px) {
+  .results-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .results-layout .detail-panel {
+    display: none;
+  }
 }
 
 .detail-empty {
@@ -6877,10 +6894,13 @@ tr.has-rival-bids.has-rival-sale {
   }
 
   .detail-sheet-dialog {
+    top: auto;
     left: 6px;
     right: 6px;
     bottom: calc(62px + env(safe-area-inset-bottom));
+    width: auto;
     max-height: calc(100dvh - 78px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    transform: none;
     border-radius: 12px;
   }
 

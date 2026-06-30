@@ -120,7 +120,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.6.0";
+const APP_VERSION = "3.6.1";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -263,7 +263,7 @@ const OCR_ENGINE_OPTIONS = {
   workerBlobURL: false
 };
 const createClientLeagueId = () => `league-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-const isCompactMarketLayout = () => window.matchMedia("(max-width: 720px)").matches;
+const isCompactMarketLayout = () => window.matchMedia("(max-width: 1360px)").matches;
 
 const apiUnavailableMessage = () => configuredApiBase()
   ? `No se pudo conectar con la API configurada (${configuredApiBase()}).`
@@ -9442,6 +9442,7 @@ const openMobileDetail = () => {
   if (!sheet) return;
   sheet.hidden = false;
   document.body.classList.add("sheet-open");
+  window.setTimeout(() => qs("#close-market-detail")?.focus(), 0);
 };
 
 const renderEmptyDetail = (title, description) => {
@@ -10755,6 +10756,7 @@ const initEvents = () => {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeRecentFormPopover();
+      closeMobileDetail();
       closeTeamAlerts();
       closeBidCountPopup();
       closeAppUpdatePopup();

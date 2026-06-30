@@ -133,6 +133,10 @@ if (js.includes('class="ghost-button query-bid-count"')) {
   throw new Error("The old rival-bid query button must not remain in the player detail");
 }
 
+if (!js.includes('(max-width: 1360px)') || !css.includes('@media (max-width: 1360px)') || !css.includes('.results-layout .detail-panel') || !css.includes('.table-panel {\n  min-width: 0;')) {
+  throw new Error("Tablet and narrow desktop market layouts must open player detail as a modal without reserving a side column");
+}
+
 const salePriceReader = php.match(/function biwenger_sale_price\(array \$sale\): int[\s\S]*?\n}/)?.[0] || "";
 if (!salePriceReader.includes("'price'") || salePriceReader.includes("'amount'")) {
   throw new Error("Biwenger sale prices must come from explicit sale-price fields, never the generic offer amount");

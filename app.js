@@ -120,7 +120,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.5.1";
+const APP_VERSION = "3.6.0";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -696,7 +696,15 @@ const hasUpcomingFixtureEvents = (fixtures = state.leagueFixtures) => {
 const fixtureDataNeedsRefresh = (fixtures = state.leagueFixtures) => {
   const fetchedAtMs = Number(fixtures?.fetchedAtTs || 0) * 1000;
   const stale = !Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0 || Date.now() - fetchedAtMs > 45 * 60 * 1000;
-  return Number(fixtures?.schemaVersion || 0) < 3 || stale || !hasUpcomingFixtureEvents(fixtures);
+  return Number(fixtures?.schemaVersion || 0) < 4 || stale || !hasUpcomingFixtureEvents(fixtures);
+};
+
+const playerIsEliminatedFromCompetition = (player) => {
+  const eliminatedTeams = state.leagueFixtures?.eliminatedTeams || [];
+  if (!Array.isArray(eliminatedTeams) || !eliminatedTeams.length) return false;
+  return teamNamesForFixtureMatching(player).some((playerTeam) => (
+    eliminatedTeams.some((team) => teamNameMatchScore(playerTeam, team) >= 88)
+  ));
 };
 
 const upcomingFixtureCoverage = (fixtures = state.leagueFixtures) => {
@@ -799,7 +807,8 @@ const marketIntelligenceForPlayer = (player, system, price, fit) => {
   const calendar = fixtureEaseForPlayer(player);
   const starterFactor = clamp(Number(player.starter || 0)) / 100;
   const fixturesKnown = hasUpcomingFixtureEvents();
-  const explicitlyOut = player.outOfCompetition === true || player.activeInCompetition === false;
+  const eliminatedFromCompetition = playerIsEliminatedFromCompetition(player);
+  const explicitlyOut = player.outOfCompetition === true || player.activeInCompetition === false || eliminatedFromCompetition;
   const comprehensiveTournamentCalendar = state.competition === "worldcup" && upcomingFixtureCoverage() >= 12;
   const noNextMatch = explicitlyOut || (comprehensiveTournamentCalendar && !calendar.matches.length);
   const fixtureUnresolved = fixturesKnown && !calendar.matches.length && !noNextMatch;
@@ -861,7 +870,7 @@ const marketIntelligenceForPlayer = (player, system, price, fit) => {
   }
   if (noNextMatch) {
     contextualRisk += 38;
-    contextualReasons.push("sin partido proximo localizado en la jornada");
+    contextualReasons.push(eliminatedFromCompetition ? "seleccion eliminada de la competicion" : "sin partido proximo localizado en la jornada");
   } else if (fixtureUnresolved) {
     contextualRisk += 5;
     contextualReasons.push("partido pendiente de enlazar; no se penaliza como ausencia");
@@ -5439,9 +5448,8 @@ const loadLeagues = async () => {
   }
 };
 
-const saveActiveLeague = async () => {
+const saveActiveLeagueNow = async () => {
   if (!state.activeLeagueId) return;
-  saveLocalLeagueSnapshot();
   if (!canUseApi()) {
     setLeagueStatus(`Guardado en dispositivo: ${new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`);
     return;
@@ -5471,19 +5479,25 @@ const saveActiveLeague = async () => {
       })
     });
     if (!response.ok) throw new Error("No se pudo guardar");
-    const payload = await response.json();
-    const mergedPayload = mergeLeaguePayloads(buildLocalLeaguePayload(ensureLocalLeagueDb()), payload);
-    mergedPayload.activeLeagueId = state.activeLeagueId;
-    applyLeaguePayload(mergedPayload);
-    writeLocalLeagueDb({
-      version: 1,
-      activeLeagueId: state.activeLeagueId,
-      leagues: Object.fromEntries(state.leagues.map((league) => [league.id, league]))
-    });
     setLeagueStatus(`Guardado: ${new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`);
   } catch (error) {
     setLeagueStatus("Guardado en dispositivo. API remota no disponible.");
   }
+};
+
+let activeLeagueSaveTimer = null;
+let activeLeagueSaveInFlight = null;
+const saveActiveLeague = () => {
+  if (!state.activeLeagueId) return Promise.resolve();
+  saveLocalLeagueSnapshot();
+  window.clearTimeout(activeLeagueSaveTimer);
+  activeLeagueSaveTimer = window.setTimeout(() => {
+    activeLeagueSaveTimer = null;
+    activeLeagueSaveInFlight = saveActiveLeagueNow().finally(() => {
+      activeLeagueSaveInFlight = null;
+    });
+  }, 900);
+  return Promise.resolve();
 };
 
 let leagueSettingsSaveTimer = null;
@@ -6223,7 +6237,7 @@ const importFromBiwenger = async (kind, options = {}) => {
       renderLineup();
       renderTable();
       setTeamStatus(`Plantilla importada desde Biwenger: ${importedPlayers.length} jugadores.`, importedPlayers.length ? "ready" : "error");
-      if (importedPlayers.length && canUseApi()) {
+      if (importedPlayers.length && canUseApi() && !options.skipEnrichment) {
         const { players: enriched } = await enrichPlayerListBatched(importedPlayers, false, (done, total) => {
           updateDataSync(`Enriqueciendo plantilla: ${done}/${total} jugadores...`);
           setTeamStatus(`Enriqueciendo plantilla: ${done}/${total} jugadores...`, "busy");
@@ -6249,7 +6263,7 @@ const importFromBiwenger = async (kind, options = {}) => {
       });
       renderTable();
       setOcrStatus(`Mercado importado desde Biwenger: ${importedPlayers.length} jugadores.`, importedPlayers.length ? "ready" : "error");
-      if (importedPlayers.length) {
+      if (importedPlayers.length && !options.skipEnrichment) {
         await enrichCurrentMarket(false);
         throwIfDataSyncCancelled();
         if (!options.deferFollowUp) {
@@ -6287,7 +6301,7 @@ const importFromBiwenger = async (kind, options = {}) => {
   }
 };
 
-const syncSelectedLeagueWithBiwenger = async () => {
+const syncSelectedLeagueWithBiwenger = async (options = {}) => {
   if (!state.biwenger.authenticated || !activeLeagueName()) return false;
   const leagueName = activeLeagueName();
   setBiwengerBusy(true, "Actualizando liga");
@@ -6311,11 +6325,11 @@ const syncSelectedLeagueWithBiwenger = async () => {
       if (!response.ok) throw new Error(payload.error || "No se pudo cambiar la liga activa de Biwenger.");
       applyBiwengerSession(payload);
     }
-    const marketImported = await importFromBiwenger("market", { deferFollowUp: true });
+    const marketImported = await importFromBiwenger("market", { deferFollowUp: true, skipEnrichment: Boolean(options.skipEnrichment) });
     throwIfDataSyncCancelled();
-    const teamImported = await importFromBiwenger("team", { deferFollowUp: true });
+    const teamImported = await importFromBiwenger("team", { deferFollowUp: true, skipEnrichment: Boolean(options.skipEnrichment) });
     throwIfDataSyncCancelled();
-    await loadBiwengerOperations(false);
+    if (!options.skipOperations) await loadBiwengerOperations(false);
     if (!marketImported || !teamImported) {
       throw new Error(`Liga cambiada a ${payload.leagueName || leagueName}, pero no se pudieron actualizar todos sus datos.`);
     }
@@ -6370,14 +6384,23 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   let success = false;
   try {
     if (state.biwenger.authenticated) {
-      success = await syncSelectedLeagueWithBiwenger();
+      const fastStartup = reason === "startup";
+      success = await syncSelectedLeagueWithBiwenger({ skipEnrichment: fastStartup, skipOperations: fastStartup });
       throwIfDataSyncCancelled();
       if (success) {
         await loadLeagueFixtures(false);
         throwIfDataSyncCancelled();
-        await loadLeagueOverview();
-        throwIfDataSyncCancelled();
-        await ensureLiveRoundForFinance(false);
+        if (fastStartup) {
+          window.setTimeout(() => {
+            loadBiwengerOperations(false);
+            loadLeagueOverview();
+            ensureLiveRoundForFinance(false);
+          }, 250);
+        } else {
+          await loadLeagueOverview();
+          throwIfDataSyncCancelled();
+          await ensureLiveRoundForFinance(false);
+        }
       }
     } else {
       if (state.players.length) await enrichCurrentMarket(false);
@@ -7547,15 +7570,11 @@ const handleRecentDotHover = (event) => {
 
 const loadLeagueFixtures = async (showFeedback = true) => {
   const target = qs("#league-fixtures");
-  if (!state.biwenger.connected) {
-    if (target) target.innerHTML = `<p class="muted-empty">Conecta Biwenger para consultar la jornada actual.</p>`;
-    return;
-  }
   beginDataSync("Actualizando próximos partidos y resultados...");
   if (showFeedback) setLeagueOperationStatus("Consultando partidos de la jornada...", "busy");
   if (target) target.innerHTML = `<p class="muted-empty">Cargando partidos y resultados...</p>`;
   try {
-    const response = await apiFetch("/api/biwenger/fixtures");
+    const response = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(state.competition || "world-cup")}`);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "No se pudo cargar la jornada actual");
     state.leagueFixtures = payload;
@@ -10796,7 +10815,7 @@ const init = async () => {
     refreshSourceDbStatus();
     await loadLeagues();
     const shouldRefreshAtStartup = state.preferences.startupSync !== false;
-    await refreshBiwengerStatus("", { refreshFixtures: shouldRefreshAtStartup });
+    await refreshBiwengerStatus("", { refreshFixtures: false });
     await refreshFutbolFantasyStatus();
     if (shouldRefreshAtStartup) {
       await runAutomaticSync({ force: false, reason: "startup" });

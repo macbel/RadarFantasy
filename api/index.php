@@ -197,6 +197,20 @@ if ($route === '/healthz' && $requestMethod === 'GET') {
     ]);
 }
 
+if ($route === '/fixtures' && $requestMethod === 'GET') {
+    $competition = trim((string)($_GET['competition'] ?? 'world-cup'));
+    $fixtureSession = [
+        'competition' => $competition,
+        'leagueName' => preg_match('/world|mundial|selecc|copa del mundo/i', $competition) ? 'World Cup' : $competition
+    ];
+    session_write_close();
+    try {
+        send_json(200, fast_current_fixtures($fixtureSession, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir));
+    } catch (Throwable $error) {
+        send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar el calendario']);
+    }
+}
+
 if ($route === '/player-catalog' && $requestMethod === 'GET') {
     $competition = trim((string)($_GET['competition'] ?? 'la-liga'));
     $scoreId = max(1, (int)($_GET['score'] ?? 2));
@@ -227,7 +241,7 @@ if ($route === '/biwenger/status' && $requestMethod === 'GET') {
             // Keep the remembered session usable even if the score system cannot be refreshed.
         }
     }
-    if (!empty($_SESSION['biwenger']['token'])) {
+    if (!empty($_SESSION['biwenger']['token']) && ($_GET['refreshCredits'] ?? '') === '1') {
         try {
             $creditsResponse = biwenger_private_get_json(
                 'https://biwenger.as.com/api/v2/account/credits',
@@ -566,6 +580,7 @@ if ($route === '/biwenger/offer-status' && $requestMethod === 'POST') {
 
 if ($route === '/biwenger/operations' && $requestMethod === 'GET') {
     $sessionState = require_biwenger_session();
+    session_write_close();
     try {
         send_json(200, biwenger_operations_center($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls));
     } catch (Throwable $error) {
@@ -722,6 +737,7 @@ function biwenger_market_player_context(array $session, int $playerId, int $time
 
 if ($route === '/biwenger/league' && $requestMethod === 'GET') {
     $sessionState = require_biwenger_session();
+    session_write_close();
     try {
         send_json(200, biwenger_league_overview($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls));
     } catch (Throwable $error) {
@@ -731,35 +747,17 @@ if ($route === '/biwenger/league' && $requestMethod === 'GET') {
 
 if ($route === '/biwenger/fixtures' && $requestMethod === 'GET') {
     $sessionState = require_biwenger_session();
-    $payloads = [];
-    $errors = [];
-    $sources = [
-        'Biwenger' => static fn() => biwenger_current_fixtures($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls),
-        'API-Football' => static fn() => api_football_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir),
-        'Resultados-Futbol directo' => static fn() => resultados_futbol_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls),
-        'Resultados-Futbol calendario' => static fn() => resultados_futbol_calendar_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir),
-        'TheSportsDB' => static fn() => thesportsdb_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls),
-        'SofaScore' => static fn() => sofascore_current_fixtures($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls, $dbDir)
-    ];
-    foreach ($sources as $label => $loader) {
-        try {
-            $payloads[] = $loader();
-        } catch (Throwable $error) {
-            $errors[] = $label . ': ' . $error->getMessage();
-        }
+    session_write_close();
+    try {
+        send_json(200, fast_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir));
+    } catch (Throwable $error) {
+        send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar el calendario']);
     }
-    if (!$payloads) send_json(502, ['error' => 'Sin partidos disponibles. ' . implode(' | ', $errors)]);
-    $fixtures = array_shift($payloads);
-    foreach ($payloads as $payload) $fixtures = merge_fixture_payloads($fixtures, $payload);
-    $fixtures = scorebat_attach_highlights($fixtures, $sourceTimeoutSeconds, $sourceHeaders, $strictTls);
-    $fixtures['schemaVersion'] = 3;
-    $fixtures['fetchedAtTs'] = time();
-    $fixtures['diagnostics'] = $errors;
-    send_json(200, $fixtures);
 }
 
 if ($route === '/biwenger/live-round' && $requestMethod === 'GET') {
     $sessionState = require_biwenger_session();
+    session_write_close();
     try {
         send_json(200, biwenger_live_round($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls));
     } catch (Throwable $error) {
@@ -894,6 +892,7 @@ if ($route === '/enrich' && $requestMethod === 'POST') {
     $enriched = [];
     $cacheHits = 0;
     $refreshed = 0;
+    session_write_close();
 
     foreach ($players as $player) {
         $result = enrich_player_with_cache(
@@ -4327,9 +4326,9 @@ function resultados_futbol_current_fixtures(array $session, int $timeoutSeconds,
 function resultados_futbol_calendar_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
 {
     $competition = (string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? 'partidos'));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'calendar-' . slugify($competition) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'calendar-v2-' . slugify($competition) . '.json';
     $cached = read_json_file($cachePath, []);
-    if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 10800 && !empty($cached['events'])) {
+    if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit-resultados-calendar';
         return $cached;
     }
@@ -4369,11 +4368,7 @@ function resultados_futbol_calendar_urls(array $session): array
 {
     $competition = normalize_text((string)($session['competition'] ?? ''));
     if (preg_match('/world|mundial|selecc|copa del mundo/', $competition)) {
-        $urls = [];
-        for ($group = 1; $group <= 12; $group++) {
-            $urls[] = 'https://www.resultados-futbol.com/competicion/mundial/2026/grupo' . $group . '/calendario';
-        }
-        return $urls;
+        return ['https://www.resultados-futbol.com/competicion/mundial2026'];
     }
     $known = [
         '/laliga|la liga|primera|ea sports/' => 'https://www.resultados-futbol.com/competicion/primera/calendario',
@@ -4387,6 +4382,51 @@ function resultados_futbol_calendar_urls(array $session): array
         if (preg_match($pattern, $competition)) return [$url];
     }
     return [];
+}
+
+function fast_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
+{
+    $startedAt = microtime(true);
+    $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
+    $fixtures = decorate_fixture_competition_state($fixtures, $session);
+    $fixtures['schemaVersion'] = 4;
+    $fixtures['fetchedAtTs'] = (int)($fixtures['fetchedAtTs'] ?? time());
+    $fixtures['sourceStrategy'] = 'fast-primary-cache';
+    $fixtures['durationMs'] = (int)round((microtime(true) - $startedAt) * 1000);
+    return $fixtures;
+}
+
+function decorate_fixture_competition_state(array $fixtures, array $session): array
+{
+    $competition = normalize_text((string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? '')));
+    $isKnockout = preg_match('/world|mundial|selecc|copa del mundo/', $competition) === 1;
+    $now = time() - 10800;
+    $active = [];
+    $eliminated = [];
+    foreach ((array)($fixtures['events'] ?? []) as $event) {
+        if (!is_array($event)) continue;
+        $home = trim((string)($event['home']['name'] ?? ''));
+        $away = trim((string)($event['away']['name'] ?? ''));
+        $timestamp = (int)($event['timestamp'] ?? 0);
+        $finished = (string)($event['status'] ?? '') === 'finished';
+        if (!$finished && $timestamp >= $now) {
+            if ($home !== '') $active[normalize_text($home)] = $home;
+            if ($away !== '') $active[normalize_text($away)] = $away;
+        }
+        if ($isKnockout && $finished && is_numeric($event['homeScore'] ?? null) && is_numeric($event['awayScore'] ?? null)) {
+            $homeScore = (int)$event['homeScore'];
+            $awayScore = (int)$event['awayScore'];
+            if ($homeScore !== $awayScore) {
+                $loser = $homeScore < $awayScore ? $home : $away;
+                if ($loser !== '') $eliminated[normalize_text($loser)] = $loser;
+            }
+        }
+    }
+    foreach (array_keys($active) as $team) unset($eliminated[$team]);
+    $fixtures['tournamentStage'] = $isKnockout ? 'knockout' : 'league';
+    $fixtures['activeTeams'] = array_values($active);
+    $fixtures['eliminatedTeams'] = array_values($eliminated);
+    return $fixtures;
 }
 
 function resultados_futbol_parse_calendar_html(string $html, string $sourceUrl): array
@@ -4413,7 +4453,9 @@ function resultados_futbol_parse_calendar_html(string $html, string $sourceUrl):
         if (($homeName === '' || $awayName === '') && str_contains($summary, ' - ')) {
             [$homeName, $awayName] = array_map('trim', explode(' - ', $summary, 2));
         }
-        $date = DateTimeImmutable::createFromFormat('Y-m-d H:i:s', (string)($dateMatch[1] ?? ''), $madridTz);
+        $rawDate = (string)($dateMatch[1] ?? '');
+        $date = DateTimeImmutable::createFromFormat('Y-m-d\\TH:i:s', $rawDate, $madridTz)
+            ?: DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $rawDate, $madridTz);
         if (!$date || $homeName === '' || $awayName === '') continue;
         $context = substr($html, max(0, $offset - 5000), 5000);
         preg_match_all('~<span class="titlebox">([^<]+)</span>~i', $context, $roundMatches);

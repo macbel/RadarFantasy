@@ -113,15 +113,15 @@ if (!js.includes('"Sin fichajes recomendables"') || !js.includes("const firstCan
   throw new Error("An avoided player must not be auto-selected as the best market option");
 }
 
-if (!php.includes("/season/' . $seasonId . '/events/") || !php.includes("'SofaScore' => static fn()")) {
-  throw new Error("Fixture sync must use SofaScore's season-aware endpoint as a regular source");
+if (!php.includes("if ($route === '/fixtures'") || !php.includes("fast_current_fixtures") || !php.includes("/competicion/mundial2026")) {
+  throw new Error("Fixture sync must use the public fast cached calendar instead of the slow provider cascade");
 }
 
 if (!js.includes("fixtureUnresolved") || !js.includes("upcomingFixtureCoverage")) {
   throw new Error("An unresolved fixture link must be distinct from a confirmed missing next match");
 }
 
-if (!php.includes("$fixtures['schemaVersion'] = 3") || !php.includes("for ($page = 0; $page < 6; $page++)") || !js.includes("45 * 60 * 1000")) {
+if (!php.includes("$fixtures['schemaVersion'] = 4") || !php.includes("eliminatedTeams") || !js.includes("45 * 60 * 1000")) {
   throw new Error("Old incomplete fixture snapshots must be invalidated after the calendar fix");
 }
 

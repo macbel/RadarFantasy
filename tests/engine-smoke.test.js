@@ -203,9 +203,23 @@ const worldCupAliasPairs = [
 if (worldCupAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(biwengerName, fixtureName) < 88)) {
   throw new Error("World Cup team translations must match SofaScore fixture names: " + JSON.stringify(worldCupAliasPairs));
 }
-if (!fixtureDataNeedsRefresh({ schemaVersion: 2, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
-  || fixtureDataNeedsRefresh({ schemaVersion: 3, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
+if (!fixtureDataNeedsRefresh({ schemaVersion: 3, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
+  || fixtureDataNeedsRefresh({ schemaVersion: 4, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
   throw new Error("Fixture cache freshness must invalidate old schemas without refetching a current complete snapshot");
+}
+
+state.leagueFixtures.eliminatedTeams = ["Japón"];
+const eliminatedMaeda = marketIntelligenceForPlayer({
+  name: "Maeda",
+  team: "Japan",
+  position: "DL",
+  starter: 90,
+  form: 90,
+  price: 5000000,
+  health: { status: "available" }
+}, 90, 90, 90);
+if (!eliminatedMaeda.noNextMatch || !eliminatedMaeda.contextualReasons.some((reason) => reason.includes("eliminada"))) {
+  throw new Error("An explicitly eliminated national team must never remain a bid candidate: " + JSON.stringify(eliminatedMaeda));
 }
 
 state.competition = "club";

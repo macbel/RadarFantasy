@@ -17,6 +17,10 @@ const queriedIds = Array.from(js.matchAll(/qs\(["']#([a-zA-Z0-9_-]+)["']\)/g))
 
 const missing = queriedIds.filter((id) => !ids.has(id));
 
+if (html.indexOf('data-view="team"') > html.indexOf('data-view="market"')) {
+  throw new Error("Mi equipo must be the first menu option, followed by Mercado");
+}
+
 if (!css.includes(".top-five-list") || !css.includes("grid-template-columns: repeat(2, minmax(0, 1fr))") || !css.includes(".decision-lanes")) {
   throw new Error("Top-five and decision-center cards must provide a tablet layout");
 }

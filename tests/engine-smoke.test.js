@@ -173,6 +173,13 @@ if (decisionOrdered[0].id !== "limited-low") {
 
 const previousFixtureCompetition = state.competition;
 const previousLeagueFixtures = state.leagueFixtures;
+
+if (!isBiwengerStaleEntityError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 404): Entity not found"))
+  || isBiwengerAuthenticationError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 404): Entity not found"))
+  || !isBiwengerAuthenticationError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 401)"))) {
+  throw new Error("Biwenger errors must distinguish expired entities from expired authentication");
+}
+
 const futureTimestamp = Math.floor(Date.now() / 1000) + 86400;
 state.competition = "worldcup";
 state.leagueFixtures = {

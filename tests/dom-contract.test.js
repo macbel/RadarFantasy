@@ -137,6 +137,10 @@ if (!js.includes('(max-width: 1360px)') || !css.includes('@media (max-width: 136
   throw new Error("Tablet and narrow desktop market layouts must open player detail as a modal without reserving a side column");
 }
 
+if (!js.includes("isBiwengerAuthenticationError") || !js.includes("isBiwengerStaleEntityError") || !php.includes("$readAttempts = strtoupper($method) === 'GET' ? 2 : 1")) {
+  throw new Error("Intermittent Biwenger read failures must be retried without disconnecting valid sessions");
+}
+
 const salePriceReader = php.match(/function biwenger_sale_price\(array \$sale\): int[\s\S]*?\n}/)?.[0] || "";
 if (!salePriceReader.includes("'price'") || salePriceReader.includes("'amount'")) {
   throw new Error("Biwenger sale prices must come from explicit sale-price fields, never the generic offer amount");

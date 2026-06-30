@@ -2101,20 +2101,30 @@ function biwenger_private_request_json(string $method, string $url, array $sessi
     $variants = array_values(array_unique($variants));
     $lastStatus = 0;
     $lastMessage = '';
-    foreach ($variants as $candidateVersion) {
-        $response = http_request(
-            $method,
-            $url,
-            $timeoutSeconds,
-            biwenger_auth_headers($token, $leagueId, $userId, $candidateVersion, $headers),
-            $strictTls,
-            $payload === null ? null : json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-        );
-        if ($response['status'] >= 200 && $response['status'] < 300 && is_array($response['json'])) {
-            return $response['json'];
+    $readAttempts = strtoupper($method) === 'GET' ? 2 : 1;
+    for ($attempt = 0; $attempt < $readAttempts; $attempt++) {
+        foreach ($variants as $candidateVersion) {
+            $response = http_request(
+                $method,
+                $url,
+                $timeoutSeconds,
+                biwenger_auth_headers($token, $leagueId, $userId, $candidateVersion, $headers),
+                $strictTls,
+                $payload === null ? null : json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            );
+            if ($response['status'] >= 200 && $response['status'] < 300 && is_array($response['json'])) {
+                return $response['json'];
+            }
+            $lastStatus = (int)$response['status'];
+            $lastMessage = (string)($response['json']['error'] ?? $response['json']['message'] ?? '');
+            if ($lastStatus === 404 && preg_match('/entity not found|entidad no encontrada/i', $lastMessage)) break;
         }
-        $lastStatus = (int)$response['status'];
-        $lastMessage = (string)($response['json']['error'] ?? $response['json']['message'] ?? '');
+        if ($lastStatus === 404 && preg_match('/entity not found|entidad no encontrada/i', $lastMessage)) break;
+        if ($attempt + 1 < $readAttempts && in_array($lastStatus, [404, 429, 502, 503, 504], true)) {
+            usleep(220000);
+            continue;
+        }
+        break;
     }
     throw new RuntimeException('Biwenger no ha aceptado la peticion privada'
         . ($lastStatus > 0 ? ' (HTTP ' . $lastStatus . ')' : '')

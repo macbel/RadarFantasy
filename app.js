@@ -120,7 +120,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.6.1";
+const APP_VERSION = "3.6.2";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -245,17 +245,28 @@ const ensureDeviceKey = async () => {
 };
 const apiFetch = async (path, options = {}) => {
   const { headers = {}, signal = null, ...requestOptions } = options;
-  return fetch(apiUrl(path), {
-    credentials: "include",
-    cache: "no-store",
-    ...requestOptions,
-    signal: signal || activeDataSyncController?.signal,
-    headers: {
-      "X-FMS-Device-Key": await ensureDeviceKey(),
-      ...headers
-    }
-  });
+  const method = String(requestOptions.method || "GET").toUpperCase();
+  const retryableRead = method === "GET" || method === "HEAD";
+  const deviceKey = await ensureDeviceKey();
+  for (let attempt = 0; attempt < (retryableRead ? 2 : 1); attempt += 1) {
+    const response = await fetch(apiUrl(path), {
+      credentials: "include",
+      cache: "no-store",
+      ...requestOptions,
+      signal: signal || activeDataSyncController?.signal,
+      headers: {
+        "X-FMS-Device-Key": deviceKey,
+        ...headers
+      }
+    });
+    if (!retryableRead || ![404, 429, 503, 504].includes(response.status) || attempt > 0) return response;
+    await new Promise((resolve) => window.setTimeout(resolve, 280));
+  }
+  throw new Error("No se pudo completar la lectura solicitada.");
 };
+
+const isBiwengerAuthenticationError = (error) => /HTTP\s*(401|403)|sesion (?:de )?Biwenger (?:invalida|caducada|cerrada)|no hay una sesion|token (?:invalido|caducado)/i.test(String(error?.message || error || ""));
+const isBiwengerStaleEntityError = (error) => /HTTP\s*404|entity not found|entidad no encontrada|ya no esta activa/i.test(String(error?.message || error || ""));
 const OCR_ENGINE_OPTIONS = {
   workerPath: assetUrl("vendor/tesseract/worker.min.js"),
   corePath: APP_CONFIG.ocrCoreUrl || "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js",
@@ -6344,10 +6355,17 @@ const syncSelectedLeagueWithBiwenger = async (options = {}) => {
       setLeagueStatus("Carga detenida. Se conservan los últimos datos válidos.");
       return false;
     }
-    state.biwenger.connected = false;
-    document.body.classList.remove("biwenger-connected");
-    setBiwengerStatus(message, "error");
-    setLeagueStatus(message);
+    if (isBiwengerAuthenticationError(error)) {
+      state.biwenger.connected = false;
+      document.body.classList.remove("biwenger-connected");
+      setBiwengerStatus("La sesión de Biwenger ha caducado. Vuelve a conectarla desde Ajustes.", "error");
+      setLeagueStatus("La sesión de Biwenger necesita volver a conectarse.");
+    } else {
+      setBiwengerStatus(isBiwengerStaleEntityError(error)
+        ? "Biwenger ya no encuentra uno de los datos anteriores. La conexión sigue activa; actualiza de nuevo para usar el estado actual."
+        : `${message} La conexión sigue activa y se conservan los últimos datos válidos.`, "error");
+      setLeagueStatus("Sincronización incompleta. Conexión conservada y últimos datos válidos disponibles.");
+    }
     return false;
   } finally {
     setBiwengerBusy(false);
@@ -6506,7 +6524,14 @@ const biwengerOperation = async (path, payload = {}, successMessage = "Operacion
   });
   const result = await response.json().catch(() => ({}));
   if (result.operations) applyBiwengerOperations(result.operations);
-  if (!response.ok) throw new Error(result.error || "Biwenger no ha aceptado la operacion");
+  if (!response.ok) {
+    const operationError = new Error(result.error || "Biwenger no ha aceptado la operacion");
+    if (isBiwengerStaleEntityError(operationError)) {
+      if (!result.operations) await loadBiwengerOperations(false);
+      throw new Error("La operación ya no estaba disponible en Biwenger. Hemos actualizado pujas y ofertas; la conexión sigue activa.");
+    }
+    throw operationError;
+  }
   setLeagueOperationStatus(successMessage, "ready");
   return result;
 };
@@ -7006,8 +7031,7 @@ const loadBiwengerOperations = async (showFeedback = true) => {
   } catch (error) {
     state.biwengerOperations = {
       ...(state.biwengerOperations || {}),
-      offers: [],
-      diagnostics: { ...(state.biwengerOperations?.diagnostics || {}), staleCleared: true, error: error.message || "operations-error" }
+      diagnostics: { ...(state.biwengerOperations?.diagnostics || {}), refreshFailed: true, error: error.message || "operations-error" }
     };
     renderFinance();
     renderBidSaleAssistant();

@@ -804,6 +804,7 @@ if ($route === '/leagues' && $requestMethod === 'POST') {
         'createdAt' => $now,
         'updatedAt' => $now,
         'competition' => ($payload['competition'] ?? '') === 'worldcup' ? 'worldcup' : 'club',
+        'fantasyProvider' => sanitize_fantasy_provider($payload['fantasyProvider'] ?? 'local'),
         'scoring' => sanitize_scoring($payload['scoring'] ?? 'mixed'),
         'marketPlayers' => [],
         'teamPlayers' => [],
@@ -861,6 +862,7 @@ if ($route === '/leagues/save' && $requestMethod === 'POST') {
             'createdAt' => $now,
             'updatedAt' => $now,
             'competition' => 'club',
+            'fantasyProvider' => 'local',
             'scoring' => 'mixed',
             'marketPlayers' => [],
             'teamPlayers' => [],
@@ -2266,6 +2268,7 @@ function ensure_default_league(array &$leaguesDb, string $path): void
         'createdAt' => $now,
         'updatedAt' => $now,
         'competition' => 'club',
+        'fantasyProvider' => 'local',
         'scoring' => 'mixed',
         'marketPlayers' => [],
         'teamPlayers' => [],
@@ -2299,6 +2302,12 @@ function sanitize_scoring($value): string
 {
     $allowed = ['mixed', 'as', 'sofascore', 'stats'];
     return in_array((string)$value, $allowed, true) ? (string)$value : 'mixed';
+}
+
+function sanitize_fantasy_provider($value): string
+{
+    $provider = strtolower(trim((string)$value));
+    return in_array($provider, ['biwenger', 'laliga', 'mister', 'local'], true) ? $provider : 'local';
 }
 
 function sanitize_editable_lineup($value): ?array
@@ -2358,6 +2367,7 @@ function sanitize_league_payload(array $payload): array
 
     return [
         'competition' => ($payload['competition'] ?? '') === 'worldcup' ? 'worldcup' : 'club',
+        'fantasyProvider' => sanitize_fantasy_provider($payload['fantasyProvider'] ?? 'local'),
         'scoring' => sanitize_scoring($payload['scoring'] ?? 'mixed'),
         'marketPlayers' => $sanitizePlayers($payload['marketPlayers'] ?? []),
         'teamPlayers' => $sanitizePlayers($payload['teamPlayers'] ?? []),

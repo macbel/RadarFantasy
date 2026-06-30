@@ -219,6 +219,37 @@ button:disabled {
   white-space: nowrap;
 }
 
+.active-league-identity .league-provider-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.league-provider-badge::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #8b98a1;
+  box-shadow: 0 0 0 3px rgba(139, 152, 161, 0.12);
+}
+
+.league-provider-badge[data-provider="biwenger"]::before {
+  background: #f2b84c;
+  box-shadow: 0 0 0 3px rgba(242, 184, 76, 0.14);
+}
+
+.league-provider-badge[data-provider="laliga"]::before {
+  background: #ff4f71;
+  box-shadow: 0 0 0 3px rgba(255, 79, 113, 0.14);
+}
+
+.league-provider-badge[data-provider="mister"]::before {
+  background: #4ba9ff;
+  box-shadow: 0 0 0 3px rgba(75, 169, 255, 0.14);
+}
+
 .active-league-identity span {
   margin-top: 3px;
   color: var(--muted);

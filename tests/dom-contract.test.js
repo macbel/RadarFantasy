@@ -93,6 +93,10 @@ if (!js.includes("activateFantasySettingsTab") || !js.includes("FANTASY_SETTINGS
   throw new Error("Fantasy platform settings tabs must be interactive and remembered");
 }
 
+if (!html.includes('id="active-league-provider"') || !js.includes("leagueFantasyProvider") || !php.includes("sanitize_fantasy_provider")) {
+  throw new Error("Every saved league must expose and persist its fantasy platform identity");
+}
+
 if (!html.includes('id="market-analysis-center"') || !html.includes('data-analysis-tab="plan"') || !html.includes('data-analysis-panel="history"')) {
   throw new Error("The market analysis tools must live in the compact tabbed center");
 }

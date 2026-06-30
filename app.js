@@ -120,7 +120,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.5.0";
+const APP_VERSION = "3.5.1";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -315,6 +315,28 @@ const buildLocalLeaguePayload = (db) => ({
   activeLeagueId: db.activeLeagueId || null
 });
 
+const FANTASY_PROVIDER_META = {
+  biwenger: { label: "Biwenger", className: "biwenger" },
+  laliga: { label: "LaLiga Fantasy", className: "laliga" },
+  mister: { label: "Mister Fantasy", className: "mister" },
+  local: { label: "Local / manual", className: "local" }
+};
+
+const normalizedFantasyProvider = (value) => {
+  const provider = String(value || "").toLowerCase().trim();
+  return Object.prototype.hasOwnProperty.call(FANTASY_PROVIDER_META, provider) ? provider : "local";
+};
+
+const leagueFantasyProvider = (league = activeLeague()) => {
+  if (Number(league?.biwengerLeagueId || 0) > 0) return "biwenger";
+  const explicit = normalizedFantasyProvider(league?.fantasyProvider);
+  if (explicit !== "local") return explicit;
+  const sameConnectedLeague = state.biwenger.connected
+    && normalize(league?.name || "")
+    && normalize(league?.name || "") === normalize(state.biwenger.leagueName || "");
+  return sameConnectedLeague ? "biwenger" : explicit;
+};
+
 const ensureLocalLeagueDb = () => {
   const existing = readLocalLeagueDb();
   if (existing?.leagues && Object.keys(existing.leagues).length) return existing;
@@ -330,6 +352,7 @@ const ensureLocalLeagueDb = () => {
         createdAt: now,
         updatedAt: now,
         competition: state.competition,
+        fantasyProvider: "local",
         scoring: state.scoring,
         marketPlayers: [],
         teamPlayers: [],
@@ -372,6 +395,7 @@ const saveLocalLeagueSnapshot = () => {
     icon: safeRemoteImageUrl(visual.icon) || existing.icon || null,
     cover: safeRemoteImageUrl(visual.cover) || existing.cover || null,
     biwengerLeagueId: activeLeague()?.biwengerLeagueId || existing.biwengerLeagueId || null,
+    fantasyProvider: leagueFantasyProvider(activeLeague() || existing),
     editableLineup: state.editableLineup,
     leagueFixtures: state.leagueFixtures,
     leagueFixturesSavedAt: state.leagueFixtures ? now : (existing.leagueFixturesSavedAt || null)
@@ -391,6 +415,7 @@ const createLocalLeague = (name) => {
     createdAt: now,
     updatedAt: now,
     competition: state.competition,
+    fantasyProvider: "local",
     scoring: state.scoring,
     marketPlayers: [],
     teamPlayers: [],
@@ -428,6 +453,7 @@ const deleteLocalLeague = (leagueId) => {
       createdAt: now,
       updatedAt: now,
       competition: state.competition,
+      fantasyProvider: "local",
       scoring: state.scoring,
       marketPlayers: [],
       teamPlayers: [],
@@ -5082,6 +5108,8 @@ const activeLeagueVisual = () => {
 const renderLeagueIdentity = () => {
   const visual = activeLeagueVisual();
   const leagueName = visual.name;
+  const fantasyProvider = leagueFantasyProvider(activeLeague());
+  const providerMeta = FANTASY_PROVIDER_META[fantasyProvider] || FANTASY_PROVIDER_META.local;
   const icon = safeRemoteImageUrl(visual.icon);
   const cover = safeRemoteImageUrl(visual.cover);
   const iconElements = [qs("#active-league-icon"), qs("#league-select-icon")].filter(Boolean);
@@ -5096,7 +5124,10 @@ const renderLeagueIdentity = () => {
   const title = qs("#active-league-title");
   const provider = qs("#active-league-provider");
   if (title) title.textContent = leagueName;
-  if (provider) provider.textContent = visual.visualMatch || visual.remoteMatches ? "Liga Biwenger" : "Identidad local";
+  if (provider) {
+    provider.textContent = `Plataforma: ${providerMeta.label}`;
+    provider.dataset.provider = providerMeta.className;
+  }
   const topbar = qs(".topbar");
   if (topbar) {
     topbar.style.setProperty("--league-cover", cover ? `url("${cover.replace(/["\\]/g, "\\$&")}")` : "none");
@@ -5143,7 +5174,10 @@ const applyBiwengerSession = (payload) => {
   if (state.biwenger.authenticated && activeLeague()) {
     const visual = activeLeagueVisual();
     const currentLeague = activeLeague();
-    if (state.biwenger.connected && remoteLeagueId > 0) currentLeague.biwengerLeagueId = remoteLeagueId;
+    if (state.biwenger.connected && remoteLeagueId > 0) {
+      currentLeague.biwengerLeagueId = remoteLeagueId;
+      currentLeague.fantasyProvider = "biwenger";
+    }
     if (visual.icon) currentLeague.icon = safeRemoteImageUrl(visual.icon);
     if (visual.cover) currentLeague.cover = safeRemoteImageUrl(visual.cover);
     saveLocalLeagueSnapshot();
@@ -5321,7 +5355,7 @@ const renderLeagueSelector = () => {
   const select = qs("#league-select");
   if (!select) return;
   select.innerHTML = state.leagues.map((league) =>
-    `<option value="${league.id}">${escapeHtml(league.name)}</option>`
+    `<option value="${league.id}">${escapeHtml(league.name)} · ${escapeHtml((FANTASY_PROVIDER_META[leagueFantasyProvider(league)] || FANTASY_PROVIDER_META.local).label)}</option>`
   ).join("") || `<option value="">Sin ligas guardadas</option>`;
   select.value = state.activeLeagueId || "";
   const deleteButton = qs("#delete-league");
@@ -5361,6 +5395,9 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
       icon: safeRemoteImageUrl(league.icon) || safeRemoteImageUrl(remote.icon) || null,
       cover: safeRemoteImageUrl(league.cover) || safeRemoteImageUrl(remote.cover) || null,
       biwengerLeagueId: league.biwengerLeagueId || remote.biwengerLeagueId || null,
+      fantasyProvider: (league.biwengerLeagueId || remote.biwengerLeagueId)
+        ? "biwenger"
+        : normalizedFantasyProvider(league.fantasyProvider || remote.fantasyProvider),
       leagueFixtures: league.leagueFixtures || remote.leagueFixtures || null,
       leagueFixturesSavedAt: league.leagueFixturesSavedAt || remote.leagueFixturesSavedAt || null,
       leagueOverview: league.leagueOverview || remote.leagueOverview || null
@@ -5429,6 +5466,7 @@ const saveActiveLeague = async () => {
         icon: activeLeague()?.icon || activeLeagueVisual().icon || null,
         cover: activeLeague()?.cover || activeLeagueVisual().cover || null,
         biwengerLeagueId: activeLeague()?.biwengerLeagueId || null,
+        fantasyProvider: leagueFantasyProvider(activeLeague()),
         editableLineup: state.editableLineup
       })
     });
@@ -5480,7 +5518,7 @@ const createLeagueFromInput = async () => {
     const response = await apiFetch("/api/leagues", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, competition: state.competition, scoring: state.scoring })
+      body: JSON.stringify({ name, competition: state.competition, scoring: state.scoring, fantasyProvider: "local" })
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));

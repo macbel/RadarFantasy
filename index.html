@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#081317" />
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=49" />
+    <link rel="stylesheet" href="styles.css?v=50" />
   </head>
   <body>
     <div class="app-shell">
@@ -810,22 +810,22 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
             <div class="roadmap-panel">
               <div class="section-heading">
                 <div>
-                  <p class="eyebrow">Conexion futura</p>
-                  <h3>Integraciones previstas</h3>
+                  <p class="eyebrow">Plataformas fantasy</p>
+                  <h3>Estado de conexiones</h3>
                 </div>
               </div>
               <div class="roadmap-list">
                 <div>
                   <strong>Biwenger</strong>
-                  <p>Activo: conexion con tu cuenta, lectura del mercado y de tu plantilla desde la API privada usada por la propia web.</p>
+                  <p>Disponible: cuenta, mercado, plantilla, pujas, ventas, saldo y alineaci&oacute;n.</p>
                 </div>
                 <div>
-                  <strong>Fuentes fantasy</strong>
-                  <p>Activo: FutbolFantasy, SoccerWiki, Transfermarkt y cache local diaria para completar titularidad, valor, lesiones y fichas.</p>
+                  <strong>LaLiga Fantasy</strong>
+                  <p>Siguiente integraci&oacute;n: comenzaremos por lectura de plantilla, mercado y clasificaci&oacute;n.</p>
                 </div>
                 <div>
-                  <strong>OCR</strong>
-                  <p>Queda como respaldo manual. La ruta principal pasa a ser Biwenger directo.</p>
+                  <strong>Mister Fantasy</strong>
+                  <p>Planificada sobre la nueva capa com&uacute;n de proveedores fantasy.</p>
                 </div>
               </div>
             </div>
@@ -836,7 +836,26 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                   <h3>Preferencias</h3>
                 </div>
               </div>
-              <div class="biwenger-card integration-card">
+              <div class="fantasy-platform-settings" id="fantasy-platform-settings">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Ligas fantasy</p>
+                    <h3>Conexiones por plataforma</h3>
+                  </div>
+                </div>
+                <div class="fantasy-platform-tabs" role="tablist" aria-label="Plataformas fantasy">
+                  <button class="fantasy-platform-tab active" type="button" role="tab" aria-selected="true" data-fantasy-settings-tab="biwenger">
+                    <strong>Biwenger</strong><span>Disponible</span>
+                  </button>
+                  <button class="fantasy-platform-tab" type="button" role="tab" aria-selected="false" data-fantasy-settings-tab="laliga">
+                    <strong>LaLiga Fantasy</strong><span>Preparando</span>
+                  </button>
+                  <button class="fantasy-platform-tab" type="button" role="tab" aria-selected="false" data-fantasy-settings-tab="mister">
+                    <strong>Mister Fantasy</strong><span>Planificada</span>
+                  </button>
+                </div>
+                <section class="fantasy-platform-panel" role="tabpanel" data-fantasy-settings-panel="biwenger">
+              <div class="biwenger-card integration-card fantasy-provider-card">
                 <div class="section-heading compact-heading">
                   <div>
                     <p class="eyebrow">Biwenger directo</p>
@@ -877,13 +896,30 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 </div>
                 <p class="settings-help">Al conectar correctamente se recuerdan la cuenta y la sesi&oacute;n en este dispositivo. La contrase&ntilde;a no se guarda.</p>
               </div>
+                </section>
+                <section class="fantasy-platform-panel" role="tabpanel" data-fantasy-settings-panel="laliga" hidden>
+                  <div class="integration-card fantasy-provider-card coming-soon">
+                    <div class="provider-card-heading"><div><p class="eyebrow">LaLiga Fantasy</p><h3>Pr&oacute;xima integraci&oacute;n</h3></div><span class="provider-status planning">Preparando</span></div>
+                    <p>La conexi&oacute;n se implementar&aacute; por fases: primero plantilla, mercado, saldo y clasificaci&oacute;n; despu&eacute;s pujas, ventas, cl&aacute;usulas y alineaciones.</p>
+                    <div class="provider-capabilities"><span>Plantilla</span><span>Mercado</span><span>Clasificaci&oacute;n</span><span>Pujas</span></div>
+                  </div>
+                </section>
+                <section class="fantasy-platform-panel" role="tabpanel" data-fantasy-settings-panel="mister" hidden>
+                  <div class="integration-card fantasy-provider-card coming-soon">
+                    <div class="provider-card-heading"><div><p class="eyebrow">Mister Fantasy</p><h3>Integraci&oacute;n planificada</h3></div><span class="provider-status planned">Planificada</span></div>
+                    <p>Se conectar&aacute; despu&eacute;s de validar la capa com&uacute;n con LaLiga Fantasy, reutilizando mercado, plantilla, cl&aacute;usulas y operaciones.</p>
+                    <div class="provider-capabilities"><span>Mercado</span><span>Plantilla</span><span>Cl&aacute;usulas</span><span>Alineaci&oacute;n</span></div>
+                  </div>
+                </section>
+              </div>
+              <div class="settings-section-label"><p class="eyebrow">Aplicaci&oacute;n y sistema</p><h3>Configuraci&oacute;n general</h3></div>
               <div class="app-update-card integration-card">
                 <div class="section-heading compact-heading">
                   <div>
                     <p class="eyebrow">Aplicaci&oacute;n m&oacute;vil</p>
                     <h3>Actualizaciones</h3>
                   </div>
-                  <span class="app-version-badge" id="app-current-version">v3.4.5</span>
+                  <span class="app-version-badge" id="app-current-version">v3.5.0</span>
                 </div>
                 <p class="settings-help">La app comprueba autom&aacute;ticamente si existe una versi&oacute;n nueva. En Android te llevar&aacute; a instalar el APK; el sistema pedir&aacute; tu confirmaci&oacute;n.</p>
                 <div class="biwenger-actions">
@@ -897,6 +933,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                   <span>Comprobaci&oacute;n autom&aacute;tica activada.</span>
                 </div>
               </div>
+              <div class="settings-section-label"><p class="eyebrow">Fuentes complementarias</p><h3>Datos deportivos externos</h3></div>
               <div class="api-config-card integration-card futbolfantasy-card">
                 <div class="section-heading compact-heading">
                   <div>
@@ -1135,6 +1172,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=14"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=77"></script>
+    <script src="app.js?v=78"></script>
   </body>
 </html>

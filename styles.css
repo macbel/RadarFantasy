@@ -810,6 +810,124 @@ textarea {
     rgba(7, 18, 22, 0.62);
 }
 
+.fantasy-platform-settings {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid rgba(37, 201, 197, 0.24);
+  border-radius: 10px;
+  background: rgba(4, 20, 25, 0.5);
+}
+
+.fantasy-platform-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fantasy-platform-tab {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: left;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.fantasy-platform-tab strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fantasy-platform-tab span {
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.fantasy-platform-tab:hover,
+.fantasy-platform-tab.active {
+  color: #c8fff1;
+  border-color: rgba(37, 201, 197, 0.52);
+  background: rgba(37, 201, 197, 0.12);
+}
+
+.fantasy-platform-panel[hidden] { display: none; }
+
+.fantasy-provider-card {
+  margin: 0;
+}
+
+.fantasy-provider-card.coming-soon {
+  min-height: 190px;
+  padding: 16px;
+  border-style: dashed;
+  background: linear-gradient(135deg, rgba(37, 201, 197, 0.07), rgba(242, 184, 76, 0.05));
+}
+
+.fantasy-provider-card.coming-soon > p {
+  margin: 14px 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.provider-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.provider-card-heading h3,
+.settings-section-label h3 {
+  margin-top: 3px;
+  font-size: 16px;
+}
+
+.provider-status {
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 190, 75, 0.35);
+  border-radius: 999px;
+  color: #ffe7af;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.provider-status.planned {
+  color: #cde8ff;
+  border-color: rgba(75, 169, 255, 0.35);
+}
+
+.provider-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.provider-capabilities span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.settings-section-label {
+  margin: 20px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
 .biwenger-form,
 .biwenger-actions {
   display: grid;
@@ -6174,6 +6292,19 @@ tr.has-rival-bids.has-rival-sale {
 
   .workspace {
     padding: 12px;
+  }
+
+  .fantasy-platform-settings {
+    padding: 10px;
+  }
+
+  .fantasy-platform-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .fantasy-platform-tab {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 
   .sidebar {

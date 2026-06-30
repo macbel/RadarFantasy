@@ -85,6 +85,14 @@ if (!html.includes('id="startup-sync-enabled"') || !js.includes("preferences.sta
   throw new Error("Full startup synchronization must be independently configurable");
 }
 
+if (!html.includes('data-fantasy-settings-tab="biwenger"') || !html.includes('data-fantasy-settings-tab="laliga"') || !html.includes('data-fantasy-settings-tab="mister"')) {
+  throw new Error("Settings must separate each fantasy platform into its own section");
+}
+
+if (!js.includes("activateFantasySettingsTab") || !js.includes("FANTASY_SETTINGS_TAB_KEY")) {
+  throw new Error("Fantasy platform settings tabs must be interactive and remembered");
+}
+
 if (!html.includes('id="market-analysis-center"') || !html.includes('data-analysis-tab="plan"') || !html.includes('data-analysis-panel="history"')) {
   throw new Error("The market analysis tools must live in the compact tabbed center");
 }

@@ -119,7 +119,8 @@ const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
-const APP_VERSION = "3.4.5";
+const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
+const APP_VERSION = "3.5.0";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -10248,6 +10249,30 @@ const initNavigation = () => {
   });
 };
 
+const activateFantasySettingsTab = (requestedTab = "biwenger") => {
+  const tabs = qsa("[data-fantasy-settings-tab]");
+  const panels = qsa("[data-fantasy-settings-panel]");
+  if (!tabs.length || !panels.length) return;
+  const available = tabs.map((tab) => tab.dataset.fantasySettingsTab);
+  const activeTab = available.includes(requestedTab) ? requestedTab : "biwenger";
+  tabs.forEach((tab) => {
+    const active = tab.dataset.fantasySettingsTab === activeTab;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  panels.forEach((panel) => {
+    panel.hidden = panel.dataset.fantasySettingsPanel !== activeTab;
+  });
+  writeLocalValue(FANTASY_SETTINGS_TAB_KEY, activeTab);
+};
+
+const initFantasySettingsTabs = () => {
+  activateFantasySettingsTab(readLocalValue(FANTASY_SETTINGS_TAB_KEY) || "biwenger");
+  qsa("[data-fantasy-settings-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => activateFantasySettingsTab(tab.dataset.fantasySettingsTab));
+  });
+};
+
 const saveApiConfiguration = async (value) => {
   writeStoredApiBase(value);
   syncApiConfigUi();
@@ -10364,6 +10389,7 @@ const checkForAppUpdate = async ({ manual = false } = {}) => {
 
 const initEvents = () => {
   initMarketAnalysisCenter();
+  initFantasySettingsTabs();
   qs("#load-demo").addEventListener("click", loadDemo);
   qs("#sync-biwenger").addEventListener("click", () => refreshBiwengerStatus());
   qs("#biwenger-login").addEventListener("click", biwengerLogin);

@@ -18,6 +18,7 @@ $biwengerSessionsPath = $dbDir . DIRECTORY_SEPARATOR . 'biwenger-sessions.json';
 $futbolFantasySessionsPath = $dbDir . DIRECTORY_SEPARATOR . 'futbolfantasy-sessions.json';
 $futbolFantasyCooldownPath = $dbDir . DIRECTORY_SEPARATOR . 'futbolfantasy-login-cooldown.json';
 $biwengerVersionPath = $dbDir . DIRECTORY_SEPARATOR . 'biwenger-version.json';
+$biwengerRateLimitPath = $dbDir . DIRECTORY_SEPARATOR . 'biwenger-rate-limit.json';
 $sofaDiagnosticsPath = $dbDir . DIRECTORY_SEPARATOR . 'sofascore-status.json';
 $apiSportsKeyPath = $dbDir . DIRECTORY_SEPARATOR . 'api-sports.key';
 $scorebatKeyPath = $dbDir . DIRECTORY_SEPARATOR . 'scorebat.key';
@@ -2091,6 +2092,12 @@ function biwenger_private_get_json(string $url, array $session, int $timeoutSeco
 
 function biwenger_private_request_json(string $method, string $url, array $session, int $timeoutSeconds, array $headers, bool $strictTls, ?array $payload = null): array
 {
+    global $biwengerRateLimitPath;
+    $rateLimit = read_json_file($biwengerRateLimitPath, []);
+    $blockedUntil = (int)($rateLimit['blockedUntil'] ?? 0);
+    if ($blockedUntil > time()) {
+        throw new RuntimeException('Biwenger esta limitando temporalmente las consultas (HTTP 429). Espera ' . max(1, $blockedUntil - time()) . ' segundos antes de actualizar de nuevo.');
+    }
     $leagueId = (int)($session['leagueId'] ?? 0);
     $userId = (int)($session['userId'] ?? 0);
     $token = (string)($session['token'] ?? '');
@@ -2117,10 +2124,15 @@ function biwenger_private_request_json(string $method, string $url, array $sessi
             }
             $lastStatus = (int)$response['status'];
             $lastMessage = (string)($response['json']['error'] ?? $response['json']['message'] ?? '');
+            if ($lastStatus === 429) {
+                write_json_file($biwengerRateLimitPath, ['blockedUntil' => time() + 12, 'updatedAt' => gmdate('c')]);
+                break;
+            }
             if ($lastStatus === 404 && preg_match('/entity not found|entidad no encontrada/i', $lastMessage)) break;
         }
+        if ($lastStatus === 429) break;
         if ($lastStatus === 404 && preg_match('/entity not found|entidad no encontrada/i', $lastMessage)) break;
-        if ($attempt + 1 < $readAttempts && in_array($lastStatus, [404, 429, 502, 503, 504], true)) {
+        if ($attempt + 1 < $readAttempts && in_array($lastStatus, [404, 502, 503, 504], true)) {
             usleep(220000);
             continue;
         }

@@ -141,6 +141,10 @@ if (!js.includes("isBiwengerAuthenticationError") || !js.includes("isBiwengerSta
   throw new Error("Intermittent Biwenger read failures must be retried without disconnecting valid sessions");
 }
 
+if (!js.includes("isBiwengerRateLimitError") || !js.includes("refreshBiwengerOperationalContext") || !php.includes("biwenger-rate-limit.json") || php.includes("[404, 429, 502, 503, 504]")) {
+  throw new Error("Biwenger HTTP 429 responses must stop immediate retries and activate a short request cooldown");
+}
+
 const salePriceReader = php.match(/function biwenger_sale_price\(array \$sale\): int[\s\S]*?\n}/)?.[0] || "";
 if (!salePriceReader.includes("'price'") || salePriceReader.includes("'amount'")) {
   throw new Error("Biwenger sale prices must come from explicit sale-price fields, never the generic offer amount");

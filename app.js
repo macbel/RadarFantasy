@@ -120,7 +120,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.6.2";
+const APP_VERSION = "3.6.3";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -259,7 +259,7 @@ const apiFetch = async (path, options = {}) => {
         ...headers
       }
     });
-    if (!retryableRead || ![404, 429, 503, 504].includes(response.status) || attempt > 0) return response;
+    if (!retryableRead || ![404, 503, 504].includes(response.status) || attempt > 0) return response;
     await new Promise((resolve) => window.setTimeout(resolve, 280));
   }
   throw new Error("No se pudo completar la lectura solicitada.");
@@ -267,6 +267,10 @@ const apiFetch = async (path, options = {}) => {
 
 const isBiwengerAuthenticationError = (error) => /HTTP\s*(401|403)|sesion (?:de )?Biwenger (?:invalida|caducada|cerrada)|no hay una sesion|token (?:invalido|caducado)/i.test(String(error?.message || error || ""));
 const isBiwengerStaleEntityError = (error) => /HTTP\s*404|entity not found|entidad no encontrada|ya no esta activa/i.test(String(error?.message || error || ""));
+const isBiwengerRateLimitError = (error) => /HTTP\s*429|too many requests|limitando temporalmente/i.test(String(error?.message || error || ""));
+const friendlyBiwengerError = (error, fallback = "Biwenger no ha respondido.") => isBiwengerRateLimitError(error)
+  ? "Biwenger está limitando temporalmente las consultas. Espera unos segundos; la conexión y los últimos datos siguen disponibles."
+  : (error?.message || fallback);
 const OCR_ENGINE_OPTIONS = {
   workerPath: assetUrl("vendor/tesseract/worker.min.js"),
   corePath: APP_CONFIG.ocrCoreUrl || "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js",
@@ -6361,9 +6365,11 @@ const syncSelectedLeagueWithBiwenger = async (options = {}) => {
       setBiwengerStatus("La sesión de Biwenger ha caducado. Vuelve a conectarla desde Ajustes.", "error");
       setLeagueStatus("La sesión de Biwenger necesita volver a conectarse.");
     } else {
-      setBiwengerStatus(isBiwengerStaleEntityError(error)
-        ? "Biwenger ya no encuentra uno de los datos anteriores. La conexión sigue activa; actualiza de nuevo para usar el estado actual."
-        : `${message} La conexión sigue activa y se conservan los últimos datos válidos.`, "error");
+      setBiwengerStatus(isBiwengerRateLimitError(error)
+        ? friendlyBiwengerError(error)
+        : isBiwengerStaleEntityError(error)
+          ? "Biwenger ya no encuentra uno de los datos anteriores. La conexión sigue activa; actualiza de nuevo para usar el estado actual."
+          : `${message} La conexión sigue activa y se conservan los últimos datos válidos.`, "error");
       setLeagueStatus("Sincronización incompleta. Conexión conservada y últimos datos válidos disponibles.");
     }
     return false;
@@ -6403,20 +6409,15 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   try {
     if (state.biwenger.authenticated) {
       const fastStartup = reason === "startup";
-      success = await syncSelectedLeagueWithBiwenger({ skipEnrichment: fastStartup, skipOperations: fastStartup });
+      success = await syncSelectedLeagueWithBiwenger({ skipEnrichment: fastStartup, skipOperations: true });
       throwIfDataSyncCancelled();
       if (success) {
         await loadLeagueFixtures(false);
         throwIfDataSyncCancelled();
-        if (fastStartup) {
-          window.setTimeout(() => {
-            loadBiwengerOperations(false);
-            loadLeagueOverview();
-            ensureLiveRoundForFinance(false);
-          }, 250);
-        } else {
+        if (!fastStartup) {
           await loadLeagueOverview();
           throwIfDataSyncCancelled();
+          await waitForBiwengerSpacing();
           await ensureLiveRoundForFinance(false);
         }
       }
@@ -7035,8 +7036,9 @@ const loadBiwengerOperations = async (showFeedback = true) => {
     };
     renderFinance();
     renderBidSaleAssistant();
-    qs("#bid-center").innerHTML = `<p class="muted-empty">${escapeHtml(error.message)}</p>`;
-    setLeagueOperationStatus(error.message || "No se pudo actualizar el centro operativo.", "error");
+    const message = friendlyBiwengerError(error, "No se pudo actualizar el centro operativo.");
+    qs("#bid-center").innerHTML = `<p class="muted-empty">${escapeHtml(message)}</p>`;
+    setLeagueOperationStatus(message, "error");
     return null;
   }
 };
@@ -7718,6 +7720,21 @@ const ensureLiveRoundForFinance = async (showFeedback = false) => {
   return state.liveRoundLoading;
 };
 
+const waitForBiwengerSpacing = (milliseconds = 700) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+let biwengerContextRefreshPromise = null;
+const refreshBiwengerOperationalContext = ({ operations = true, liveRound = true, feedback = false } = {}) => {
+  if (biwengerContextRefreshPromise) return biwengerContextRefreshPromise;
+  biwengerContextRefreshPromise = (async () => {
+    if (operations) await loadBiwengerOperations(feedback);
+    if (operations && liveRound) await waitForBiwengerSpacing();
+    if (liveRound) await ensureLiveRoundForFinance(feedback);
+    return true;
+  })().finally(() => {
+    biwengerContextRefreshPromise = null;
+  });
+  return biwengerContextRefreshPromise;
+};
+
 const loadLeagueOverview = async () => {
   const standings = qs("#league-standings");
   if (!state.biwenger.connected) {
@@ -7739,6 +7756,7 @@ const loadLeagueOverview = async () => {
       renderLeagueIdentity();
     }
     renderLeagueOverview();
+    await waitForBiwengerSpacing();
     await loadBiwengerOperations();
     setLeagueOperationStatus("Clasificacion y centro operativo actualizados.", "ready");
   } catch (error) {
@@ -9837,17 +9855,15 @@ const openLeaguePanel = (panelName) => {
   qsa(".league-workspace").forEach((panel) => panel.classList.toggle("active", panel.dataset.leaguePanel === panelName));
   if (panelName === "assistant") {
     renderBidSaleAssistant();
-    if (state.biwenger.connected && !state.biwengerOperations) loadBiwengerOperations(false);
     if (state.biwenger.connected) {
-      ensureLiveRoundForFinance(false).then(() => {
+      refreshBiwengerOperationalContext({ operations: !state.biwengerOperations, liveRound: true }).then(() => {
         renderBidSaleAssistant();
       });
     }
   }
   if (panelName === "bids") {
-    if (state.biwenger.connected && !state.biwengerOperations) loadBiwengerOperations(false);
     if (state.biwenger.connected) {
-      ensureLiveRoundForFinance(false).then(() => {
+      refreshBiwengerOperationalContext({ operations: !state.biwengerOperations, liveRound: true }).then(() => {
         renderBiwengerOperations();
       });
     }
@@ -10321,8 +10337,7 @@ const initNavigation = () => {
       if (button.dataset.view === "favorites") loadFavoriteCatalog({ force: !state.favoriteCatalog.length });
       if (button.dataset.view === "league") loadLeagueOverview();
       if (button.dataset.view === "team" && state.biwenger.connected) {
-        loadBiwengerOperations(false);
-        ensureLiveRoundForFinance(false).then(() => {
+        refreshBiwengerOperationalContext({ operations: !state.biwengerOperations, liveRound: true }).then(() => {
           renderTeam();
           renderLineup();
         });

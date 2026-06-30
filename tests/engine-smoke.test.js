@@ -176,7 +176,8 @@ const previousLeagueFixtures = state.leagueFixtures;
 
 if (!isBiwengerStaleEntityError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 404): Entity not found"))
   || isBiwengerAuthenticationError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 404): Entity not found"))
-  || !isBiwengerAuthenticationError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 401)"))) {
+  || !isBiwengerAuthenticationError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 401)"))
+  || !isBiwengerRateLimitError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 429): Too Many Requests"))) {
   throw new Error("Biwenger errors must distinguish expired entities from expired authentication");
 }
 

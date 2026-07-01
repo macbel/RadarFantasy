@@ -6407,7 +6407,7 @@ const syncSelectedLeagueWithBiwenger = async (options = {}) => {
     });
     throwIfDataSyncCancelled();
     if (!marketImported.success) throw new Error("No se pudo comprobar el mercado de Biwenger.");
-    if (options.incremental && !options.fullSync && !marketImported.changed) {
+    if (options.incremental && !options.fullSync && !marketImported.changed && !options.checkTeamWhenMarketUnchanged) {
       const message = `${payload.leagueName || leagueName}: mercado sin cambios; se omite el resto de la descarga.`;
       setBiwengerStatus(message, "ready");
       setLeagueStatus(message);
@@ -6507,6 +6507,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
         skipOperations: true,
         incremental: true,
         fullSync: fullSyncDue,
+        checkTeamWhenMarketUnchanged: reason === "startup",
         previousSignatures: previous?.signatures || {}
       });
       success = Boolean(syncResult?.success);
@@ -9824,9 +9825,9 @@ const playerEligibleForNextLineup = (player) => {
 const calculateBestLineup = () => {
   const players = state.teamPlayers
     .map(playerForCompetition)
-    .filter(playerEligibleForNextLineup)
     .map((player) => ({
       ...player,
+      lineupEligible: playerEligibleForNextLineup(player),
       lineupScore: lineupPlayerScore(player)
     }));
   const byPosition = players.reduce((groups, player) => {
@@ -9836,7 +9837,7 @@ const calculateBestLineup = () => {
     return groups;
   }, {});
 
-  Object.values(byPosition).forEach((group) => group.sort((a, b) => b.lineupScore - a.lineupScore));
+  Object.values(byPosition).forEach((group) => group.sort((a, b) => Number(b.lineupEligible) - Number(a.lineupEligible) || b.lineupScore - a.lineupScore));
 
   return FORMATIONS.map((formation) => {
     const selected = [];
@@ -9849,7 +9850,8 @@ const calculateBestLineup = () => {
     });
     const total = selected.reduce((sum, player) => sum + player.lineupScore, 0);
     const penalty = missing.length * 120;
-    return { formation, selected, missing, total, rankingScore: total - penalty };
+    const unavailable = selected.filter((player) => !player.lineupEligible).length;
+    return { formation, selected, missing, unavailable, total, rankingScore: total - penalty - unavailable * 120 };
   }).sort((a, b) => b.rankingScore - a.rankingScore)[0];
 };
 
@@ -9885,8 +9887,8 @@ const lineupForFormation = (formationName) => {
   const selected = [];
   Object.entries(formation.slots).forEach(([position, amount]) => {
     selected.push(...players
-      .filter((player) => player.position === position && player.lineupEligible)
-      .sort((a, b) => b.lineupScore - a.lineupScore)
+      .filter((player) => player.position === position)
+      .sort((a, b) => Number(b.lineupEligible) - Number(a.lineupEligible) || b.lineupScore - a.lineupScore)
       .slice(0, amount));
   });
   const captain = [...selected].sort((a, b) => b.lineupScore - a.lineupScore)[0];
@@ -9906,7 +9908,7 @@ const resolvedEditableLineup = () => {
   const formation = FORMATIONS.find((item) => item.name === state.editableLineup?.formationName) || FORMATIONS[0];
   const players = teamPlayersWithLineupScore();
   const byId = new Map(players.map((player) => [String(player.id), player]));
-  const selected = (state.editableLineup?.playerIds || []).map((id) => byId.get(String(id))).filter((player) => player?.lineupEligible);
+  const selected = (state.editableLineup?.playerIds || []).map((id) => byId.get(String(id))).filter(Boolean);
   const selectedById = new Map(selected.map((player) => [String(player.id), player]));
   const captain = selectedById.get(String(state.editableLineup?.captainId || "")) || [...selected].sort((a, b) => b.lineupScore - a.lineupScore)[0] || null;
   const strikerCandidate = selectedById.get(String(state.editableLineup?.strikerId || ""));
@@ -10033,9 +10035,7 @@ const renderLineup = () => {
     return;
   }
   state.recommendedLineup = best;
-  const allPlayersById = new Map(teamPlayersWithLineupScore().map((player) => [String(player.id), player]));
-  const savedLineupHasUnavailable = (state.editableLineup?.playerIds || []).some((id) => !allPlayersById.get(String(id))?.lineupEligible);
-  if (!state.editableLineup?.formationName || !Array.isArray(state.editableLineup.playerIds) || savedLineupHasUnavailable) {
+  if (!state.editableLineup?.formationName || !Array.isArray(state.editableLineup.playerIds)) {
     state.editableLineup = editableLineupFromRecommendation(best);
   }
   const editable = resolvedEditableLineup();
@@ -10047,9 +10047,9 @@ const renderLineup = () => {
   }, {});
   const recommendedCoach = state.teamPlayers
     .map(playerForCompetition)
-    .filter((player) => player.position === "ENT" && playerEligibleForNextLineup(player))
-    .map((player) => ({ ...player, lineupScore: lineupPlayerScore(player) }))
-    .sort((a, b) => b.lineupScore - a.lineupScore)[0] || null;
+    .filter((player) => player.position === "ENT")
+    .map((player) => ({ ...player, lineupEligible: playerEligibleForNextLineup(player), lineupScore: lineupPlayerScore(player) }))
+    .sort((a, b) => Number(b.lineupEligible) - Number(a.lineupEligible) || b.lineupScore - a.lineupScore)[0] || null;
   const missing = Object.entries(editable.formation.slots)
     .map(([position, amount]) => ({ position, amount, actual: (groups[position] || []).length }))
     .filter((item) => item.actual < item.amount)

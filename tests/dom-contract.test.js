@@ -49,8 +49,12 @@ if (!js.includes("biwengerImportSignature") || !js.includes("mercado sin cambios
   throw new Error("Automatic synchronization must stop early when the Biwenger market has not changed and still perform periodic full refreshes");
 }
 
-if (!js.includes("playerEligibleForNextLineup") || !js.includes("savedLineupHasUnavailable")) {
-  throw new Error("The ideal lineup must exclude unavailable players and repair stale saved lineups");
+if (!js.includes('checkTeamWhenMarketUnchanged: reason === "startup"')) {
+  throw new Error("Startup synchronization must still check the current Biwenger lineup after an unchanged market");
+}
+
+if (!js.includes("playerEligibleForNextLineup") || !js.includes("unavailable * 120") || !js.includes("Number(b.lineupEligible) - Number(a.lineupEligible)")) {
+  throw new Error("The ideal lineup must prefer available players while still filling formations when alternatives do not exist");
 }
 
 if (!js.includes('button.classList.add("action-feedback")') || !css.includes("@keyframes action-button-spin") || !css.includes("button:not(:disabled):active")) {

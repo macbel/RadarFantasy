@@ -4419,16 +4419,25 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
             $fixtures['primarySourceError'] = $sofascoreError->getMessage();
         } catch (Throwable $apiFootballError) {
             try {
-                $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
-                $sourceStrategy = 'resultados-futbol-fallback';
+                $fixtures = thesportsdb_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls);
+                $sourceStrategy = 'thesportsdb-fallback';
                 $fixtures['primarySourceError'] = $sofascoreError->getMessage();
                 $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
-            } catch (Throwable $resultadosError) {
-                throw new RuntimeException(
-                    'SofaScore no ha devuelto el calendario: ' . $sofascoreError->getMessage()
-                    . '. Respaldo API-Football: ' . $apiFootballError->getMessage()
-                    . '. Respaldo Resultados-Futbol: ' . $resultadosError->getMessage()
-                );
+            } catch (Throwable $sportsDbError) {
+                try {
+                    $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
+                    $sourceStrategy = 'resultados-futbol-fallback';
+                    $fixtures['primarySourceError'] = $sofascoreError->getMessage();
+                    $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
+                    $fixtures['tertiarySourceError'] = $sportsDbError->getMessage();
+                } catch (Throwable $resultadosError) {
+                    throw new RuntimeException(
+                        'SofaScore no ha devuelto el calendario: ' . $sofascoreError->getMessage()
+                        . '. Respaldo API-Football: ' . $apiFootballError->getMessage()
+                        . '. Respaldo TheSportsDB: ' . $sportsDbError->getMessage()
+                        . '. Respaldo Resultados-Futbol: ' . $resultadosError->getMessage()
+                    );
+                }
             }
         }
     }

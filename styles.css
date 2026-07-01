@@ -892,6 +892,8 @@ textarea {
 
 .fantasy-platform-panel[hidden] { display: none; }
 
+.optional-image-upload[hidden] { display: none !important; }
+
 .fantasy-provider-card {
   margin: 0;
 }

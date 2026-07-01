@@ -2444,6 +2444,7 @@ function sanitize_preferences_payload($preferences): array
         'strictBudget' => !array_key_exists('strictBudget', $preferences) || !empty($preferences['strictBudget']),
         'riskAverse' => !empty($preferences['riskAverse']),
         'investmentMode' => !empty($preferences['investmentMode']),
+        'showImageUpload' => !empty($preferences['showImageUpload']),
         'startupSync' => !array_key_exists('startupSync', $preferences) || !empty($preferences['startupSync']),
         'autoSync' => !array_key_exists('autoSync', $preferences) || !empty($preferences['autoSync']),
         'notifications' => !empty($preferences['notifications']),
@@ -4550,10 +4551,21 @@ function thesportsdb_current_fixtures(array $session, int $timeoutSeconds, array
         $league = $leagues[0] ?? null;
     }
     if (!$league || empty($league['id'])) throw new RuntimeException('competicion no encontrada');
+    $competition = normalize_text((string)($session['competition'] ?? ''));
+    $currentYear = (int)date('Y');
+    $season = preg_match('/world|mundial|selecc|copa del mundo/', $competition)
+        ? (string)$currentYear
+        : (($currentYear - ((int)date('n') < 7 ? 1 : 0)) . '-' . ($currentYear + ((int)date('n') < 7 ? 0 : 1)));
+    $seasonPayload = http_get_json(
+        'https://www.thesportsdb.com/api/v1/json/123/eventsseason.php?id=' . (int)$league['id'] . '&s=' . rawurlencode($season),
+        max($timeoutSeconds, 10),
+        $headers,
+        $strictTls
+    );
     $next = http_get_json('https://www.thesportsdb.com/api/v1/json/123/eventsnextleague.php?id=' . (int)$league['id'], $timeoutSeconds, $headers, $strictTls);
     $prev = http_get_json('https://www.thesportsdb.com/api/v1/json/123/eventspastleague.php?id=' . (int)$league['id'], $timeoutSeconds, $headers, $strictTls);
     $rows = [];
-    foreach (array_merge((array)($prev['events'] ?? []), (array)($next['events'] ?? [])) as $event) {
+    foreach (array_merge((array)($seasonPayload['events'] ?? []), (array)($prev['events'] ?? []), (array)($next['events'] ?? [])) as $event) {
         if (!is_array($event)) continue;
         $id = (int)($event['idEvent'] ?? 0);
         if ($id <= 0) continue;

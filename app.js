@@ -90,6 +90,7 @@
     strictBudget: true,
     riskAverse: false,
     investmentMode: false,
+    showImageUpload: false,
     startupSync: true,
     autoSync: true,
     notifications: false,
@@ -8874,6 +8875,18 @@ const syncSettingsControls = () => {
   if (riskAverse) riskAverse.checked = Boolean(state.preferences.riskAverse);
   const investmentMode = qs("#investment-mode");
   if (investmentMode) investmentMode.checked = Boolean(state.preferences.investmentMode);
+  const showImageUpload = Boolean(state.preferences.showImageUpload);
+  const showImageUploadInput = qs("#show-image-upload");
+  if (showImageUploadInput) showImageUploadInput.checked = showImageUpload;
+  [qs("#image-dropzone"), qs("#team-image-dropzone")].filter(Boolean).forEach((dropzone) => {
+    dropzone.hidden = !showImageUpload;
+  });
+  if (!showImageUpload) {
+    const marketPreview = qs("#image-preview");
+    const teamPreview = qs("#team-image-preview");
+    if (marketPreview) marketPreview.hidden = true;
+    if (teamPreview) teamPreview.hidden = true;
+  }
   const autoSync = qs("#auto-sync-enabled");
   if (autoSync) autoSync.checked = state.preferences.autoSync !== false;
   const startupSync = qs("#startup-sync-enabled");
@@ -10710,6 +10723,11 @@ const initEvents = () => {
   qs("#investment-mode").addEventListener("change", (event) => {
     state.preferences.investmentMode = event.target.checked;
     renderTable();
+    persistLeagueSettings();
+  });
+  qs("#show-image-upload")?.addEventListener("change", (event) => {
+    state.preferences.showImageUpload = event.target.checked;
+    syncSettingsControls();
     persistLeagueSettings();
   });
   qs("#auto-sync-enabled")?.addEventListener("change", (event) => {

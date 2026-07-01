@@ -196,7 +196,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <span class="status-dot" aria-hidden="true"></span>
                 <span>Fuentes listas. Al analizar se consultaran SofaScore y FutbolFantasy si usas localhost.</span>
               </div>
-              <div class="dropzone" id="image-dropzone">
+              <div class="dropzone optional-image-upload" id="image-dropzone" hidden>
                 <input id="image-upload" type="file" accept="image/*" capture="environment" />
                 <div class="dropzone-visual" aria-hidden="true">
                   <span class="icon icon-image"></span>
@@ -465,7 +465,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <span class="status-dot" aria-hidden="true"></span>
                 <span>Equipo pendiente de cargar para esta liga.</span>
               </div>
-              <div class="dropzone" id="team-image-dropzone">
+              <div class="dropzone optional-image-upload" id="team-image-dropzone" hidden>
                 <input id="team-image-upload" type="file" accept="image/*" capture="environment" />
                 <div class="dropzone-visual" aria-hidden="true">
                   <span class="icon icon-image"></span>
@@ -1030,6 +1030,10 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
               <label class="toggle-row">
                 <input id="investment-mode" type="checkbox" />
                 <span>Priorizar revalorizacion de mercado</span>
+              </label>
+              <label class="toggle-row">
+                <input id="show-image-upload" type="checkbox" />
+                <span>Mostrar la carga opcional de mercado y plantilla mediante imagen</span>
               </label>
               <label class="toggle-row">
                 <input id="startup-sync-enabled" type="checkbox" checked />

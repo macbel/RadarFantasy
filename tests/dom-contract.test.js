@@ -89,6 +89,10 @@ if (!html.includes('id="startup-sync-enabled"') || !js.includes("preferences.sta
   throw new Error("Full startup synchronization must be independently configurable");
 }
 
+if (!html.includes('id="show-image-upload"') || !html.includes('id="image-dropzone" hidden') || !html.includes('id="team-image-dropzone" hidden') || !js.includes("preferences.showImageUpload") || !php.includes("'showImageUpload'")) {
+  throw new Error("Image-based market and squad imports must be optional and hidden by default");
+}
+
 if (!html.includes('data-fantasy-settings-tab="biwenger"') || !html.includes('data-fantasy-settings-tab="laliga"') || !html.includes('data-fantasy-settings-tab="mister"')) {
   throw new Error("Settings must separate each fantasy platform into its own section");
 }

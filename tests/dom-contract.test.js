@@ -45,6 +45,10 @@ if (!js.includes("const batchSize = 12") || !js.includes("deferFollowUp") || !js
   throw new Error("Startup synchronization must avoid duplicate follow-up work and support request cancellation");
 }
 
+if (!js.includes("biwengerImportSignature") || !js.includes("mercado sin cambios; se omite el resto de la descarga") || !js.includes("60 * 60 * 1000")) {
+  throw new Error("Automatic synchronization must stop early when the Biwenger market has not changed and still perform periodic full refreshes");
+}
+
 if (!html.includes('id="app-update-popup"') || !html.includes('id="check-app-update"') || !js.includes("checkForAppUpdate")) {
   throw new Error("The mobile app must expose automatic update checks and an installation popup");
 }

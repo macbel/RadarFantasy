@@ -6166,6 +6166,35 @@ const openFutbolFantasyTracking = () => {
   window.open(state.futbolFantasy.trackingUrl || "https://www.futbolfantasy.com/seguimiento", "_blank", "noopener");
 };
 
+const syncSnapshotHash = (value) => {
+  let hash = 2166136261;
+  const text = JSON.stringify(value);
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+};
+
+const biwengerImportSignature = (kind, payload = {}) => {
+  const players = (payload.players || []).map((player) => ({
+    id: Number(player.biwengerPlayerId || player.playerId || player.id || 0),
+    price: Number(player.price || player.biwengerValue || player.marketValue || 0),
+    owner: Number(player.ownerId || player.userId || player.owner?.id || 0),
+    bidCount: Number(player.bidCount || player.rivalBidCount || 0),
+    ownBid: Number(player.myBidAmount || player.ownBidAmount || 0),
+    team: String(player.team || player.teamId || ""),
+    position: String(player.position || player.biwengerPosition || "")
+  })).sort((left, right) => left.id - right.id || left.price - right.price);
+  const lineup = kind === "team" ? {
+    type: String(payload.lineup?.type || ""),
+    players: [...(payload.lineup?.playersID || [])].map(Number).sort((a, b) => a - b),
+    captain: Number(payload.lineup?.captain || 0),
+    striker: Number(payload.lineup?.striker || 0)
+  } : null;
+  return syncSnapshotHash({ kind, players, lineup });
+};
+
 const syncTeamToFutbolFantasy = async () => {
   if (!state.futbolFantasy.connected) {
     setFutbolFantasyStatus("Conecta Futbol Fantasy desde Ajustes antes de enviar el equipo.", "error");
@@ -6239,6 +6268,16 @@ const importFromBiwenger = async (kind, options = {}) => {
     throwIfDataSyncCancelled();
     if (!response.ok) {
       throw new Error(payload.error || describeApiError(response.status, "/api/biwenger/import"));
+    }
+
+    const signature = biwengerImportSignature(kind, payload);
+    const unchanged = Boolean(options.previousSignature && options.previousSignature === signature);
+    if (unchanged && options.incremental) {
+      mergeFinance(payload.finance || {});
+      renderFinance();
+      updateDataSync(`${kind === "team" ? "Plantilla" : "Mercado"} sin cambios. Se reutilizan los datos guardados.`, "ready");
+      setBiwengerStatus(`${kind === "team" ? "Plantilla" : "Mercado"} sin cambios desde la última revisión.`, "ready");
+      return options.returnMeta ? { success: true, changed: false, signature } : true;
     }
 
     const importedPlayers = hydrateImportedPlayers(payload.players || []);
@@ -6319,7 +6358,7 @@ const importFromBiwenger = async (kind, options = {}) => {
       if (kind === "market" && state.favorites.length) await loadFavoriteCatalog({ force: true });
       if (kind === "team") await notifyDailyPlanIfNeeded();
     }
-    return true;
+    return options.returnMeta ? { success: true, changed: true, signature } : true;
   } catch (error) {
     const message = isDataSyncCancellation(error) ? "Carga detenida; se mantienen los datos ya disponibles." : (error.message || "No se pudo importar desde Biwenger.");
     if (kind === "team") {
@@ -6328,7 +6367,7 @@ const importFromBiwenger = async (kind, options = {}) => {
       setOcrStatus(message, "error");
     }
     setBiwengerStatus(message, "error");
-    return false;
+    return options.returnMeta ? { success: false, changed: false, signature: "" } : false;
   } finally {
     setBiwengerBusy(false);
     endDataSync();
@@ -6359,24 +6398,56 @@ const syncSelectedLeagueWithBiwenger = async (options = {}) => {
       if (!response.ok) throw new Error(payload.error || "No se pudo cambiar la liga activa de Biwenger.");
       applyBiwengerSession(payload);
     }
-    const marketImported = await importFromBiwenger("market", { deferFollowUp: true, skipEnrichment: Boolean(options.skipEnrichment) });
+    const marketImported = await importFromBiwenger("market", {
+      deferFollowUp: true,
+      skipEnrichment: Boolean(options.skipEnrichment),
+      incremental: Boolean(options.incremental && !options.fullSync),
+      previousSignature: options.previousSignatures?.market || "",
+      returnMeta: true
+    });
     throwIfDataSyncCancelled();
-    const teamImported = await importFromBiwenger("team", { deferFollowUp: true, skipEnrichment: Boolean(options.skipEnrichment) });
+    if (!marketImported.success) throw new Error("No se pudo comprobar el mercado de Biwenger.");
+    if (options.incremental && !options.fullSync && !marketImported.changed) {
+      const message = `${payload.leagueName || leagueName}: mercado sin cambios; se omite el resto de la descarga.`;
+      setBiwengerStatus(message, "ready");
+      setLeagueStatus(message);
+      return {
+        success: true,
+        unchanged: true,
+        changed: false,
+        signatures: { ...(options.previousSignatures || {}), market: marketImported.signature }
+      };
+    }
+    const teamImported = await importFromBiwenger("team", {
+      deferFollowUp: true,
+      skipEnrichment: Boolean(options.skipEnrichment),
+      incremental: Boolean(options.incremental && !options.fullSync),
+      previousSignature: options.previousSignatures?.team || "",
+      returnMeta: true
+    });
     throwIfDataSyncCancelled();
     if (!options.skipOperations) await loadBiwengerOperations(false);
-    if (!marketImported || !teamImported) {
+    if (!teamImported.success) {
       throw new Error(`Liga cambiada a ${payload.leagueName || leagueName}, pero no se pudieron actualizar todos sus datos.`);
     }
-    const message = `${payload.leagueName || leagueName}: mercado, equipo y operaciones actualizados.`;
+    const changedParts = [marketImported.changed ? "mercado" : null, teamImported.changed ? "equipo" : null].filter(Boolean);
+    const message = changedParts.length
+      ? `${payload.leagueName || leagueName}: ${changedParts.join(" y ")} actualizados.`
+      : `${payload.leagueName || leagueName}: datos sin cambios.`;
     setBiwengerStatus(message, "ready");
     setLeagueStatus(message);
-    return true;
+    return {
+      success: true,
+      unchanged: !marketImported.changed && !teamImported.changed,
+      changed: marketImported.changed || teamImported.changed,
+      signatures: { market: marketImported.signature, team: teamImported.signature }
+    };
   } catch (error) {
     const message = error.message || "No se pudo sincronizar la liga seleccionada con Biwenger.";
     if (isDataSyncCancellation(error)) {
       setBiwengerStatus("Carga detenida; la sesión de Biwenger sigue conectada.", "");
       setLeagueStatus("Carga detenida. Se conservan los últimos datos válidos.");
-      return false;
+      return { success: false, unchanged: false, changed: false, signatures: options.previousSignatures || {} };
     }
     if (isBiwengerAuthenticationError(error)) {
       state.biwenger.connected = false;
@@ -6391,7 +6462,7 @@ const syncSelectedLeagueWithBiwenger = async (options = {}) => {
           : `${message} La conexión sigue activa y se conservan los últimos datos válidos.`, "error");
       setLeagueStatus("Sincronización incompleta. Conexión conservada y últimos datos válidos disponibles.");
     }
-    return false;
+    return { success: false, unchanged: false, changed: false, signatures: options.previousSignatures || {} };
   } finally {
     setBiwengerBusy(false);
   }
@@ -6413,6 +6484,8 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   const previous = autoSyncRecord();
   const previousTime = new Date(previous?.completedAt || 0).getTime();
   const freshEnough = Number.isFinite(previousTime) && Date.now() - previousTime < 20 * 60 * 1000;
+  const previousFullSyncTime = new Date(previous?.fullSyncAt || 0).getTime();
+  const fullSyncDue = force || !Number.isFinite(previousFullSyncTime) || Date.now() - previousFullSyncTime >= 60 * 60 * 1000;
   const periodicDisabled = reason === "periodic" && !state.preferences.autoSync;
   if (!force && (periodicDisabled || freshEnough)) {
     state.autoSync.lastAt = previous?.completedAt || state.autoSync.lastAt;
@@ -6425,12 +6498,20 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   beginDataSync(reason === "startup" ? "Cargando mercado, equipo, partidos y fuentes..." : "Sincronizando los datos de la liga...");
   renderDailyPlan(filteredPlayers());
   let success = false;
+  let syncResult = null;
   try {
     if (state.biwenger.authenticated) {
       const fastStartup = reason === "startup";
-      success = await syncSelectedLeagueWithBiwenger({ skipEnrichment: fastStartup, skipOperations: true });
+      syncResult = await syncSelectedLeagueWithBiwenger({
+        skipEnrichment: fastStartup && !fullSyncDue,
+        skipOperations: true,
+        incremental: true,
+        fullSync: fullSyncDue,
+        previousSignatures: previous?.signatures || {}
+      });
+      success = Boolean(syncResult?.success);
       throwIfDataSyncCancelled();
-      if (success) {
+      if (success && (!syncResult.unchanged || fullSyncDue)) {
         await loadLeagueFixtures(false);
         throwIfDataSyncCancelled();
         if (!fastStartup) {
@@ -6450,10 +6531,18 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
     if (!success) throw new Error("La sincronización no pudo completar todos los datos.");
     const completedAt = new Date().toISOString();
     state.autoSync.lastAt = completedAt;
-    state.autoSync.status = "ready";
-    saveAutoSyncRecord({ completedAt, reason, leagueId: state.activeLeagueId, playerCount: state.players.length, teamCount: state.teamPlayers.length });
+    state.autoSync.status = syncResult?.unchanged ? "unchanged" : "ready";
+    saveAutoSyncRecord({
+      completedAt,
+      fullSyncAt: fullSyncDue ? completedAt : (previous?.fullSyncAt || completedAt),
+      reason,
+      leagueId: state.activeLeagueId,
+      playerCount: state.players.length,
+      teamCount: state.teamPlayers.length,
+      signatures: syncResult?.signatures || previous?.signatures || {}
+    });
     renderDailyPlan(filteredPlayers());
-    if (state.favorites.length) await loadFavoriteCatalog({ force: true });
+    if (state.favorites.length && (!syncResult?.unchanged || fullSyncDue)) await loadFavoriteCatalog({ force: true });
     await notifyDailyPlanIfNeeded();
     return true;
   } catch (error) {

@@ -31,6 +31,22 @@ if (parseCurrencyInput("5.500.000 €") !== 5500000
   throw new Error("Currency input parsing changed sale amounts");
 }
 
+const signatureA = biwengerImportSignature("market", { players: [
+  { biwengerPlayerId: 2, price: 2000000, ownerId: 8 },
+  { biwengerPlayerId: 1, price: 1000000, ownerId: 7 }
+] });
+const signatureSame = biwengerImportSignature("market", { players: [
+  { biwengerPlayerId: 1, price: 1000000, ownerId: 7 },
+  { biwengerPlayerId: 2, price: 2000000, ownerId: 8 }
+] });
+const signatureChanged = biwengerImportSignature("market", { players: [
+  { biwengerPlayerId: 1, price: 1100000, ownerId: 7 },
+  { biwengerPlayerId: 2, price: 2000000, ownerId: 8 }
+] });
+if (signatureA !== signatureSame || signatureA === signatureChanged) {
+  throw new Error("Incremental sync signatures must ignore ordering and detect market changes");
+}
+
 state.players = parseMarketText(sample);
 const favoriteSample = hydrateImportedPlayers([{
   id: "favorite-sample",

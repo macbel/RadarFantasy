@@ -10631,6 +10631,27 @@ const checkForAppUpdate = async ({ manual = false } = {}) => {
 };
 
 const initEvents = () => {
+  const feedbackTimers = new WeakMap();
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.("button.primary-button, button.ghost-button, button.danger-button");
+    if (!button || button.disabled || button.matches(".nav-item, .league-tab, .daily-scenario, [data-plan-mode], [data-analysis-tab], [data-market-position]")) return;
+    window.clearTimeout(feedbackTimers.get(button));
+    button.classList.remove("action-feedback");
+    void button.offsetWidth;
+    button.classList.add("action-feedback");
+    button.setAttribute("aria-busy", "true");
+    const startedAt = Date.now();
+    const finishFeedback = () => {
+      if (button.disabled && Date.now() - startedAt < 15000) {
+        feedbackTimers.set(button, window.setTimeout(finishFeedback, 250));
+        return;
+      }
+      button.classList.remove("action-feedback");
+      button.removeAttribute("aria-busy");
+      feedbackTimers.delete(button);
+    };
+    feedbackTimers.set(button, window.setTimeout(finishFeedback, 650));
+  }, true);
   initMarketAnalysisCenter();
   initFantasySettingsTabs();
   qs("#load-demo").addEventListener("click", loadDemo);

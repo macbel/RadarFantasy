@@ -53,6 +53,10 @@ if (!js.includes("playerEligibleForNextLineup") || !js.includes("savedLineupHasU
   throw new Error("The ideal lineup must exclude unavailable players and repair stale saved lineups");
 }
 
+if (!js.includes('button.classList.add("action-feedback")') || !css.includes("@keyframes action-button-spin") || !css.includes("button:not(:disabled):active")) {
+  throw new Error("Action buttons must provide immediate pressed and execution feedback");
+}
+
 if (!html.includes('id="app-update-popup"') || !html.includes('id="check-app-update"') || !js.includes("checkForAppUpdate")) {
   throw new Error("The mobile app must expose automatic update checks and an installation popup");
 }

@@ -68,6 +68,15 @@ button:disabled {
   opacity: 0.55;
 }
 
+button:not(:disabled) {
+  transition: transform 120ms ease, border-color 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+}
+
+button:not(:disabled):active {
+  transform: translateY(2px) scale(0.975);
+  filter: brightness(1.12);
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -900,6 +909,41 @@ textarea {
   display: flex;
   justify-content: flex-start;
   margin: 0 0 12px;
+}
+
+.primary-button.action-feedback,
+.ghost-button.action-feedback,
+.danger-button.action-feedback {
+  position: relative;
+  padding-right: 34px;
+  border-color: rgba(53, 217, 230, 0.82);
+  box-shadow: 0 0 0 3px rgba(53, 217, 230, 0.14), inset 0 0 18px rgba(255, 255, 255, 0.08);
+  filter: brightness(1.08);
+}
+
+.primary-button.action-feedback::after,
+.ghost-button.action-feedback::after,
+.danger-button.action-feedback::after {
+  position: absolute;
+  right: 11px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: "";
+  animation: action-button-spin 650ms linear infinite;
+}
+
+@keyframes action-button-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled) { transition: none; }
+  .primary-button.action-feedback::after,
+  .ghost-button.action-feedback::after,
+  .danger-button.action-feedback::after { animation: none; }
 }
 
 .team-primary-column {

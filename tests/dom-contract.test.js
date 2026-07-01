@@ -21,6 +21,10 @@ if (html.indexOf('data-view="team"') > html.indexOf('data-view="market"')) {
   throw new Error("Mi equipo must be the first menu option, followed by Mercado");
 }
 
+if (!html.includes('class="nav-item active" type="button" data-view="team"') || !html.includes('class="view active" id="team-view"')) {
+  throw new Error("Mi equipo must be the active view when the application opens");
+}
+
 if (!css.includes(".top-five-list") || !css.includes("grid-template-columns: repeat(2, minmax(0, 1fr))") || !css.includes(".decision-lanes")) {
   throw new Error("Top-five and decision-center cards must provide a tablet layout");
 }

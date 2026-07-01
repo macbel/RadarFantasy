@@ -4409,11 +4409,25 @@ function resultados_futbol_calendar_urls(array $session): array
 function fast_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
 {
     $startedAt = microtime(true);
-    $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
+    $sourceStrategy = 'sofascore-primary';
+    try {
+        $fixtures = sofascore_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir);
+    } catch (Throwable $sofascoreError) {
+        try {
+            $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
+            $sourceStrategy = 'resultados-futbol-fallback';
+            $fixtures['primarySourceError'] = $sofascoreError->getMessage();
+        } catch (Throwable $fallbackError) {
+            throw new RuntimeException(
+                'SofaScore no ha devuelto el calendario: ' . $sofascoreError->getMessage()
+                . '. Respaldo Resultados-Futbol: ' . $fallbackError->getMessage()
+            );
+        }
+    }
     $fixtures = decorate_fixture_competition_state($fixtures, $session);
     $fixtures['schemaVersion'] = 4;
     $fixtures['fetchedAtTs'] = (int)($fixtures['fetchedAtTs'] ?? time());
-    $fixtures['sourceStrategy'] = 'fast-primary-cache';
+    $fixtures['sourceStrategy'] = $sourceStrategy;
     $fixtures['durationMs'] = (int)round((microtime(true) - $startedAt) * 1000);
     return $fixtures;
 }

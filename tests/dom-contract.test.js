@@ -117,8 +117,8 @@ if (!js.includes('"Sin fichajes recomendables"') || !js.includes("const firstCan
   throw new Error("An avoided player must not be auto-selected as the best market option");
 }
 
-if (!php.includes("if ($route === '/fixtures'") || !php.includes("fast_current_fixtures") || !php.includes("/competicion/mundial2026")) {
-  throw new Error("Fixture sync must use the public fast cached calendar instead of the slow provider cascade");
+if (!php.includes("if ($route === '/fixtures'") || !php.includes("fast_current_fixtures") || !php.includes("sofascore-primary") || !php.includes("resultados-futbol-fallback")) {
+  throw new Error("Fixture sync must use SofaScore first and Resultados-Futbol as fallback");
 }
 
 if (!js.includes("fixtureUnresolved") || !js.includes("upcomingFixtureCoverage")) {

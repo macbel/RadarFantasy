@@ -4414,14 +4414,22 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
         $fixtures = sofascore_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir);
     } catch (Throwable $sofascoreError) {
         try {
-            $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
-            $sourceStrategy = 'resultados-futbol-fallback';
+            $fixtures = api_football_current_fixtures($session, max($timeoutSeconds, 12), $headers, $strictTls, $dbDir);
+            $sourceStrategy = 'api-football-fallback';
             $fixtures['primarySourceError'] = $sofascoreError->getMessage();
-        } catch (Throwable $fallbackError) {
-            throw new RuntimeException(
-                'SofaScore no ha devuelto el calendario: ' . $sofascoreError->getMessage()
-                . '. Respaldo Resultados-Futbol: ' . $fallbackError->getMessage()
-            );
+        } catch (Throwable $apiFootballError) {
+            try {
+                $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
+                $sourceStrategy = 'resultados-futbol-fallback';
+                $fixtures['primarySourceError'] = $sofascoreError->getMessage();
+                $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
+            } catch (Throwable $resultadosError) {
+                throw new RuntimeException(
+                    'SofaScore no ha devuelto el calendario: ' . $sofascoreError->getMessage()
+                    . '. Respaldo API-Football: ' . $apiFootballError->getMessage()
+                    . '. Respaldo Resultados-Futbol: ' . $resultadosError->getMessage()
+                );
+            }
         }
     }
     $fixtures = decorate_fixture_competition_state($fixtures, $session);

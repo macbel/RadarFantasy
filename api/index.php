@@ -4420,30 +4420,40 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
             $fixtures['primarySourceError'] = $sofascoreError->getMessage();
         } catch (Throwable $apiFootballError) {
             try {
-                $fixtures = thesportsdb_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls);
-                $sourceStrategy = 'thesportsdb-fallback';
+                $fixtures = espn_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir);
+                $sourceStrategy = 'espn-fallback';
                 $fixtures['primarySourceError'] = $sofascoreError->getMessage();
                 $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
-            } catch (Throwable $sportsDbError) {
+            } catch (Throwable $espnError) {
                 try {
-                    $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
-                    $sourceStrategy = 'resultados-futbol-fallback';
+                    $fixtures = thesportsdb_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls);
+                    $sourceStrategy = 'thesportsdb-fallback';
                     $fixtures['primarySourceError'] = $sofascoreError->getMessage();
                     $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
-                    $fixtures['tertiarySourceError'] = $sportsDbError->getMessage();
-                } catch (Throwable $resultadosError) {
-                    throw new RuntimeException(
-                        'SofaScore no ha devuelto el calendario: ' . $sofascoreError->getMessage()
-                        . '. Respaldo API-Football: ' . $apiFootballError->getMessage()
-                        . '. Respaldo TheSportsDB: ' . $sportsDbError->getMessage()
-                        . '. Respaldo Resultados-Futbol: ' . $resultadosError->getMessage()
-                    );
+                    $fixtures['tertiarySourceError'] = $espnError->getMessage();
+                } catch (Throwable $sportsDbError) {
+                    try {
+                        $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
+                        $sourceStrategy = 'resultados-futbol-fallback';
+                        $fixtures['primarySourceError'] = $sofascoreError->getMessage();
+                        $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
+                        $fixtures['tertiarySourceError'] = $espnError->getMessage();
+                        $fixtures['quaternarySourceError'] = $sportsDbError->getMessage();
+                    } catch (Throwable $resultadosError) {
+                        throw new RuntimeException(
+                            'SofaScore no ha devuelto el calendario: ' . $sofascoreError->getMessage()
+                            . '. Respaldo API-Football: ' . $apiFootballError->getMessage()
+                            . '. Respaldo ESPN: ' . $espnError->getMessage()
+                            . '. Respaldo TheSportsDB: ' . $sportsDbError->getMessage()
+                            . '. Respaldo Resultados-Futbol: ' . $resultadosError->getMessage()
+                        );
+                    }
                 }
             }
         }
     }
     $fixtures = decorate_fixture_competition_state($fixtures, $session);
-    $fixtures['schemaVersion'] = 4;
+    $fixtures['schemaVersion'] = 5;
     $fixtures['fetchedAtTs'] = (int)($fixtures['fetchedAtTs'] ?? time());
     $fixtures['sourceStrategy'] = $sourceStrategy;
     $fixtures['durationMs'] = (int)round((microtime(true) - $startedAt) * 1000);
@@ -4467,7 +4477,9 @@ function decorate_fixture_competition_state(array $fixtures, array $session): ar
             if ($home !== '') $active[normalize_text($home)] = $home;
             if ($away !== '') $active[normalize_text($away)] = $away;
         }
-        if ($isKnockout && $finished && is_numeric($event['homeScore'] ?? null) && is_numeric($event['awayScore'] ?? null)) {
+        $round = normalize_text((string)($event['round'] ?? ''));
+        $isKnockoutEvent = preg_match('/round of|round-of|octav|quarter|cuartos|semi|final|knockout|32|16/', $round) === 1;
+        if ($isKnockout && $isKnockoutEvent && $finished && is_numeric($event['homeScore'] ?? null) && is_numeric($event['awayScore'] ?? null)) {
             $homeScore = (int)$event['homeScore'];
             $awayScore = (int)$event['awayScore'];
             if ($homeScore !== $awayScore) {
@@ -4529,6 +4541,81 @@ function resultados_futbol_parse_calendar_html(string $html, string $sourceUrl):
         ];
     }
     return $events;
+}
+
+function espn_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
+{
+    $competition = normalize_text((string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? '')));
+    $slug = match (true) {
+        preg_match('/world|mundial|selecc|copa del mundo/', $competition) === 1 => 'fifa.world',
+        preg_match('/laliga|la liga|primera|ea sports/', $competition) === 1 => 'esp.1',
+        preg_match('/premier/', $competition) === 1 => 'eng.1',
+        preg_match('/bundesliga/', $competition) === 1 => 'ger.1',
+        preg_match('/serie a/', $competition) === 1 => 'ita.1',
+        preg_match('/ligue 1|ligue-1/', $competition) === 1 => 'fra.1',
+        preg_match('/champions/', $competition) === 1 => 'uefa.champions',
+        default => ''
+    };
+    if ($slug === '') throw new RuntimeException('ESPN no reconoce la competicion');
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'espn-fixtures-' . slugify($competition) . '.json';
+    $cached = read_json_file($cachePath, []);
+    if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && !empty($cached['events'])) {
+        $cached['cacheStatus'] = 'hit-espn';
+        return $cached;
+    }
+    $year = (int)date('Y');
+    $url = 'https://site.api.espn.com/apis/site/v2/sports/soccer/' . rawurlencode($slug)
+        . '/scoreboard?dates=' . $year . '&limit=250';
+    $payload = http_get_json($url, $timeoutSeconds, $headers, $strictTls);
+    $events = [];
+    foreach ((array)($payload['events'] ?? []) as $event) {
+        if (!is_array($event)) continue;
+        $competitionRow = is_array($event['competitions'][0] ?? null) ? $event['competitions'][0] : [];
+        $home = [];
+        $away = [];
+        foreach ((array)($competitionRow['competitors'] ?? []) as $competitor) {
+            if (!is_array($competitor)) continue;
+            if (($competitor['homeAway'] ?? '') === 'home') $home = $competitor;
+            if (($competitor['homeAway'] ?? '') === 'away') $away = $competitor;
+        }
+        if (!$home || !$away) continue;
+        $timestamp = strtotime((string)($event['date'] ?? '')) ?: 0;
+        if ($timestamp <= 0) continue;
+        $statusType = (array)($event['status']['type'] ?? []);
+        $homeScore = $home['score'] ?? null;
+        $awayScore = $away['score'] ?? null;
+        $events[] = [
+            'id' => (string)($event['id'] ?? md5((string)($event['name'] ?? '') . $timestamp)),
+            'timestamp' => $timestamp,
+            'round' => (string)($event['season']['slug'] ?? $event['week']['text'] ?? ''),
+            'status' => !empty($statusType['completed']) ? 'finished' : (string)($statusType['state'] ?? 'notstarted'),
+            'statusText' => (string)($statusType['description'] ?? $statusType['detail'] ?? 'Proximo'),
+            'home' => [
+                'name' => (string)($home['team']['displayName'] ?? $home['team']['name'] ?? 'Local'),
+                'image' => (string)($home['team']['logo'] ?? '')
+            ],
+            'away' => [
+                'name' => (string)($away['team']['displayName'] ?? $away['team']['name'] ?? 'Visitante'),
+                'image' => (string)($away['team']['logo'] ?? '')
+            ],
+            'homeScore' => is_numeric($homeScore) ? (int)$homeScore : null,
+            'awayScore' => is_numeric($awayScore) ? (int)$awayScore : null,
+            'detailUrl' => (string)($event['links'][0]['href'] ?? '') ?: null,
+            'sofascoreUrl' => null
+        ];
+    }
+    if (!$events) throw new RuntimeException('ESPN no ha devuelto partidos');
+    usort($events, static fn($a, $b) => $a['timestamp'] <=> $b['timestamp']);
+    $result = [
+        'ok' => true,
+        'competition' => (string)($payload['leagues'][0]['name'] ?? ($session['competition'] ?? 'Partidos')),
+        'round' => 'calendario',
+        'events' => $events,
+        'fetchedAtTs' => time(),
+        'cacheStatus' => 'espn'
+    ];
+    write_json_file($cachePath, $result);
+    return $result;
 }
 
 function thesportsdb_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls): array

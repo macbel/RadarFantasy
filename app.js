@@ -712,7 +712,7 @@ const hasUpcomingFixtureEvents = (fixtures = state.leagueFixtures) => {
 const fixtureDataNeedsRefresh = (fixtures = state.leagueFixtures) => {
   const fetchedAtMs = Number(fixtures?.fetchedAtTs || 0) * 1000;
   const stale = !Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0 || Date.now() - fetchedAtMs > 45 * 60 * 1000;
-  return Number(fixtures?.schemaVersion || 0) < 4 || stale || !hasUpcomingFixtureEvents(fixtures);
+  return Number(fixtures?.schemaVersion || 0) < 5 || stale || !hasUpcomingFixtureEvents(fixtures);
 };
 
 const playerIsEliminatedFromCompetition = (player) => {

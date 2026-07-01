@@ -121,7 +121,7 @@ if (!js.includes('"Sin fichajes recomendables"') || !js.includes("const firstCan
   throw new Error("An avoided player must not be auto-selected as the best market option");
 }
 
-if (!php.includes("if ($route === '/fixtures'") || !php.includes("fast_current_fixtures") || !php.includes("sofascore-primary") || !php.includes("api-football-fallback") || !php.includes("thesportsdb-fallback") || !php.includes("resultados-futbol-fallback")) {
+if (!php.includes("if ($route === '/fixtures'") || !php.includes("fast_current_fixtures") || !php.includes("sofascore-primary") || !php.includes("api-football-fallback") || !php.includes("espn-fallback") || !php.includes("thesportsdb-fallback") || !php.includes("resultados-futbol-fallback")) {
   throw new Error("Fixture sync must use SofaScore first with resilient provider fallbacks");
 }
 
@@ -129,7 +129,7 @@ if (!js.includes("fixtureUnresolved") || !js.includes("upcomingFixtureCoverage")
   throw new Error("An unresolved fixture link must be distinct from a confirmed missing next match");
 }
 
-if (!php.includes("$fixtures['schemaVersion'] = 4") || !php.includes("eliminatedTeams") || !js.includes("45 * 60 * 1000")) {
+if (!php.includes("$fixtures['schemaVersion'] = 5") || !php.includes("eliminatedTeams") || !js.includes("45 * 60 * 1000")) {
   throw new Error("Old incomplete fixture snapshots must be invalidated after the calendar fix");
 }
 

@@ -164,18 +164,20 @@
               </aside>
             </div>
           </section>
+          <div class="external-input-actions market-external-actions">
+            <button class="ghost-button" type="button" id="market-refresh-inline" disabled>
+              <span class="icon icon-refresh" aria-hidden="true"></span>
+              Actualizar mercado
+            </button>
+          </div>
           <section class="input-band" aria-label="Entrada de mercado">
-            <div class="market-input">
+            <div class="market-input optional-manual-entry" id="market-manual-entry" hidden>
               <div class="section-heading">
                 <div>
                   <p class="eyebrow">Entrada</p>
                   <h3>Mercado y respaldo manual</h3>
                 </div>
                 <div class="section-heading-actions">
-                  <button class="ghost-button" type="button" id="market-refresh-inline" disabled>
-                    <span class="icon icon-refresh" aria-hidden="true"></span>
-                    Actualizar mercado
-                  </button>
                   <button class="icon-button" type="button" id="clear-input" aria-label="Limpiar entrada" title="Limpiar entrada">
                     <span class="icon icon-clear" aria-hidden="true"></span>
                   </button>
@@ -450,7 +452,8 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
 
         <section class="view active" id="team-view" aria-label="Mi equipo y alineacion ideal">
           <section class="team-layout">
-            <div class="market-input">
+            <div class="team-primary-column">
+            <div class="market-input optional-manual-entry" id="team-manual-entry" hidden>
               <div class="section-heading">
                 <div>
                   <p class="eyebrow">Plantilla</p>
@@ -476,6 +479,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 </div>
               </div>
               <img id="team-image-preview" class="image-preview" alt="Vista previa de captura del equipo" hidden />
+            </div>
               <div class="team-actions">
                 <button class="ghost-button" type="button" id="team-refresh-inline" disabled>
                   <span class="icon icon-refresh" aria-hidden="true"></span>
@@ -1033,7 +1037,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
               </label>
               <label class="toggle-row">
                 <input id="show-image-upload" type="checkbox" />
-                <span>Mostrar la carga opcional de mercado y plantilla mediante imagen</span>
+                <span>Mostrar la carga manual de mercado y plantilla</span>
               </label>
               <label class="toggle-row">
                 <input id="startup-sync-enabled" type="checkbox" checked />

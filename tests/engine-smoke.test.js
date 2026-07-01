@@ -230,6 +230,39 @@ if (!eliminatedMaeda.noNextMatch || !eliminatedMaeda.contextualReasons.some((rea
   throw new Error("An explicitly eliminated national team must never remain a bid candidate: " + JSON.stringify(eliminatedMaeda));
 }
 
+const previousNeedTeam = state.teamPlayers;
+state.teamPlayers = [
+  ...Array.from({ length: 5 }, (_, index) => ({ id: "need-df-" + index, name: "Defensa " + index, team: "España", position: "DF" })),
+  { id: "need-mc-1", name: "Medio 1", team: "España", position: "MC" },
+  { id: "need-mc-2", name: "Medio 2", team: "España", position: "MC" },
+  { id: "need-mc-eliminated", name: "Medio eliminado", team: "Costa de Marfil", position: "MC", biwengerValue: 8000000, starter: 90 }
+];
+state.leagueFixtures.eliminatedTeams = ["Ivory Coast"];
+const urgentNeed = teamNeedPositions()[0];
+if (urgentNeed?.position !== "MC" || urgentNeed.current !== 2 || urgentNeed.gap !== 3) {
+  throw new Error("Squad needs must exclude eliminated players and prioritize midfield depth: " + JSON.stringify(teamNeedPositions()));
+}
+const needOrdered = [
+  { name: "Defensa fuerte", squadFitScore: 58, recommendation: 92, marketDecision: { type: "buy" } },
+  { name: "Medio necesario", squadFitScore: 96, recommendation: 72, marketDecision: { type: "limited" } }
+].sort(compareMarketRecommendations);
+if (needOrdered[0].name !== "Medio necesario") {
+  throw new Error("Actionable market ordering must prioritize the squad position need");
+}
+const eliminatedSale = saleUrgencyForPlayer({
+  id: "need-mc-eliminated",
+  name: "Medio eliminado",
+  team: "Costa de Marfil",
+  position: "MC",
+  biwengerValue: 8000000,
+  starter: 90,
+  lineupScore: 90
+});
+if (eliminatedSale.action !== "Vender hoy" || eliminatedSale.score < 90) {
+  throw new Error("Eliminated players must be proposed for sale even when they were top players: " + JSON.stringify(eliminatedSale));
+}
+state.teamPlayers = previousNeedTeam;
+
 state.competition = "club";
 state.leagueFixtures = {
   events: [{

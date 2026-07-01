@@ -1382,7 +1382,7 @@ const initMarketAnalysisCenter = () => {
 };
 
 const teamNeedPositions = () => {
-  const counts = teamPositionCounts();
+  const counts = teamPositionCounts({ availableOnly: true });
   return Object.entries(SQUAD_TARGETS)
     .map(([position, target]) => ({
       position,
@@ -1705,7 +1705,7 @@ const assistantBidCandidates = (players = assistantMarketPlayers()) => players
     const recent = player.recentForm || recentFormProfile(player);
     const priority = clamp(
       player.recommendation
-      + (player.squadFitScore - 58) * 0.12
+      + (player.squadFitScore - 58) * 0.45
       + (recent.score - 50) * 0.1
       + Math.min(8, Number(plan.demand || 0) * 2)
       + (player.marketDecision?.type === "buy" ? 6 : 0)
@@ -1768,7 +1768,14 @@ const saleUrgencyForPlayer = (player, context = {}) => {
   const value = teamPlayerBiwengerValue(player);
   const recent = player.recentForm || recentFormProfile(player);
   const quality = Number(player.lineupScore ?? player.recommendation ?? 50);
-  const noNextMatch = Boolean(player.marketIntelligence?.noNextMatch);
+  const eliminated = player.outOfCompetition === true
+    || player.activeInCompetition === false
+    || playerIsEliminatedFromCompetition(player);
+  const noNextMatch = eliminated || Boolean(player.marketIntelligence?.noNextMatch);
+  const unavailableStatus = ["injured", "suspended"].includes(String(player.health?.status || "").toLowerCase());
+  const fantasyAverage = fantasyAveragePointsForScoring(player);
+  const topPlayer = quality >= 80
+    || (Number(player.starter || 0) >= 78 && Number.isFinite(fantasyAverage) && fantasyAverage >= 6.5);
   const valueDiff = Number(player.biwengerDiff ?? player.sourceSummary?.fantasy?.biwengerDiff ?? 0);
   const balance = Number.isFinite(Number(context.balanceAfterRoundAndOffers))
     ? Number(context.balanceAfterRoundAndOffers)
@@ -1800,6 +1807,8 @@ const saleUrgencyForPlayer = (player, context = {}) => {
   if (roundAlmostCoversDebt && protectHotStreak) score -= 10;
   if (debtAfter > 0 && value > debtAfter * 2.2 && quality >= 70 && !immediateRisk) score -= 14;
   if (protectHotStreak) score = Math.min(score - 28, 46);
+  if (eliminated) score = Math.max(score, 94);
+  else if (unavailableStatus && !topPlayer) score = Math.max(score, 78);
   const multiplier = score >= 74
     ? (negativePressure ? 1 : 1.04)
     : score >= 58
@@ -1813,8 +1822,11 @@ const saleUrgencyForPlayer = (player, context = {}) => {
     surplus,
     quality,
     recent,
-    action: score >= 70 ? "Vender hoy" : score >= 54 ? "Poner caro" : "Mantener",
+    action: eliminated ? "Vender hoy" : score >= 70 ? "Vender hoy" : score >= 54 ? "Poner caro" : "Mantener",
     reason: [
+      eliminated ? "eliminado: no volverá a jugar" : null,
+      unavailableStatus && !topPlayer ? `${player.health?.status === "suspended" ? "sancionado" : "lesionado"} y no es una pieza top` : null,
+      unavailableStatus && topPlayer ? "baja temporal, pero pieza top" : null,
       surplus > 0 ? `sobran ${surplus} en ${player.position}` : null,
       `${Math.round(quality)}/100 once`,
       protectHotStreak ? `${recent.label}: proteger` : recent.label,
@@ -4329,8 +4341,12 @@ const decisionLabels = {
 
 const marketDecisionPriority = (player) => ({ buy: 4, limited: 3, watch: 2, avoid: 1 }[player?.marketDecision?.type] || 0);
 
+const marketActionabilityGroup = (player) => (["buy", "limited"].includes(player?.marketDecision?.type) ? 2 : player?.marketDecision?.type === "watch" ? 1 : 0);
+
 const compareMarketRecommendations = (a, b) => (
-  marketDecisionPriority(b) - marketDecisionPriority(a)
+  marketActionabilityGroup(b) - marketActionabilityGroup(a)
+  || Number(b?.squadFitScore || 0) - Number(a?.squadFitScore || 0)
+  || marketDecisionPriority(b) - marketDecisionPriority(a)
   || Number(b?.recommendation || 0) - Number(a?.recommendation || 0)
 );
 
@@ -4391,6 +4407,8 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
   else if (player.starter < 45) reasons.push(`Titularidad baja (${player.starter}%).`);
   if (intelligence.expectedPoints >= 6) reasons.push(`${intelligence.expectedPoints.toLocaleString("es-ES")} puntos esperados.`);
   if (relative?.scarceFit) reasons.push(`Escasez en ${relative.position}.`);
+  if (player.squadFitScore >= 85) reasons.push(`Necesidad prioritaria en ${POSITION_NAMES[player.position] || player.position}.`);
+  else if (player.squadFitScore >= 70) reasons.push(`Cubre una carencia en ${POSITION_NAMES[player.position] || player.position}.`);
   if (relative?.overpayRisk) reasons.push("Precio alto frente a calidad relativa.");
   if (intelligence.revaluationScore >= 68) reasons.push(`Revalorización ${intelligence.revaluationScore}/100.`);
   if (!reasons.length) reasons.push("Perfil equilibrado, conviene controlar importe.");
@@ -8654,8 +8672,16 @@ const extractTextFromImage = async (file) => {
   return text;
 };
 
-const teamPositionCounts = () => state.teamPlayers
+const playerUnavailableForSquadPlanning = (player) => (
+  player.outOfCompetition === true
+  || player.activeInCompetition === false
+  || playerIsEliminatedFromCompetition(player)
+  || ["injured", "suspended"].includes(String(player.health?.status || "").toLowerCase())
+);
+
+const teamPositionCounts = ({ availableOnly = false } = {}) => state.teamPlayers
   .map(playerForCompetition)
+  .filter((player) => !availableOnly || !playerUnavailableForSquadPlanning(player))
   .reduce((counts, player) => {
     const position = player.position || "MC";
     counts[position] = (counts[position] || 0) + 1;
@@ -8664,7 +8690,7 @@ const teamPositionCounts = () => state.teamPlayers
 
 const squadFitScore = (player) => {
   if (!state.teamPlayers.length) return 58;
-  const counts = teamPositionCounts();
+  const counts = teamPositionCounts({ availableOnly: true });
   const position = player.position || "MC";
   const target = SQUAD_TARGETS[position] || 4;
   const current = counts[position] || 0;
@@ -8708,6 +8734,7 @@ const analyzePlayer = (player, allPlayers) => {
   score += Math.min(3.5, intelligence.pointsPerMillion * 1.5);
   score -= intelligence.contextualRisk * 0.12;
   score += (recent.score - 50) * 0.46;
+  score += (fit - 58) * 0.35;
   score += learnedDecisionAdjustment(player, "bid");
   if (recent.hot) score += recent.average >= 8 ? 10 : 7;
   if (recent.cold) {
@@ -8878,9 +8905,10 @@ const syncSettingsControls = () => {
   const showImageUpload = Boolean(state.preferences.showImageUpload);
   const showImageUploadInput = qs("#show-image-upload");
   if (showImageUploadInput) showImageUploadInput.checked = showImageUpload;
-  [qs("#image-dropzone"), qs("#team-image-dropzone")].filter(Boolean).forEach((dropzone) => {
-    dropzone.hidden = !showImageUpload;
+  [qs("#market-manual-entry"), qs("#team-manual-entry")].filter(Boolean).forEach((entry) => {
+    entry.hidden = !showImageUpload;
   });
+  qs("#market-view .input-band")?.classList.toggle("manual-entry-hidden", !showImageUpload);
   if (!showImageUpload) {
     const marketPreview = qs("#image-preview");
     const teamPreview = qs("#team-image-preview");

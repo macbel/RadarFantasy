@@ -89,8 +89,13 @@ if (!html.includes('id="startup-sync-enabled"') || !js.includes("preferences.sta
   throw new Error("Full startup synchronization must be independently configurable");
 }
 
-if (!html.includes('id="show-image-upload"') || !html.includes('id="image-dropzone" hidden') || !html.includes('id="team-image-dropzone" hidden') || !js.includes("preferences.showImageUpload") || !php.includes("'showImageUpload'")) {
-  throw new Error("Image-based market and squad imports must be optional and hidden by default");
+if (!html.includes('id="show-image-upload"') || !html.includes('id="market-manual-entry" hidden') || !html.includes('id="team-manual-entry" hidden') || !js.includes("preferences.showImageUpload") || !php.includes("'showImageUpload'")) {
+  throw new Error("Manual market and squad imports must be optional and hidden by default");
+}
+
+if (html.indexOf('id="market-refresh-inline"') > html.indexOf('id="market-manual-entry"')
+  || html.indexOf('id="analyze-team"') < html.indexOf('id="team-manual-entry"')) {
+  throw new Error("Refresh and team action buttons must stay outside the optional manual-entry frames");
 }
 
 if (!html.includes('data-fantasy-settings-tab="biwenger"') || !html.includes('data-fantasy-settings-tab="laliga"') || !html.includes('data-fantasy-settings-tab="mister"')) {

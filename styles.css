@@ -894,6 +894,28 @@ textarea {
 
 .optional-image-upload[hidden] { display: none !important; }
 
+.optional-manual-entry[hidden] { display: none !important; }
+
+.external-input-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin: 0 0 12px;
+}
+
+.team-primary-column {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.team-primary-column .team-actions {
+  margin-top: 0;
+}
+
+.input-band.manual-entry-hidden {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .fantasy-provider-card {
   margin: 0;
 }

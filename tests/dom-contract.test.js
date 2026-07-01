@@ -49,6 +49,10 @@ if (!js.includes("biwengerImportSignature") || !js.includes("mercado sin cambios
   throw new Error("Automatic synchronization must stop early when the Biwenger market has not changed and still perform periodic full refreshes");
 }
 
+if (!js.includes("playerEligibleForNextLineup") || !js.includes("savedLineupHasUnavailable")) {
+  throw new Error("The ideal lineup must exclude unavailable players and repair stale saved lineups");
+}
+
 if (!html.includes('id="app-update-popup"') || !html.includes('id="check-app-update"') || !js.includes("checkForAppUpdate")) {
   throw new Error("The mobile app must expose automatic update checks and an installation popup");
 }

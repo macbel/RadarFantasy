@@ -622,6 +622,26 @@ if (requiredFormations.some((name) => !FORMATIONS.some((formation) => formation.
   throw new Error("All official Biwenger extra formations must be selectable: " + JSON.stringify(FORMATIONS));
 }
 
+const lineupTestTeam = state.teamPlayers;
+const lineupTestFixtures = state.leagueFixtures;
+const lineupTestCompetition = state.competition;
+state.competition = "worldcup";
+state.leagueFixtures = { eliminatedTeams: ["Ivory Coast"], events: [{ timestamp: Math.floor(Date.now() / 1000) + 86400, home: { name: "Spain" }, away: { name: "France" } }] };
+state.teamPlayers = [
+  { id: "eligible-df", name: "Defensa disponible", team: "Spain", position: "DF", starter: 60, form: 55, asScore: 55, sofascore: 55, stats: 55, risk: "low", health: { status: "available" } },
+  { id: "injured-df", name: "Defensa lesionado", team: "Spain", position: "DF", starter: 99, form: 99, asScore: 99, sofascore: 99, stats: 99, risk: "low", health: { status: "injured" } },
+  { id: "suspended-df", name: "Defensa sancionado", team: "Spain", position: "DF", starter: 98, form: 98, asScore: 98, sofascore: 98, stats: 98, risk: "low", health: { status: "suspended" } },
+  { id: "eliminated-df", name: "Defensa eliminado", team: "Costa de Marfil", position: "DF", starter: 97, form: 97, asScore: 97, sofascore: 97, stats: 97, risk: "low", health: { status: "available" } }
+];
+const availabilityLineup = calculateBestLineup();
+const availabilityIds = availabilityLineup.selected.map((player) => player.id);
+if (!availabilityIds.includes("eligible-df") || availabilityIds.some((id) => ["injured-df", "suspended-df", "eliminated-df"].includes(id))) {
+  throw new Error("Ideal lineup included a player unavailable for the next round: " + JSON.stringify(availabilityIds));
+}
+state.teamPlayers = lineupTestTeam;
+state.leagueFixtures = lineupTestFixtures;
+state.competition = lineupTestCompetition;
+
 if (compareAppVersions("3.2.0", "3.1.9") !== 1 || compareAppVersions("3.2", "3.2.0") !== 0 || compareAppVersions("3.1.9", "3.2.0") !== -1) {
   throw new Error("Mobile release version comparison is not reliable");
 }

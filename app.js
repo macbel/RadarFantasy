@@ -9813,11 +9813,22 @@ const lineupPlayerScore = (player) => {
   return Math.round(clamp(score));
 };
 
+const playerEligibleForNextLineup = (player) => {
+  if (playerUnavailableForSquadPlanning(player)) return false;
+  const system = systemScore(player, state.scoring);
+  const intelligence = player.marketIntelligence
+    || marketIntelligenceForPlayer(player, system, player.priceScore || 50, player.squadFitScore || squadFitScore(player));
+  return !intelligence.noNextMatch;
+};
+
 const calculateBestLineup = () => {
-  const players = state.teamPlayers.map(playerForCompetition).map((player) => ({
-    ...player,
-    lineupScore: lineupPlayerScore(player)
-  }));
+  const players = state.teamPlayers
+    .map(playerForCompetition)
+    .filter(playerEligibleForNextLineup)
+    .map((player) => ({
+      ...player,
+      lineupScore: lineupPlayerScore(player)
+    }));
   const byPosition = players.reduce((groups, player) => {
     const position = player.position || "MC";
     groups[position] = groups[position] || [];
@@ -9860,10 +9871,13 @@ const editableLineupFromRecommendation = (recommendation = calculateBestLineup()
   };
 };
 
-const teamPlayersWithLineupScore = () => state.teamPlayers.map(playerForCompetition).map((player) => ({
-  ...player,
-  lineupScore: lineupPlayerScore(player)
-}));
+const teamPlayersWithLineupScore = () => state.teamPlayers
+  .map(playerForCompetition)
+  .map((player) => ({
+    ...player,
+    lineupEligible: playerEligibleForNextLineup(player),
+    lineupScore: lineupPlayerScore(player)
+  }));
 
 const lineupForFormation = (formationName) => {
   const formation = FORMATIONS.find((item) => item.name === formationName) || FORMATIONS[0];
@@ -9871,7 +9885,7 @@ const lineupForFormation = (formationName) => {
   const selected = [];
   Object.entries(formation.slots).forEach(([position, amount]) => {
     selected.push(...players
-      .filter((player) => player.position === position)
+      .filter((player) => player.position === position && player.lineupEligible)
       .sort((a, b) => b.lineupScore - a.lineupScore)
       .slice(0, amount));
   });
@@ -9892,7 +9906,7 @@ const resolvedEditableLineup = () => {
   const formation = FORMATIONS.find((item) => item.name === state.editableLineup?.formationName) || FORMATIONS[0];
   const players = teamPlayersWithLineupScore();
   const byId = new Map(players.map((player) => [String(player.id), player]));
-  const selected = (state.editableLineup?.playerIds || []).map((id) => byId.get(String(id))).filter(Boolean);
+  const selected = (state.editableLineup?.playerIds || []).map((id) => byId.get(String(id))).filter((player) => player?.lineupEligible);
   const selectedById = new Map(selected.map((player) => [String(player.id), player]));
   const captain = selectedById.get(String(state.editableLineup?.captainId || "")) || [...selected].sort((a, b) => b.lineupScore - a.lineupScore)[0] || null;
   const strikerCandidate = selectedById.get(String(state.editableLineup?.strikerId || ""));
@@ -10019,7 +10033,9 @@ const renderLineup = () => {
     return;
   }
   state.recommendedLineup = best;
-  if (!state.editableLineup?.formationName || !Array.isArray(state.editableLineup.playerIds)) {
+  const allPlayersById = new Map(teamPlayersWithLineupScore().map((player) => [String(player.id), player]));
+  const savedLineupHasUnavailable = (state.editableLineup?.playerIds || []).some((id) => !allPlayersById.get(String(id))?.lineupEligible);
+  if (!state.editableLineup?.formationName || !Array.isArray(state.editableLineup.playerIds) || savedLineupHasUnavailable) {
     state.editableLineup = editableLineupFromRecommendation(best);
   }
   const editable = resolvedEditableLineup();
@@ -10031,7 +10047,7 @@ const renderLineup = () => {
   }, {});
   const recommendedCoach = state.teamPlayers
     .map(playerForCompetition)
-    .filter((player) => player.position === "ENT")
+    .filter((player) => player.position === "ENT" && playerEligibleForNextLineup(player))
     .map((player) => ({ ...player, lineupScore: lineupPlayerScore(player) }))
     .sort((a, b) => b.lineupScore - a.lineupScore)[0] || null;
   const missing = Object.entries(editable.formation.slots)

@@ -55,11 +55,24 @@ if (!js.includes("skipEnrichment: fastStartup") || !js.includes("refreshDeferred
   throw new Error("Startup must prioritize core market and team data before deferred source enrichment");
 }
 
+if (!js.includes("teamFirst: fastStartup") || js.indexOf('teamImported = await importPart("team")') > js.indexOf('const marketImported = await importPart("market")')) {
+  throw new Error("Startup must render the team before waiting for the market import");
+}
+
+if (!js.includes("withSilentDataSync") || !js.includes("window.requestAnimationFrame(() => window.requestAnimationFrame(startBackgroundRefresh))")) {
+  throw new Error("Automatic startup work must wait for the first paint and stay visually non-blocking");
+}
+
+const startupRefreshBlock = js.slice(js.indexOf("const refreshStartupDataInBackground"), js.indexOf("const init = () =>"));
+if (startupRefreshBlock.includes("await refreshFutbolFantasyStatus()") || !js.includes("window.setTimeout(() => checkForAppUpdate(), 60 * 1000)")) {
+  throw new Error("Secondary services and app update checks must stay outside the essential startup path");
+}
+
 if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none") || !css.includes(".data-sync-cancel") || !css.includes("pointer-events: auto")) {
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=84') || !sw.includes('radar-fantasy-shell-v31')) {
+if (!html.includes('app.js?v=85') || !sw.includes('radar-fantasy-shell-v32')) {
   throw new Error("The non-blocking startup must invalidate the previous cached application shell");
 }
 

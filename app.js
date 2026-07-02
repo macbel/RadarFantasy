@@ -123,7 +123,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.6.4";
+const APP_VERSION = "3.6.5";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -4938,6 +4938,17 @@ let dataSyncShowTimer = null;
 let dataSyncHideTimer = null;
 let activeDataSyncController = null;
 let dataSyncWasCancelled = false;
+let backgroundDataSyncDepth = 0;
+let dataSyncRunsSilently = false;
+
+const withSilentDataSync = async (callback) => {
+  backgroundDataSyncDepth += 1;
+  try {
+    return await callback();
+  } finally {
+    backgroundDataSyncDepth = Math.max(0, backgroundDataSyncDepth - 1);
+  }
+};
 
 const isDataSyncCancellation = (error = null) => dataSyncWasCancelled || error?.name === "AbortError";
 const throwIfDataSyncCancelled = () => {
@@ -4970,12 +4981,20 @@ const beginDataSync = (message = "Sincronizando la información más reciente...
   if (dataSyncDepth === 0) {
     activeDataSyncController = new AbortController();
     dataSyncWasCancelled = false;
+    dataSyncRunsSilently = backgroundDataSyncDepth > 0;
     const cancelButton = qs("#cancel-data-sync");
     if (cancelButton) cancelButton.disabled = false;
   }
   dataSyncDepth += 1;
   window.clearTimeout(dataSyncHideTimer);
   updateDataSync(message, "busy");
+  if (dataSyncRunsSilently) {
+    window.clearTimeout(dataSyncShowTimer);
+    dataSyncShowTimer = null;
+    const popup = qs("#data-sync-popup");
+    if (popup) popup.hidden = true;
+    return;
+  }
   if (dataSyncShowTimer) return;
   dataSyncShowTimer = window.setTimeout(() => {
     dataSyncShowTimer = null;
@@ -4991,6 +5010,12 @@ const endDataSync = ({ error = "" } = {}) => {
   dataSyncShowTimer = null;
   const popup = qs("#data-sync-popup");
   activeDataSyncController = null;
+  if (dataSyncRunsSilently) {
+    dataSyncRunsSilently = false;
+    dataSyncWasCancelled = false;
+    if (popup) popup.hidden = true;
+    return;
+  }
   if (!popup) return;
   if (dataSyncWasCancelled) {
     updateDataSync("Carga detenida. Se mantienen los últimos datos válidos.", "error");
@@ -6408,16 +6433,26 @@ const syncSelectedLeagueWithBiwenger = async (options = {}) => {
       if (!response.ok) throw new Error(payload.error || "No se pudo cambiar la liga activa de Biwenger.");
       applyBiwengerSession(payload);
     }
-    const marketImported = await importFromBiwenger("market", {
+    const importPart = (kind) => importFromBiwenger(kind, {
       deferFollowUp: true,
       skipEnrichment: Boolean(options.skipEnrichment),
       incremental: Boolean(options.incremental && !options.fullSync),
-      previousSignature: options.previousSignatures?.market || "",
+      previousSignature: options.previousSignatures?.[kind] || "",
       returnMeta: true
     });
+    let teamImported = null;
+    if (options.teamFirst) {
+      teamImported = await importPart("team");
+      throwIfDataSyncCancelled();
+      if (!teamImported.success) {
+        throw new Error(`No se pudo cargar primero la plantilla de ${payload.leagueName || leagueName}.`);
+      }
+      await yieldToInterface();
+    }
+    const marketImported = await importPart("market");
     throwIfDataSyncCancelled();
     if (!marketImported.success) throw new Error("No se pudo comprobar el mercado de Biwenger.");
-    if (options.incremental && !options.fullSync && !marketImported.changed && !options.checkTeamWhenMarketUnchanged) {
+    if (!teamImported && options.incremental && !options.fullSync && !marketImported.changed && !options.checkTeamWhenMarketUnchanged) {
       const message = `${payload.leagueName || leagueName}: mercado sin cambios; se omite el resto de la descarga.`;
       setBiwengerStatus(message, "ready");
       setLeagueStatus(message);
@@ -6428,19 +6463,15 @@ const syncSelectedLeagueWithBiwenger = async (options = {}) => {
         signatures: { ...(options.previousSignatures || {}), market: marketImported.signature }
       };
     }
-    const teamImported = await importFromBiwenger("team", {
-      deferFollowUp: true,
-      skipEnrichment: Boolean(options.skipEnrichment),
-      incremental: Boolean(options.incremental && !options.fullSync),
-      previousSignature: options.previousSignatures?.team || "",
-      returnMeta: true
-    });
-    throwIfDataSyncCancelled();
+    if (!teamImported) {
+      teamImported = await importPart("team");
+      throwIfDataSyncCancelled();
+    }
     if (!options.skipOperations) await loadBiwengerOperations(false);
     if (!teamImported.success) {
       throw new Error(`Liga cambiada a ${payload.leagueName || leagueName}, pero no se pudieron actualizar todos sus datos.`);
     }
-    const changedParts = [marketImported.changed ? "mercado" : null, teamImported.changed ? "equipo" : null].filter(Boolean);
+    const changedParts = [teamImported.changed ? "equipo" : null, marketImported.changed ? "mercado" : null].filter(Boolean);
     const message = changedParts.length
       ? `${payload.leagueName || leagueName}: ${changedParts.join(" y ")} actualizados.`
       : `${payload.leagueName || leagueName}: datos sin cambios.`;
@@ -6490,20 +6521,22 @@ const saveAutoSyncRecord = (record) => {
 };
 
 let deferredSourceRefreshPromise = null;
-const refreshDeferredSourcesInBackground = () => {
+const refreshDeferredSourcesInBackground = ({ enrich = false } = {}) => {
   if (deferredSourceRefreshPromise) return deferredSourceRefreshPromise;
-  deferredSourceRefreshPromise = (async () => {
+  deferredSourceRefreshPromise = withSilentDataSync(async () => {
     beginDataSync("Completando análisis y alertas en segundo plano. La aplicación sigue disponible.");
     try {
-      if (state.players.length) await enrichCurrentMarket(false);
-      if (state.teamPlayers.length) await refreshTeamAlertSources();
-      if (state.favorites.length) await loadFavoriteCatalog({ force: true });
+      await refreshFutbolFantasyStatus();
+      await refreshSourceDbStatus();
+      if (enrich && state.players.length) await enrichCurrentMarket(false);
+      if (enrich && state.teamPlayers.length) await refreshTeamAlertSources();
+      if (enrich && state.favorites.length) await loadFavoriteCatalog({ force: true });
     } finally {
       state.autoSync.deferredSources = false;
       endDataSync();
       deferredSourceRefreshPromise = null;
     }
-  })();
+  });
   return deferredSourceRefreshPromise;
 };
 
@@ -6534,6 +6567,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
       syncResult = await syncSelectedLeagueWithBiwenger({
         skipEnrichment: fastStartup,
         skipOperations: true,
+        teamFirst: fastStartup,
         incremental: true,
         fullSync: fullSyncDue,
         checkTeamWhenMarketUnchanged: reason === "startup",
@@ -11052,13 +11086,12 @@ let startupRefreshPromise = null;
 
 const refreshStartupDataInBackground = (localPayload) => {
   if (startupRefreshPromise) return startupRefreshPromise;
-  startupRefreshPromise = (async () => {
+  startupRefreshPromise = withSilentDataSync(async () => {
     beginDataSync("Actualizando en segundo plano. Puedes seguir navegando por la aplicación.");
     try {
       await restoreRememberedBiwengerAccount();
       await syncLeaguesFromServer(localPayload);
       await refreshBiwengerStatus("", { refreshFixtures: false });
-      await refreshFutbolFantasyStatus();
       const shouldRefreshAtStartup = state.preferences.startupSync !== false;
       if (shouldRefreshAtStartup) {
         await runAutomaticSync({ force: false, reason: "startup" });
@@ -11080,11 +11113,11 @@ const refreshStartupDataInBackground = (localPayload) => {
           : ""
       });
       startupRefreshPromise = null;
-      if (shouldRefreshDeferredSources) {
-        window.setTimeout(() => { void refreshDeferredSourcesInBackground(); }, 0);
-      }
+      window.setTimeout(() => {
+        void refreshDeferredSourcesInBackground({ enrich: shouldRefreshDeferredSources });
+      }, 0);
     }
-  })();
+  });
   return startupRefreshPromise;
 };
 
@@ -11097,16 +11130,17 @@ const init = () => {
   syncApiConfigUi();
   updateWeightLabels();
   refreshOcrAvailability();
-  renderTable();
-  renderTeam();
-  renderLineup();
   setSourceBusy(false);
-  void refreshSourceDbStatus();
 
-  window.setTimeout(() => {
+  const startBackgroundRefresh = () => window.setTimeout(() => {
     void refreshStartupDataInBackground(localPayload);
   }, 0);
-  window.setTimeout(() => checkForAppUpdate(), 1500);
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(startBackgroundRefresh));
+  } else {
+    startBackgroundRefresh();
+  }
+  window.setTimeout(() => checkForAppUpdate(), 60 * 1000);
   window.setInterval(() => { void runAutomaticSync({ force: false, reason: "periodic" }); }, 10 * 60 * 1000);
 };
 

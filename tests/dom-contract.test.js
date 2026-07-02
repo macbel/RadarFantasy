@@ -1,9 +1,11 @@
 const fs = require("fs");
 
-const html = fs.readFileSync("index.html", "utf8");
-const js = fs.readFileSync("app.js", "utf8");
-const php = fs.readFileSync("api/index.php", "utf8");
-const css = fs.readFileSync("styles.css", "utf8");
+const normalizeEol = (value) => value.replace(/\r\n/g, "\n");
+const html = normalizeEol(fs.readFileSync("index.html", "utf8"));
+const js = normalizeEol(fs.readFileSync("app.js", "utf8"));
+const php = normalizeEol(fs.readFileSync("api/index.php", "utf8"));
+const css = normalizeEol(fs.readFileSync("styles.css", "utf8"));
+const sw = normalizeEol(fs.readFileSync("sw.js", "utf8"));
 const androidUpdater = fs.readFileSync("android/app/src/main/java/com/fantasymarketscout/app/AppUpdaterPlugin.java", "utf8");
 const androidManifest = fs.readFileSync("android/app/src/main/AndroidManifest.xml", "utf8");
 
@@ -43,6 +45,22 @@ if (!html.includes('id="data-sync-popup"') || !html.includes('id="cancel-data-sy
 
 if (!js.includes("const batchSize = 12") || !js.includes("deferFollowUp") || !js.includes("activeDataSyncController")) {
   throw new Error("Startup synchronization must avoid duplicate follow-up work and support request cancellation");
+}
+
+if (!js.includes("const localPayload = loadLocalLeagues();") || !js.includes("refreshStartupDataInBackground(localPayload)") || !js.includes("await yieldToInterface()")) {
+  throw new Error("Startup must paint local data immediately and yield while remote refresh continues in the background");
+}
+
+if (!js.includes("skipEnrichment: fastStartup") || !js.includes("refreshDeferredSourcesInBackground") || !js.includes("state.autoSync.deferredSources")) {
+  throw new Error("Startup must prioritize core market and team data before deferred source enrichment");
+}
+
+if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none") || !css.includes(".data-sync-cancel") || !css.includes("pointer-events: auto")) {
+  throw new Error("The background synchronization notice must not intercept application navigation");
+}
+
+if (!html.includes('app.js?v=84') || !sw.includes('radar-fantasy-shell-v31')) {
+  throw new Error("The non-blocking startup must invalidate the previous cached application shell");
 }
 
 if (!js.includes("biwengerImportSignature") || !js.includes("mercado sin cambios; se omite el resto de la descarga") || !js.includes("60 * 60 * 1000")) {

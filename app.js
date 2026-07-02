@@ -69,7 +69,8 @@
   autoSync: {
     running: false,
     lastAt: null,
-    status: "pending"
+    status: "pending",
+    deferredSources: false
   },
   recommendedLineup: null,
   editableLineup: null,
@@ -113,6 +114,7 @@
 
 const qs = (selector) => document.querySelector(selector);
 const qsa = (selector) => Array.from(document.querySelectorAll(selector));
+const yieldToInterface = () => new Promise((resolve) => window.setTimeout(resolve, 0));
 
 const APP_CONFIG = window.APP_CONFIG || {};
 const LOCAL_LEAGUES_KEY = "fantasy-market-scout.leagues.v1";
@@ -121,7 +123,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.6.3";
+const APP_VERSION = "3.6.4";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -4960,7 +4962,7 @@ const updateDataSync = (message, mode = "busy") => {
   const title = qs("#data-sync-popup-title");
   const detail = qs("#data-sync-popup-message");
   popup.dataset.mode = mode;
-  if (title) title.textContent = mode === "error" ? "Actualización incompleta" : mode === "ready" ? "Datos actualizados" : "Actualizando datos";
+  if (title) title.textContent = mode === "error" ? "Actualización incompleta" : mode === "ready" ? "Datos actualizados" : "Actualizando en segundo plano";
   if (detail) detail.textContent = message || "Sincronizando la información más reciente...";
 };
 
@@ -5456,20 +5458,25 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
   };
 };
 
-const loadLeagues = async () => {
+const loadLocalLeagues = () => {
   const localPayload = buildLocalLeaguePayload(ensureLocalLeagueDb());
   applyLeaguePayload(localPayload);
   setLeagueStatus("Ligas guardadas cargadas. Sincronizando servidor...");
+  return localPayload;
+};
+
+const syncLeaguesFromServer = async (localPayload) => {
   if (!canUseApi()) {
     setLeagueStatus("Guardado local en este dispositivo.");
-    return;
+    return localPayload;
   }
 
   try {
     const response = await apiFetch("/api/leagues");
     if (!response.ok) throw new Error("No se pudo cargar ligas");
     const payload = await response.json();
-    const mergedPayload = mergeLeaguePayloads(localPayload, payload);
+    const currentLocalPayload = buildLocalLeaguePayload(ensureLocalLeagueDb());
+    const mergedPayload = mergeLeaguePayloads(currentLocalPayload, payload);
     applyLeaguePayload(mergedPayload);
     writeLocalLeagueDb({
       version: 1,
@@ -5477,8 +5484,10 @@ const loadLeagues = async () => {
       leagues: Object.fromEntries(mergedPayload.leagues.map((league) => [league.id, league]))
     });
     setLeagueStatus("Ligas locales y servidor sincronizados.");
+    return mergedPayload;
   } catch (error) {
     setLeagueStatus("Sin API remota. Usando ligas guardadas en este dispositivo.");
+    return localPayload;
   }
 };
 
@@ -5888,6 +5897,7 @@ const enrichPlayerListBatched = async (players, forceRefresh = false, onProgress
       batch.forEach((player) => enrichedById.set(player.id, player));
     }
     if (onProgress) onProgress(Math.min(index + batch.length, candidates.length), candidates.length);
+    await yieldToInterface();
   }
 
   return {
@@ -6479,8 +6489,28 @@ const saveAutoSyncRecord = (record) => {
   writeJsonStorage(AUTO_SYNC_KEY, records);
 };
 
+let deferredSourceRefreshPromise = null;
+const refreshDeferredSourcesInBackground = () => {
+  if (deferredSourceRefreshPromise) return deferredSourceRefreshPromise;
+  deferredSourceRefreshPromise = (async () => {
+    beginDataSync("Completando análisis y alertas en segundo plano. La aplicación sigue disponible.");
+    try {
+      if (state.players.length) await enrichCurrentMarket(false);
+      if (state.teamPlayers.length) await refreshTeamAlertSources();
+      if (state.favorites.length) await loadFavoriteCatalog({ force: true });
+    } finally {
+      state.autoSync.deferredSources = false;
+      endDataSync();
+      deferredSourceRefreshPromise = null;
+    }
+  })();
+  return deferredSourceRefreshPromise;
+};
+
 const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   if (state.autoSync.running) return false;
+  const fastStartup = reason === "startup";
+  state.autoSync.deferredSources = false;
   const previous = autoSyncRecord();
   const previousTime = new Date(previous?.completedAt || 0).getTime();
   const freshEnough = Number.isFinite(previousTime) && Date.now() - previousTime < 20 * 60 * 1000;
@@ -6501,9 +6531,8 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   let syncResult = null;
   try {
     if (state.biwenger.authenticated) {
-      const fastStartup = reason === "startup";
       syncResult = await syncSelectedLeagueWithBiwenger({
-        skipEnrichment: fastStartup && !fullSyncDue,
+        skipEnrichment: fastStartup,
         skipOperations: true,
         incremental: true,
         fullSync: fullSyncDue,
@@ -6523,16 +6552,23 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
         }
       }
     } else {
-      if (state.players.length) await enrichCurrentMarket(false);
-      throwIfDataSyncCancelled();
-      await refreshTeamAlertSources();
-      throwIfDataSyncCancelled();
+      if (fastStartup) {
+        state.autoSync.deferredSources = Boolean(state.players.length || state.teamPlayers.length);
+      } else {
+        if (state.players.length) await enrichCurrentMarket(false);
+        throwIfDataSyncCancelled();
+        await refreshTeamAlertSources();
+        throwIfDataSyncCancelled();
+      }
       success = true;
     }
     if (!success) throw new Error("La sincronización no pudo completar todos los datos.");
     const completedAt = new Date().toISOString();
     state.autoSync.lastAt = completedAt;
     state.autoSync.status = syncResult?.unchanged ? "unchanged" : "ready";
+    if (fastStartup && state.biwenger.authenticated && (!syncResult?.unchanged || fullSyncDue)) {
+      state.autoSync.deferredSources = Boolean(state.players.length || state.teamPlayers.length);
+    }
     saveAutoSyncRecord({
       completedAt,
       fullSyncAt: fullSyncDue ? completedAt : (previous?.fullSyncAt || completedAt),
@@ -6543,7 +6579,9 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
       signatures: syncResult?.signatures || previous?.signatures || {}
     });
     renderDailyPlan(filteredPlayers());
-    if (state.favorites.length && (!syncResult?.unchanged || fullSyncDue)) await loadFavoriteCatalog({ force: true });
+    if (!fastStartup && state.favorites.length && (!syncResult?.unchanged || fullSyncDue)) {
+      await loadFavoriteCatalog({ force: true });
+    }
     await notifyDailyPlanIfNeeded();
     return true;
   } catch (error) {
@@ -11010,40 +11048,66 @@ const initEvents = () => {
   });
 };
 
-const init = async () => {
-  beginDataSync("Preparando la aplicación y cargando tus datos...");
-  try {
-    initNavigation();
-    initEvents();
-    initScorebatWidget();
-    await restoreRememberedBiwengerAccount();
-    registerRadarServiceWorker();
-    syncApiConfigUi();
-    updateWeightLabels();
-    refreshOcrAvailability();
-    renderTable();
-    renderTeam();
-    renderLineup();
-    setSourceBusy(false);
-    refreshSourceDbStatus();
-    await loadLeagues();
-    const shouldRefreshAtStartup = state.preferences.startupSync !== false;
-    await refreshBiwengerStatus("", { refreshFixtures: false });
-    await refreshFutbolFantasyStatus();
-    if (shouldRefreshAtStartup) {
-      await runAutomaticSync({ force: false, reason: "startup" });
-      if (state.favorites.length) await loadFavoriteCatalog({ force: true });
-    } else {
-      state.autoSync.status = "startup-skipped";
-      const status = qs("#daily-plan-status");
-      if (status) status.textContent = "Datos guardados cargados. La actualización al iniciar está desactivada en Ajustes.";
-      renderDailyPlan(filteredPlayers());
+let startupRefreshPromise = null;
+
+const refreshStartupDataInBackground = (localPayload) => {
+  if (startupRefreshPromise) return startupRefreshPromise;
+  startupRefreshPromise = (async () => {
+    beginDataSync("Actualizando en segundo plano. Puedes seguir navegando por la aplicación.");
+    try {
+      await restoreRememberedBiwengerAccount();
+      await syncLeaguesFromServer(localPayload);
+      await refreshBiwengerStatus("", { refreshFixtures: false });
+      await refreshFutbolFantasyStatus();
+      const shouldRefreshAtStartup = state.preferences.startupSync !== false;
+      if (shouldRefreshAtStartup) {
+        await runAutomaticSync({ force: false, reason: "startup" });
+      } else {
+        state.autoSync.status = "startup-skipped";
+        const status = qs("#daily-plan-status");
+        if (status) status.textContent = "Datos guardados cargados. La actualización al iniciar está desactivada en Ajustes.";
+        renderDailyPlan(filteredPlayers());
+      }
+    } catch (error) {
+      state.autoSync.status = "error";
+      const message = error?.message || "No se pudo completar la actualización en segundo plano.";
+      setLeagueStatus(`${message} Se mantienen los datos guardados.`);
+    } finally {
+      const shouldRefreshDeferredSources = state.autoSync.deferredSources && state.autoSync.status !== "error";
+      endDataSync({
+        error: state.autoSync.status === "error"
+          ? "La actualización en segundo plano quedó incompleta; puedes seguir usando los datos guardados."
+          : ""
+      });
+      startupRefreshPromise = null;
+      if (shouldRefreshDeferredSources) {
+        window.setTimeout(() => { void refreshDeferredSourcesInBackground(); }, 0);
+      }
     }
-    window.setTimeout(() => checkForAppUpdate(), 1500);
-    window.setInterval(() => runAutomaticSync({ force: false, reason: "periodic" }), 10 * 60 * 1000);
-  } finally {
-    endDataSync();
-  }
+  })();
+  return startupRefreshPromise;
+};
+
+const init = () => {
+  initNavigation();
+  initEvents();
+  initScorebatWidget();
+  const localPayload = loadLocalLeagues();
+  registerRadarServiceWorker();
+  syncApiConfigUi();
+  updateWeightLabels();
+  refreshOcrAvailability();
+  renderTable();
+  renderTeam();
+  renderLineup();
+  setSourceBusy(false);
+  void refreshSourceDbStatus();
+
+  window.setTimeout(() => {
+    void refreshStartupDataInBackground(localPayload);
+  }, 0);
+  window.setTimeout(() => checkForAppUpdate(), 1500);
+  window.setInterval(() => { void runAutomaticSync({ force: false, reason: "periodic" }); }, 10 * 60 * 1000);
 };
 
 init();

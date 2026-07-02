@@ -4677,6 +4677,7 @@ body.sheet-open {
   box-shadow: 0 18px 54px rgba(0, 0, 0, 0.52);
   transform: translateX(-50%);
   backdrop-filter: blur(12px);
+  pointer-events: none;
 }
 
 .data-sync-popup[data-mode="ready"] { border-color: rgba(54, 211, 153, 0.58); }
@@ -4706,6 +4707,7 @@ body.sheet-open {
   padding: 7px 11px;
   color: #ffd2d7;
   border-color: rgba(255, 102, 115, 0.44);
+  pointer-events: auto;
 }
 
 .data-sync-popup:not([data-mode="busy"]) .data-sync-cancel {

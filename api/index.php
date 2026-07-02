@@ -2401,7 +2401,10 @@ function sanitize_league_payload(array $payload): array
         'cover' => sanitize_media_url($payload['cover'] ?? null),
         'biwengerLeagueId' => isset($payload['biwengerLeagueId']) ? (int)$payload['biwengerLeagueId'] : null,
         'editableLineup' => sanitize_editable_lineup($payload['editableLineup'] ?? null),
-        'favorites' => $sanitizePlayers(array_slice((array)($payload['favorites'] ?? []), 0, 100))
+        'favorites' => $sanitizePlayers(array_slice((array)($payload['favorites'] ?? []), 0, 100)),
+        'favoritesUpdatedAt' => (($favoritesUpdatedAt = strtotime((string)($payload['favoritesUpdatedAt'] ?? ''))) !== false)
+            ? gmdate('c', $favoritesUpdatedAt)
+            : null
     ];
 }
 
@@ -2445,6 +2448,8 @@ function sanitize_preferences_payload($preferences): array
         'riskAverse' => !empty($preferences['riskAverse']),
         'investmentMode' => !empty($preferences['investmentMode']),
         'showImageUpload' => !empty($preferences['showImageUpload']),
+        'showMarketAnalysis' => !empty($preferences['showMarketAnalysis']),
+        'showExperimentalLiveRound' => !empty($preferences['showExperimentalLiveRound']),
         'startupSync' => !array_key_exists('startupSync', $preferences) || !empty($preferences['startupSync']),
         'autoSync' => !array_key_exists('autoSync', $preferences) || !empty($preferences['autoSync']),
         'notifications' => !empty($preferences['notifications']),

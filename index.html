@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#081317" />
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=53" />
+    <link rel="stylesheet" href="styles.css?v=54" />
   </head>
   <body>
     <div class="app-shell">
@@ -34,6 +34,10 @@
             <span class="icon icon-market" aria-hidden="true"></span>
             Mercado
           </button>
+          <button class="nav-item" type="button" data-view="league">
+            <span class="icon icon-team" aria-hidden="true"></span>
+            Centro de liga
+          </button>
           <button class="nav-item" type="button" data-view="favorites">
             <span class="favorite-nav-star" aria-hidden="true">★</span>
             Favoritos
@@ -42,10 +46,6 @@
           <button class="nav-item" type="button" data-view="compare">
             <span class="icon icon-compare" aria-hidden="true"></span>
             Comparador
-          </button>
-          <button class="nav-item" type="button" data-view="league">
-            <span class="icon icon-team" aria-hidden="true"></span>
-            Liga
           </button>
           <button class="nav-item" type="button" data-view="videos">
             <span class="icon icon-video" aria-hidden="true"></span>
@@ -110,8 +110,9 @@
       <main class="workspace">
         <header class="topbar">
           <div class="topbar-league-copy">
-            <p class="eyebrow">Mercado diario</p>
-            <h2>Ranking de fichajes</h2>
+            <p class="eyebrow" id="topbar-eyebrow">Mercado diario</p>
+            <h2 id="topbar-title">Ranking de fichajes</h2>
+            <p class="topbar-subtitle" id="topbar-subtitle">Mi liga · Local / manual</p>
           </div>
           <div class="topbar-actions">
             <button class="icon-button team-alerts-button" type="button" id="team-alerts-button" aria-label="Abrir alertas de mi equipo" title="Alertas de mi equipo" aria-haspopup="dialog" aria-controls="team-alerts-modal">
@@ -304,7 +305,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
             </div>
           </section>
           <div class="bid-analysis" id="bid-analysis">Conecta Biwenger para analizar el impacto de tus pujas.</div>
-          <section class="market-analysis-center" id="market-analysis-center" aria-label="Centro de análisis del mercado">
+          <section class="market-analysis-center" id="market-analysis-center" aria-label="Centro de análisis del mercado" hidden>
             <div class="market-analysis-header">
               <div><p class="eyebrow">Centro de análisis</p><h3>Lecturas del mercado</h3></div>
               <button class="ghost-button compact-button" type="button" id="market-analysis-toggle" aria-expanded="true" aria-controls="market-analysis-body">Ocultar</button>
@@ -657,7 +658,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
             <button class="ghost-button league-tab" type="button" data-league-tab="sales">Ventas</button>
             <button class="ghost-button league-tab" type="button" data-league-tab="rivals">Rivales</button>
             <button class="ghost-button league-tab" type="button" data-league-tab="fixtures">Jornada</button>
-            <button class="ghost-button league-tab" type="button" data-league-tab="live-round">Jornada fantasy</button>
+            <button class="ghost-button league-tab" type="button" data-league-tab="live-round" hidden>Jornada fantasy</button>
             <button class="ghost-button league-tab" type="button" data-league-tab="league">Clasificación</button>
           </div>
           <div class="ocr-status league-operation-status" id="league-operation-status" role="status" aria-live="polite">
@@ -737,7 +738,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
               </div>
             </div>
           </section>
-          <section class="league-workspace" data-league-panel="live-round">
+          <section class="league-workspace" data-league-panel="live-round" hidden>
             <div class="league-panel">
               <div class="section-heading">
                 <div>
@@ -840,6 +841,18 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                   <h3>Preferencias</h3>
                 </div>
               </div>
+              <div class="settings-scope-card integration-card">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Liga activa</p>
+                    <h3>Ajustes guardados por liga</h3>
+                  </div>
+                </div>
+                <div class="settings-scope-copy">
+                  <strong id="settings-active-league-name">Mi liga</strong>
+                  <span>Recompensas, favoritos, filtros de mercado y visibilidad del centro se guardan dentro de esta liga.</span>
+                </div>
+              </div>
               <div class="fantasy-platform-settings" id="fantasy-platform-settings">
                 <div class="section-heading compact-heading">
                   <div>
@@ -923,7 +936,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     <p class="eyebrow">Aplicaci&oacute;n m&oacute;vil</p>
                     <h3>Actualizaciones</h3>
                   </div>
-                  <span class="app-version-badge" id="app-current-version">v3.6.7</span>
+                  <span class="app-version-badge" id="app-current-version">v3.6.8</span>
                 </div>
                 <p class="settings-help">La app comprueba autom&aacute;ticamente si existe una versi&oacute;n nueva. En Android te llevar&aacute; a instalar el APK; el sistema pedir&aacute; tu confirmaci&oacute;n.</p>
                 <div class="biwenger-actions">
@@ -1040,6 +1053,14 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <span>Mostrar la carga manual de mercado y plantilla</span>
               </label>
               <label class="toggle-row">
+                <input id="show-market-analysis" type="checkbox" />
+                <span>Mostrar el centro de análisis del mercado</span>
+              </label>
+              <label class="toggle-row">
+                <input id="show-live-round" type="checkbox" />
+                <span>Mostrar Jornada Fantasy experimental</span>
+              </label>
+              <label class="toggle-row">
                 <input id="startup-sync-enabled" type="checkbox" checked />
                 <span>Actualizar al iniciar solo si no hay datos guardados</span>
               </label>
@@ -1065,6 +1086,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     <h3>Saldo futuro estimado</h3>
                   </div>
                 </div>
+                <p class="settings-help">Estos importes se guardan por liga. Al cambiar de liga verás su sistema de recompensas independiente.</p>
                 <div class="reward-config-grid">
                   <label>
                     Euros por punto
@@ -1180,6 +1202,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=14"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=87"></script>
+    <script src="app.js?v=88"></script>
   </body>
 </html>

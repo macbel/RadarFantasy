@@ -65,6 +65,7 @@
   favoriteCatalogExtended: false,
   favoriteCatalogExtending: false,
   favoriteClauseDataAvailable: false,
+  favoriteStateUpdatedAt: null,
   dailyPlanMode: "balanced",
   autoSync: {
     running: false,
@@ -92,6 +93,8 @@
     riskAverse: false,
     investmentMode: false,
     showImageUpload: false,
+    showMarketAnalysis: false,
+    showExperimentalLiveRound: false,
     startupSync: true,
     autoSync: true,
     notifications: false,
@@ -109,6 +112,32 @@
       leagueRank2: 0,
       leagueRank3: 0
     }
+  }
+};
+
+const DEFAULT_LEAGUE_PREFERENCES = {
+  strictBudget: true,
+  riskAverse: false,
+  investmentMode: false,
+  showImageUpload: false,
+  showMarketAnalysis: false,
+  showExperimentalLiveRound: false,
+  startupSync: true,
+  autoSync: true,
+  notifications: false,
+  planMode: "balanced",
+  rewards: {
+    pointValue: 0,
+    fixed: 0,
+    goal: 0,
+    idealLineup: 0,
+    gameMvp: 0,
+    roundRank1: 0,
+    roundRank2: 0,
+    roundRank3: 0,
+    leagueRank1: 0,
+    leagueRank2: 0,
+    leagueRank3: 0
   }
 };
 
@@ -140,7 +169,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.6.7";
+const APP_VERSION = "3.6.8";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -150,6 +179,7 @@ const AUTO_SYNC_KEY = "radar-fantasy.auto-sync.v1";
 const NOTIFICATION_SIGNATURE_KEY = "radar-fantasy.notification-signatures.v1";
 const FAVORITE_WATCH_STATE_KEY = "radar-fantasy.favorite-watch-state.v1";
 const FAVORITE_ALERT_HISTORY_KEY = "radar-fantasy.favorite-alert-history.v1";
+const LEAGUE_FAVORITES_CACHE_KEY = "radar-fantasy.league-favorites.v1";
 let lastDecisionHistorySignature = "";
 const trimTrailingSlash = (value) => String(value || "").replace(/\/+$/, "");
 const currentProtocol = window.location?.protocol || "http:";
@@ -350,6 +380,48 @@ const buildLocalLeaguePayload = (db) => ({
   activeLeagueId: db.activeLeagueId || null
 });
 
+const readLeagueFavoritesCache = () => readJsonStorage(LEAGUE_FAVORITES_CACHE_KEY, {});
+const writeLeagueFavoritesCache = (value) => writeJsonStorage(LEAGUE_FAVORITES_CACHE_KEY, value);
+
+const writeLeagueFavoritesCacheEntry = (leagueId, favorites, updatedAt = new Date().toISOString()) => {
+  if (!leagueId) return updatedAt;
+  const cache = readLeagueFavoritesCache();
+  cache[String(leagueId)] = {
+    updatedAt,
+    favorites: Array.isArray(favorites) ? favorites.map(cleanWorldcupPlayerIdentity) : []
+  };
+  writeLeagueFavoritesCache(cache);
+  return updatedAt;
+};
+
+const resolveLeagueFavorites = (league) => {
+  const leagueId = String(league?.id || "");
+  const persisted = leagueId ? readLeagueFavoritesCache()[leagueId] : null;
+  const remoteUpdatedAt = Date.parse(league?.favoritesUpdatedAt || league?.updatedAt || 0) || 0;
+  const localUpdatedAt = Date.parse(persisted?.updatedAt || 0) || 0;
+  if (persisted && localUpdatedAt >= remoteUpdatedAt) {
+    return {
+      favorites: Array.isArray(persisted.favorites) ? persisted.favorites.map(cleanWorldcupPlayerIdentity) : [],
+      updatedAt: persisted.updatedAt || league?.favoritesUpdatedAt || null
+    };
+  }
+  return {
+    favorites: Array.isArray(league?.favorites) ? league.favorites.map(cleanWorldcupPlayerIdentity) : [],
+    updatedAt: league?.favoritesUpdatedAt || null
+  };
+};
+
+const mergeLeaguePreferences = (basePreferences = {}, leaguePreferences = {}) => ({
+  ...DEFAULT_LEAGUE_PREFERENCES,
+  ...(basePreferences || {}),
+  ...(leaguePreferences || {}),
+  rewards: {
+    ...(DEFAULT_LEAGUE_PREFERENCES.rewards || {}),
+    ...(basePreferences?.rewards || {}),
+    ...(leaguePreferences?.rewards || {})
+  }
+});
+
 const FANTASY_PROVIDER_META = {
   biwenger: { label: "Biwenger", className: "biwenger" },
   laliga: { label: "LaLiga Fantasy", className: "laliga" },
@@ -396,7 +468,8 @@ const ensureLocalLeagueDb = () => {
         finance: { ...state.finance },
         weights: { ...state.weights },
         filters: { ...state.filters },
-        preferences: { ...state.preferences }
+        preferences: mergeLeaguePreferences({}, {}),
+        favoritesUpdatedAt: null
       }
     }
   };
@@ -432,6 +505,7 @@ const saveLocalLeagueSnapshot = () => {
     biwengerLeagueId: activeLeague()?.biwengerLeagueId || existing.biwengerLeagueId || null,
     fantasyProvider: leagueFantasyProvider(activeLeague() || existing),
     editableLineup: state.editableLineup,
+    favoritesUpdatedAt: state.favoriteStateUpdatedAt || existing.favoritesUpdatedAt || now,
     leagueFixtures: state.leagueFixtures,
     leagueFixturesSavedAt: state.leagueFixtures ? now : (existing.leagueFixturesSavedAt || null)
   };
@@ -459,7 +533,8 @@ const createLocalLeague = (name) => {
     finance: { ...state.finance },
     weights: { ...state.weights },
     filters: { ...state.filters },
-    preferences: { ...state.preferences }
+    preferences: mergeLeaguePreferences({}, {}),
+    favoritesUpdatedAt: null
   };
   db.activeLeagueId = leagueId;
   writeLocalLeagueDb(db);
@@ -497,7 +572,8 @@ const deleteLocalLeague = (leagueId) => {
       finance: { ...state.finance },
       weights: { ...state.weights },
       filters: { ...state.filters },
-      preferences: { ...state.preferences }
+      preferences: mergeLeaguePreferences({}, {}),
+      favoritesUpdatedAt: null
     };
     db.activeLeagueId = fallbackId;
   } else if (db.activeLeagueId === leagueId) {
@@ -3657,6 +3733,7 @@ const toggleFavoritePlayer = async (player) => {
   const existingIndex = state.favorites.findIndex((favorite) => favoritePlayerKey(favorite) === key);
   if (existingIndex >= 0) state.favorites.splice(existingIndex, 1);
   else state.favorites.push(favoriteStoredPlayer(player));
+  state.favoriteStateUpdatedAt = writeLeagueFavoritesCacheEntry(state.activeLeagueId, state.favorites);
   const catalog = state.favoriteCatalog;
   await saveActiveLeague();
   if (!state.favoriteCatalog.length) state.favoriteCatalog = catalog;
@@ -5221,7 +5298,9 @@ const renderLeagueIdentity = () => {
   });
   const title = qs("#active-league-title");
   const provider = qs("#active-league-provider");
+  const settingsLeague = qs("#settings-active-league-name");
   if (title) title.textContent = leagueName;
+  if (settingsLeague) settingsLeague.textContent = leagueName;
   if (provider) {
     provider.textContent = `Plataforma: ${providerMeta.label}`;
     provider.dataset.provider = providerMeta.className;
@@ -5231,6 +5310,7 @@ const renderLeagueIdentity = () => {
     topbar.style.setProperty("--league-cover", cover ? `url("${cover.replace(/["\\]/g, "\\$&")}")` : "none");
     topbar.classList.toggle("has-league-cover", Boolean(cover));
   }
+  updateTopbarForView();
 };
 
 const applyBiwengerSession = (payload) => {
@@ -5370,14 +5450,7 @@ const applyLeague = (league) => {
   state.scoring = league.scoring || state.scoring;
   state.weights = { ...state.weights, ...(league.weights || {}) };
   state.filters = { ...state.filters, ...(league.filters || {}) };
-  state.preferences = {
-    ...state.preferences,
-    ...(league.preferences || {}),
-    rewards: {
-      ...(state.preferences.rewards || {}),
-      ...(league.preferences?.rewards || {})
-    }
-  };
+  state.preferences = mergeLeaguePreferences({}, league.preferences || {});
   state.dailyPlanMode = state.preferences.planMode || "balanced";
   const savedAutoSync = readJsonStorage(AUTO_SYNC_KEY, {})[String(league.id)] || null;
   state.autoSync.lastAt = savedAutoSync?.completedAt || null;
@@ -5391,9 +5464,12 @@ const applyLeague = (league) => {
   state.teamDepartures = Array.isArray(league.teamDepartures)
     ? league.teamDepartures.map(cleanWorldcupPlayerIdentity)
     : [];
-  state.favorites = Array.isArray(league.favorites)
-    ? league.favorites.map(cleanWorldcupPlayerIdentity)
-    : [];
+  const resolvedFavorites = resolveLeagueFavorites(league);
+  state.favorites = resolvedFavorites.favorites;
+  state.favoriteStateUpdatedAt = resolvedFavorites.updatedAt || (state.favorites.length ? new Date().toISOString() : null);
+  if (state.favoriteStateUpdatedAt) {
+    writeLeagueFavoritesCacheEntry(league.id, state.favorites, state.favoriteStateUpdatedAt);
+  }
   state.favoriteCatalog = [];
   state.favoriteCatalogExtended = false;
   state.favoriteCatalogExtending = false;
@@ -5423,6 +5499,7 @@ const applyLeague = (league) => {
   state.rivalTeam = null;
   state.rivalProfiles = {};
   renderLeagueIdentity();
+  applyVisibilityPreferences();
 
   qs("#competition-select").value = state.competition;
   qs("#scoring-system").value = state.scoring;
@@ -5482,14 +5559,7 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
       finance: { ...(remote.finance || {}), ...(league.finance || {}) },
       weights: { ...(remote.weights || {}), ...(league.weights || {}) },
       filters: { ...(remote.filters || {}), ...(league.filters || {}) },
-      preferences: {
-        ...(remote.preferences || {}),
-        ...(league.preferences || {}),
-        rewards: {
-          ...(remote.preferences?.rewards || {}),
-          ...(league.preferences?.rewards || {})
-        }
-      },
+      preferences: mergeLeaguePreferences(remote.preferences || {}, league.preferences || {}),
       icon: safeRemoteImageUrl(league.icon) || safeRemoteImageUrl(remote.icon) || null,
       cover: safeRemoteImageUrl(league.cover) || safeRemoteImageUrl(remote.cover) || null,
       biwengerLeagueId: league.biwengerLeagueId || remote.biwengerLeagueId || null,
@@ -5498,7 +5568,19 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
         : normalizedFantasyProvider(league.fantasyProvider || remote.fantasyProvider),
       leagueFixtures: league.leagueFixtures || remote.leagueFixtures || null,
       leagueFixturesSavedAt: league.leagueFixturesSavedAt || remote.leagueFixturesSavedAt || null,
-      leagueOverview: league.leagueOverview || remote.leagueOverview || null
+      leagueOverview: league.leagueOverview || remote.leagueOverview || null,
+      favorites: (() => {
+        const localUpdatedAt = Date.parse(league.favoritesUpdatedAt || league.updatedAt || 0) || 0;
+        const remoteUpdatedAt = Date.parse(remote.favoritesUpdatedAt || remote.updatedAt || 0) || 0;
+        return localUpdatedAt >= remoteUpdatedAt ? (league.favorites || []) : (remote.favorites || []);
+      })(),
+      favoritesUpdatedAt: (() => {
+        const localUpdatedAt = Date.parse(league.favoritesUpdatedAt || league.updatedAt || 0) || 0;
+        const remoteUpdatedAt = Date.parse(remote.favoritesUpdatedAt || remote.updatedAt || 0) || 0;
+        return localUpdatedAt >= remoteUpdatedAt
+          ? (league.favoritesUpdatedAt || league.updatedAt || null)
+          : (remote.favoritesUpdatedAt || remote.updatedAt || null);
+      })()
     } : league);
   });
   const localActive = localPayload?.activeLeagueId;
@@ -5571,7 +5653,8 @@ const saveActiveLeagueNow = async () => {
         cover: activeLeague()?.cover || activeLeagueVisual().cover || null,
         biwengerLeagueId: activeLeague()?.biwengerLeagueId || null,
         fantasyProvider: leagueFantasyProvider(activeLeague()),
-        editableLineup: state.editableLineup
+        editableLineup: state.editableLineup,
+        favoritesUpdatedAt: state.favoriteStateUpdatedAt
       })
     });
     if (!response.ok) throw new Error("No se pudo guardar");
@@ -7892,6 +7975,10 @@ const renderLiveRound = () => {
 
 const loadLiveRound = async (showFeedback = true) => {
   const target = qs("#live-round-ranking");
+  if (!shouldShowExperimentalLiveRound()) {
+    if (target) target.innerHTML = `<p class="muted-empty">La jornada fantasy experimental está oculta porque Biwenger no ofrece datos suficientemente fiables en todas las ligas.</p>`;
+    return null;
+  }
   if (!state.biwenger.connected) {
     if (target) target.innerHTML = `<p class="muted-empty">Conecta Biwenger para consultar la jornada fantasy.</p>`;
     return null;
@@ -7925,6 +8012,7 @@ const loadLiveRound = async (showFeedback = true) => {
 };
 
 const ensureLiveRoundForFinance = async (showFeedback = false) => {
+  if (!shouldShowExperimentalLiveRound()) return null;
   if (!state.biwenger.connected) return null;
   if (state.liveRound && Date.now() - Number(state.liveRoundFetchedAt || 0) < 90 * 1000) return state.liveRound;
   if (state.liveRoundLoading) return state.liveRoundLoading;
@@ -7939,9 +8027,10 @@ let biwengerContextRefreshPromise = null;
 const refreshBiwengerOperationalContext = ({ operations = true, liveRound = true, feedback = false } = {}) => {
   if (biwengerContextRefreshPromise) return biwengerContextRefreshPromise;
   biwengerContextRefreshPromise = (async () => {
+    const allowLiveRound = liveRound && shouldShowExperimentalLiveRound();
     if (operations) await loadBiwengerOperations(feedback);
-    if (operations && liveRound) await waitForBiwengerSpacing();
-    if (liveRound) await ensureLiveRoundForFinance(feedback);
+    if (operations && allowLiveRound) await waitForBiwengerSpacing();
+    if (allowLiveRound) await ensureLiveRoundForFinance(feedback);
     return true;
   })().finally(() => {
     biwengerContextRefreshPromise = null;
@@ -9125,6 +9214,10 @@ const syncSettingsControls = () => {
     if (marketPreview) marketPreview.hidden = true;
     if (teamPreview) teamPreview.hidden = true;
   }
+  const showMarketAnalysis = qs("#show-market-analysis");
+  if (showMarketAnalysis) showMarketAnalysis.checked = Boolean(state.preferences.showMarketAnalysis);
+  const showExperimentalLiveRound = qs("#show-live-round");
+  if (showExperimentalLiveRound) showExperimentalLiveRound.checked = Boolean(state.preferences.showExperimentalLiveRound);
   const autoSync = qs("#auto-sync-enabled");
   if (autoSync) {
     autoSync.checked = false;
@@ -9156,6 +9249,21 @@ const syncSettingsControls = () => {
   });
   updateWeightLabels();
   syncMarketPositionFilter();
+  applyVisibilityPreferences();
+};
+
+const shouldShowMarketAnalysis = () => Boolean(state.preferences.showMarketAnalysis);
+const shouldShowExperimentalLiveRound = () => Boolean(state.preferences.showExperimentalLiveRound);
+
+const applyVisibilityPreferences = () => {
+  qs("#market-analysis-center")?.toggleAttribute("hidden", !shouldShowMarketAnalysis());
+  const liveRoundTab = qs('[data-league-tab="live-round"]');
+  const liveRoundPanel = qs('[data-league-panel="live-round"]');
+  if (liveRoundTab) liveRoundTab.hidden = !shouldShowExperimentalLiveRound();
+  if (liveRoundPanel) liveRoundPanel.hidden = !shouldShowExperimentalLiveRound();
+  if (!shouldShowExperimentalLiveRound() && qs('.league-tab.active')?.dataset.leagueTab === "live-round") {
+    openLeaguePanel("fixtures");
+  }
 };
 
 const updateWeightLabels = () => {
@@ -9175,7 +9283,7 @@ const renderSummary = (players, { includeStrategic = true } = {}) => {
   qs("#metric-risk").textContent = String(players.filter((player) => player.risk === "high").length);
   renderMarketDecisionCenter(players);
   renderTopFiveRecommendations(players);
-  if (includeStrategic) renderStrategicMarket(players);
+  if (includeStrategic && shouldShowMarketAnalysis()) renderStrategicMarket(players);
   renderFinance();
 };
 
@@ -10118,6 +10226,7 @@ const renderLineupPitch = (groups, options = {}) => {
 const openView = (viewName) => {
   qsa(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === viewName));
   qsa(".view").forEach((view) => view.classList.toggle("active", view.id === `${viewName}-view`));
+  updateTopbarForView(viewName);
   if (viewName !== "market") closeMobileDetail();
   if (viewName === "team") {
     if (!renderedComponents.has("team")) renderTeam();
@@ -10137,6 +10246,9 @@ const openView = (viewName) => {
 };
 
 const openLeaguePanel = (panelName) => {
+  if (panelName === "live-round" && !shouldShowExperimentalLiveRound()) {
+    panelName = "fixtures";
+  }
   qsa(".league-tab").forEach((item) => item.classList.toggle("active", item.dataset.leagueTab === panelName));
   qsa(".league-workspace").forEach((panel) => panel.classList.toggle("active", panel.dataset.leaguePanel === panelName));
   if (panelName === "assistant") {
@@ -10156,6 +10268,29 @@ const openLeaguePanel = (panelName) => {
   }
   if (panelName === "fixtures" && !state.leagueFixtures) loadLeagueFixtures(false);
   if (panelName === "live-round" && !state.liveRound) loadLiveRound(false);
+};
+
+const TOPBAR_VIEW_COPY = {
+  market: { eyebrow: "Mercado diario", title: "Ranking de fichajes" },
+  team: { eyebrow: "Mi plantilla", title: "Equipo y once recomendado" },
+  favorites: { eyebrow: "Seguimiento", title: "Favoritos y avisos" },
+  compare: { eyebrow: "Decisión rápida", title: "Comparador de fichajes" },
+  league: { eyebrow: "Centro de liga", title: "Rivales, pujas y clasificación" },
+  settings: { eyebrow: "Configuración", title: "Ajustes de liga y app" },
+  videos: { eyebrow: "Contenido en vivo", title: "Mundial y vídeos" }
+};
+
+const updateTopbarForView = (viewName = activeViewName()) => {
+  const copy = TOPBAR_VIEW_COPY[viewName] || TOPBAR_VIEW_COPY.market;
+  const eyebrow = qs("#topbar-eyebrow");
+  const title = qs("#topbar-title");
+  const subtitle = qs("#topbar-subtitle");
+  if (eyebrow) eyebrow.textContent = copy.eyebrow;
+  if (title) title.textContent = copy.title;
+  if (subtitle) subtitle.textContent = `${activeLeagueName() || "Mi liga"} · ${FANTASY_PROVIDER_META[leagueFantasyProvider(activeLeague()) || "local"]?.label || "Local / manual"}`;
+  qs("#refresh-sources")?.toggleAttribute("hidden", viewName !== "market");
+  qs("#analyze-market")?.toggleAttribute("hidden", viewName !== "market");
+  qs("#team-alerts-button")?.toggleAttribute("hidden", !["team", "league"].includes(viewName));
 };
 
 const renderLineup = () => {
@@ -11020,6 +11155,22 @@ const initEvents = () => {
     syncSettingsControls();
     persistLeagueSettings();
   });
+  qs("#show-market-analysis")?.addEventListener("change", (event) => {
+    state.preferences.showMarketAnalysis = event.target.checked;
+    syncSettingsControls();
+    if (event.target.checked) renderTable();
+    persistLeagueSettings();
+  });
+  qs("#show-live-round")?.addEventListener("change", (event) => {
+    state.preferences.showExperimentalLiveRound = event.target.checked;
+    syncSettingsControls();
+    if (!event.target.checked) {
+      state.liveRound = null;
+      state.liveRoundDebug = null;
+      state.selectedLiveRoundUserId = null;
+    }
+    persistLeagueSettings();
+  });
   qs("#auto-sync-enabled")?.addEventListener("change", (event) => {
     state.preferences.autoSync = event.target.checked;
     persistLeagueSettings();
@@ -11194,6 +11345,7 @@ const init = () => {
   registerRadarServiceWorker();
   syncApiConfigUi();
   updateWeightLabels();
+  updateTopbarForView("team");
   refreshOcrAvailability();
   setSourceBusy(false);
 

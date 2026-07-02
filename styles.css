@@ -391,6 +391,13 @@ textarea {
   letter-spacing: 0;
 }
 
+.topbar-subtitle {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .eyebrow,
 .muted-label {
   color: var(--muted);
@@ -6114,6 +6121,23 @@ tr.has-rival-bids.has-rival-sale {
   width: 18px;
   height: 18px;
   accent-color: var(--green);
+}
+
+.settings-scope-card {
+  margin-bottom: 16px;
+}
+
+.settings-scope-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-scope-copy strong {
+  font-size: 18px;
+}
+
+.settings-scope-copy span {
+  color: var(--muted);
 }
 
 .icon {

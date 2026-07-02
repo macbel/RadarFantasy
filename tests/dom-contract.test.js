@@ -94,7 +94,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=87') || !sw.includes('radar-fantasy-shell-v34')) {
+if (!html.includes('app.js?v=88') || !sw.includes('radar-fantasy-shell-v35')) {
   throw new Error("The non-blocking startup must invalidate the previous cached application shell");
 }
 
@@ -154,12 +154,24 @@ if (!js.includes("ensureExtendedFavoriteCatalog") || !js.includes("favoriteSearc
   throw new Error("Favorite search must expand beyond the local cache and tolerate small name misspellings");
 }
 
+if (!js.includes("LEAGUE_FAVORITES_CACHE_KEY") || !js.includes("favoritesUpdatedAt") || !php.includes("'favoritesUpdatedAt'")) {
+  throw new Error("Favorite persistence must be protected with a league-scoped timestamped cache");
+}
+
 if (!html.includes('id="startup-sync-enabled"') || !js.includes("preferences.startupSync") || !php.includes("'startupSync'")) {
   throw new Error("Full startup synchronization must be independently configurable");
 }
 
 if (!html.includes('id="show-image-upload"') || !html.includes('id="market-manual-entry" hidden') || !html.includes('id="team-manual-entry" hidden') || !js.includes("preferences.showImageUpload") || !php.includes("'showImageUpload'")) {
   throw new Error("Manual market and squad imports must be optional and hidden by default");
+}
+
+if (!html.includes('id="show-market-analysis"') || !js.includes("preferences.showMarketAnalysis") || !php.includes("'showMarketAnalysis'")) {
+  throw new Error("Market analysis center visibility must be configurable per league");
+}
+
+if (!html.includes('id="show-live-round"') || !js.includes("showExperimentalLiveRound") || !php.includes("'showExperimentalLiveRound'")) {
+  throw new Error("Experimental live round visibility must be configurable and persisted");
 }
 
 if (html.indexOf('id="market-refresh-inline"') > html.indexOf('id="market-manual-entry"')

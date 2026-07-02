@@ -68,7 +68,7 @@ if (startupRefreshBlock.includes("await refreshFutbolFantasyStatus()") || !js.in
   throw new Error("Secondary services and app update checks must stay outside the essential startup path");
 }
 
-if (!js.includes("const activeViewName") || !js.includes('if (!isViewActive("market")) return;') || !js.includes('if (!isViewActive("team")) return;') || !js.includes("renderDailyPlanIfVisible")) {
+if (!js.includes("const activeViewName") || !js.includes("shouldSkipComponentRender") || !js.includes("renderedComponents.has(component)") || !js.includes("renderDailyPlanIfVisible")) {
   throw new Error("Background updates must not rebuild expensive hidden views");
 }
 
@@ -80,11 +80,21 @@ if (!js.includes("await waitForInterfaceIdle(1500)") || !js.includes('document.a
   throw new Error("Secondary enrichment must pause while the user is interacting with the interface");
 }
 
+const rewardInputBlock = js.slice(js.indexOf("const rewardInputMap"), js.indexOf('bindCurrencyInputs(qs(".reward-config-card"))'));
+if (rewardInputBlock.includes("renderBidSaleAssistant") || rewardInputBlock.includes("renderBiwengerOperations") || !js.includes("const marketAnalysisCache = new Map()")) {
+  throw new Error("Typing reward settings must not trigger analysis or rebuild operational panels");
+}
+
+const initBlock = js.slice(js.indexOf("const init = () =>"), js.indexOf("init();"));
+if (initBlock.includes("setInterval") || !startupRefreshBlock.includes("shouldRefreshAtStartup && !hasCachedData")) {
+  throw new Error("Cached leagues must not start periodic or startup recalculation");
+}
+
 if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none") || !css.includes(".data-sync-cancel") || !css.includes("pointer-events: auto")) {
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=86') || !sw.includes('radar-fantasy-shell-v33')) {
+if (!html.includes('app.js?v=87') || !sw.includes('radar-fantasy-shell-v34')) {
   throw new Error("The non-blocking startup must invalidate the previous cached application shell");
 }
 

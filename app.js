@@ -115,6 +115,15 @@
 const qs = (selector) => document.querySelector(selector);
 const qsa = (selector) => Array.from(document.querySelectorAll(selector));
 const yieldToInterface = () => new Promise((resolve) => window.setTimeout(resolve, 0));
+const activeViewName = () => String(qs(".view.active")?.id || "team-view").replace(/-view$/, "");
+const isViewActive = (viewName) => activeViewName() === viewName;
+let lastInterfaceInteractionAt = Date.now();
+const markInterfaceInteraction = () => { lastInterfaceInteractionAt = Date.now(); };
+const waitForInterfaceIdle = async (minimumIdleMs = 1200) => {
+  while (Date.now() - lastInterfaceInteractionAt < minimumIdleMs) {
+    await new Promise((resolve) => window.setTimeout(resolve, Math.min(500, minimumIdleMs)));
+  }
+};
 
 const APP_CONFIG = window.APP_CONFIG || {};
 const LOCAL_LEAGUES_KEY = "fantasy-market-scout.leagues.v1";
@@ -123,7 +132,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.6.5";
+const APP_VERSION = "3.6.6";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -2170,6 +2179,7 @@ const recordDailyActionFeedback = (action, useful) => {
 };
 
 const renderDailyPlan = (marketPlayers = null) => {
+  if (!isViewActive("market")) return;
   const metrics = qs("#daily-plan-metrics");
   const actionsTarget = qs("#daily-plan-actions");
   const scenariosTarget = qs("#daily-plan-scenarios");
@@ -2256,6 +2266,11 @@ const renderDailyPlan = (marketPlayers = null) => {
     status.textContent = useful ? "Preferencia aprendida para próximas recomendaciones." : "Esta recomendación perderá peso en próximos planes.";
   }));
   actionsTarget.querySelectorAll(".execute-daily-action").forEach((button) => button.addEventListener("click", () => executeDailyPlanAction(button.dataset.actionId)));
+};
+
+const renderDailyPlanIfVisible = () => {
+  if (!isViewActive("market")) return;
+  renderDailyPlan(filteredPlayers());
 };
 
 const executeDailyPlanAction = async (actionId) => {
@@ -3380,11 +3395,16 @@ const writeFavoriteAlertHistory = (alerts) => {
 };
 
 const renderFavorites = () => {
+  const navCount = qs("#favorite-nav-count");
+  if (navCount) {
+    navCount.textContent = String(state.favorites.length);
+    navCount.hidden = state.favorites.length === 0;
+  }
+  if (!isViewActive("favorites")) return;
   const currentList = qs("#favorite-current-list");
   const results = qs("#favorite-search-results");
   const alertList = qs("#favorite-alerts-list");
   const total = qs("#favorite-total");
-  const navCount = qs("#favorite-nav-count");
   if (!currentList || !results || !alertList) return;
 
   const favorites = state.favorites.map(currentFavoritePlayer);
@@ -5907,6 +5927,7 @@ const enrichPlayerListBatched = async (players, forceRefresh = false, onProgress
   const batchSize = 12;
 
   for (let index = 0; index < candidates.length; index += batchSize) {
+    await waitForInterfaceIdle();
     throwIfDataSyncCancelled();
     const batch = candidates.slice(index, index + batchSize);
     try {
@@ -6553,13 +6574,13 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   if (!force && (periodicDisabled || freshEnough)) {
     state.autoSync.lastAt = previous?.completedAt || state.autoSync.lastAt;
     state.autoSync.status = freshEnough ? "fresh" : "disabled";
-    renderDailyPlan(filteredPlayers());
+    renderDailyPlanIfVisible();
     return true;
   }
   state.autoSync.running = true;
   state.autoSync.status = "running";
   beginDataSync(reason === "startup" ? "Cargando mercado, equipo, partidos y fuentes..." : "Sincronizando los datos de la liga...");
-  renderDailyPlan(filteredPlayers());
+  renderDailyPlanIfVisible();
   let success = false;
   let syncResult = null;
   try {
@@ -6612,7 +6633,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
       teamCount: state.teamPlayers.length,
       signatures: syncResult?.signatures || previous?.signatures || {}
     });
-    renderDailyPlan(filteredPlayers());
+    renderDailyPlanIfVisible();
     if (!fastStartup && state.favorites.length && (!syncResult?.unchanged || fullSyncDue)) {
       await loadFavoriteCatalog({ force: true });
     }
@@ -6627,7 +6648,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
     return false;
   } finally {
     state.autoSync.running = false;
-    renderDailyPlan(filteredPlayers());
+    renderDailyPlanIfVisible();
     endDataSync({ error: state.autoSync.status === "error" ? "No se pudieron actualizar todos los datos; se mantienen los últimos valores válidos." : "" });
   }
 };
@@ -9311,6 +9332,7 @@ const renderMarketSellerBadge = (player, compact = false) => {
 };
 
 const renderTable = () => {
+  if (!isViewActive("market")) return;
   const body = qs("#results-body");
   const cards = qs("#results-cards");
   const players = filteredPlayers();
@@ -9784,6 +9806,7 @@ const buildRecommendationCopy = (player) => {
 };
 
 const renderTeam = () => {
+  if (!isViewActive("team")) return;
   const roster = qs("#team-roster");
   const countsEl = qs("#team-position-counts");
   if (!roster || !countsEl) return;
@@ -10066,6 +10089,20 @@ const openView = (viewName) => {
   qsa(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === viewName));
   qsa(".view").forEach((view) => view.classList.toggle("active", view.id === `${viewName}-view`));
   if (viewName !== "market") closeMobileDetail();
+  if (viewName === "team") {
+    renderTeam();
+    renderLineup();
+  } else if (viewName === "market") {
+    renderTable();
+  } else if (viewName === "favorites") {
+    renderFavorites();
+  } else if (viewName === "compare") {
+    const players = filteredPlayers();
+    renderCompareOptions(players);
+    runCompare();
+  } else if (viewName === "settings") {
+    syncSettingsControls();
+  }
 };
 
 const openLeaguePanel = (panelName) => {
@@ -10091,6 +10128,7 @@ const openLeaguePanel = (panelName) => {
 };
 
 const renderLineup = () => {
+  if (!isViewActive("team")) return;
   const output = qs("#lineup-output");
   if (!output) return;
 
@@ -10703,6 +10741,9 @@ const checkForAppUpdate = async ({ manual = false } = {}) => {
 };
 
 const initEvents = () => {
+  ["pointerdown", "keydown", "touchstart", "wheel"].forEach((eventName) => {
+    document.addEventListener(eventName, markInterfaceInteraction, { passive: true, capture: true });
+  });
   const feedbackTimers = new WeakMap();
   document.addEventListener("click", (event) => {
     const button = event.target.closest?.("button.primary-button, button.ghost-button, button.danger-button");
@@ -11087,6 +11128,7 @@ let startupRefreshPromise = null;
 const refreshStartupDataInBackground = (localPayload) => {
   if (startupRefreshPromise) return startupRefreshPromise;
   startupRefreshPromise = withSilentDataSync(async () => {
+    await waitForInterfaceIdle(1500);
     beginDataSync("Actualizando en segundo plano. Puedes seguir navegando por la aplicación.");
     try {
       await restoreRememberedBiwengerAccount();
@@ -11099,7 +11141,7 @@ const refreshStartupDataInBackground = (localPayload) => {
         state.autoSync.status = "startup-skipped";
         const status = qs("#daily-plan-status");
         if (status) status.textContent = "Datos guardados cargados. La actualización al iniciar está desactivada en Ajustes.";
-        renderDailyPlan(filteredPlayers());
+        renderDailyPlanIfVisible();
       }
     } catch (error) {
       state.autoSync.status = "error";

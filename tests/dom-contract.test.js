@@ -68,11 +68,23 @@ if (startupRefreshBlock.includes("await refreshFutbolFantasyStatus()") || !js.in
   throw new Error("Secondary services and app update checks must stay outside the essential startup path");
 }
 
+if (!js.includes("const activeViewName") || !js.includes('if (!isViewActive("market")) return;') || !js.includes('if (!isViewActive("team")) return;') || !js.includes("renderDailyPlanIfVisible")) {
+  throw new Error("Background updates must not rebuild expensive hidden views");
+}
+
+if (!js.includes('if (viewName === "team")') || !js.includes('} else if (viewName === "market")') || !js.includes('} else if (viewName === "compare")')) {
+  throw new Error("Navigation must render each view lazily when it becomes visible");
+}
+
+if (!js.includes("await waitForInterfaceIdle(1500)") || !js.includes('document.addEventListener(eventName, markInterfaceInteraction, { passive: true, capture: true })')) {
+  throw new Error("Secondary enrichment must pause while the user is interacting with the interface");
+}
+
 if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none") || !css.includes(".data-sync-cancel") || !css.includes("pointer-events: auto")) {
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=85') || !sw.includes('radar-fantasy-shell-v32')) {
+if (!html.includes('app.js?v=86') || !sw.includes('radar-fantasy-shell-v33')) {
   throw new Error("The non-blocking startup must invalidate the previous cached application shell");
 }
 

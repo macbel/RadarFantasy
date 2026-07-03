@@ -105,6 +105,10 @@ button:not(:disabled):active {
   display: none;
 }
 
+.mobile-sidebar-backdrop[hidden] {
+  display: none !important;
+}
+
 .brand {
   display: flex;
   gap: 12px;
@@ -6773,8 +6777,7 @@ tr.has-rival-bids.has-rival-sale {
 
   .mobile-sidebar-header,
   .mobile-league-trigger,
-  .mobile-nav-bar,
-  .mobile-sidebar-backdrop {
+  .mobile-nav-bar {
     display: grid;
   }
 

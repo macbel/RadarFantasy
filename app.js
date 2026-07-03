@@ -184,7 +184,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.8.2";
+const APP_VERSION = "3.8.3";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -5295,6 +5295,12 @@ let dataSyncRunsSilently = false;
 let interactionWaitToken = 0;
 let interactionWaitShowTimer = null;
 let interactionWaitHideTimer = null;
+let interactionWaitShownAt = 0;
+
+const waitForNextPaint = () => new Promise((resolve) => {
+  const raf = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 16));
+  raf(() => raf(resolve));
+});
 
 const hideInteractionWait = () => {
   window.clearTimeout(interactionWaitShowTimer);
@@ -5302,10 +5308,11 @@ const hideInteractionWait = () => {
   window.clearTimeout(interactionWaitHideTimer);
   interactionWaitHideTimer = null;
   const popup = qs("#interaction-wait-popup");
+  interactionWaitShownAt = 0;
   if (popup) popup.hidden = true;
 };
 
-const beginInteractionWait = (message = "Preparando la siguiente vista...") => {
+const beginInteractionWait = (message = "Preparando la siguiente vista...", { delay = 180 } = {}) => {
   const token = ++interactionWaitToken;
   const popup = qs("#interaction-wait-popup");
   const detail = qs("#interaction-wait-message");
@@ -5316,15 +5323,22 @@ const beginInteractionWait = (message = "Preparando la siguiente vista...") => {
     interactionWaitShowTimer = null;
     if (token !== interactionWaitToken || dataSyncDepth > 0) return;
     if (detail) detail.textContent = message;
+    interactionWaitShownAt = Date.now();
     popup.hidden = false;
-  }, 180);
+  }, delay);
   return token;
 };
 
-const endInteractionWait = (token = interactionWaitToken) => {
+const endInteractionWait = (token = interactionWaitToken, { minVisibleMs = 240 } = {}) => {
   if (token !== interactionWaitToken) return;
   interactionWaitToken += 1;
-  hideInteractionWait();
+  const visibleFor = interactionWaitShownAt ? Date.now() - interactionWaitShownAt : 0;
+  if (!interactionWaitShownAt || visibleFor >= minVisibleMs) {
+    hideInteractionWait();
+    return;
+  }
+  window.clearTimeout(interactionWaitHideTimer);
+  interactionWaitHideTimer = window.setTimeout(() => hideInteractionWait(), minVisibleMs - visibleFor);
 };
 
 const withSilentDataSync = async (callback) => {
@@ -11050,29 +11064,34 @@ const exportCsv = () => {
 
 const initNavigation = () => {
   qsa(".nav-item, .mobile-nav-item[data-view]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const viewName = button.dataset.view;
       const label = button.textContent.trim();
-      const waitToken = beginInteractionWait(`Abriendo ${label}...`);
-      openView(viewName);
-      let pending = Promise.resolve();
-      if (viewName === "favorites" && !loadedViews.has("favorites")) {
-        loadedViews.add("favorites");
-        if (!state.favoriteCatalog.length) pending = loadFavoriteCatalog({ force: true });
-      }
-      if (viewName === "league" && !loadedViews.has("league")) {
-        loadedViews.add("league");
-        if (state.leagueOverview) renderLeagueOverview();
-        else pending = loadLeagueOverview();
-      }
-      if (viewName === "team-tracking" && !loadedViews.has("team-tracking")) {
-        loadedViews.add("team-tracking");
-        renderTeamTracking();
-        if (state.trackedTeams.length && !state.trackedTeamArticles.length) {
-          pending = refreshTrackedTeamFeed({ force: false });
+      const waitToken = beginInteractionWait(`Abriendo ${label}...`, { delay: 80 });
+      await waitForNextPaint();
+      try {
+        openView(viewName);
+        let pending = Promise.resolve();
+        if (viewName === "favorites" && !loadedViews.has("favorites")) {
+          loadedViews.add("favorites");
+          if (!state.favoriteCatalog.length) pending = loadFavoriteCatalog({ force: true });
         }
+        if (viewName === "league" && !loadedViews.has("league")) {
+          loadedViews.add("league");
+          if (state.leagueOverview) renderLeagueOverview();
+          else pending = loadLeagueOverview();
+        }
+        if (viewName === "team-tracking" && !loadedViews.has("team-tracking")) {
+          loadedViews.add("team-tracking");
+          renderTeamTracking();
+          if (state.trackedTeams.length && !state.trackedTeamArticles.length) {
+            pending = refreshTrackedTeamFeed({ force: false });
+          }
+        }
+        await Promise.resolve(pending).catch(() => null);
+      } finally {
+        endInteractionWait(waitToken);
       }
-      Promise.resolve(pending).catch(() => null).finally(() => endInteractionWait(waitToken));
     });
   });
   qs("#mobile-league-trigger")?.addEventListener("click", openMobileSidebar);
@@ -11304,9 +11323,14 @@ const initEvents = () => {
   qs("#refresh-fixtures").addEventListener("click", () => loadLeagueFixtures(true));
   qs("#refresh-live-round").addEventListener("click", () => loadLiveRound(true));
   qs("#rival-select").addEventListener("change", (event) => loadRivalTeam(event.target.value));
-  qsa(".league-tab").forEach((button) => button.addEventListener("click", () => {
-    const waitToken = beginInteractionWait(`Abriendo ${button.textContent.trim()}...`);
-    void openLeaguePanel(button.dataset.leagueTab).finally(() => endInteractionWait(waitToken));
+  qsa(".league-tab").forEach((button) => button.addEventListener("click", async () => {
+    const waitToken = beginInteractionWait(`Abriendo ${button.textContent.trim()}...`, { delay: 80 });
+    await waitForNextPaint();
+    try {
+      await openLeaguePanel(button.dataset.leagueTab);
+    } finally {
+      endInteractionWait(waitToken);
+    }
   }));
   qs("#renew-sales").addEventListener("click", async () => {
     try { await biwengerOperation("/api/biwenger/sales-renew", {}, "Ventas renovadas correctamente."); }

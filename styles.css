@@ -1488,6 +1488,33 @@ input[type="range"] {
   margin-top: 0.85rem;
 }
 
+.team-tracking-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.95rem;
+}
+
+.team-tracking-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.2rem;
+  padding: 0.56rem 0.82rem;
+  border: 1px solid rgba(101, 190, 196, 0.22);
+  border-radius: 999px;
+  background: rgba(8, 27, 33, 0.68);
+  color: #dffaf8;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.team-tracking-filter-chip.active {
+  color: #081317;
+  border-color: rgba(125, 229, 214, 0.6);
+  background: linear-gradient(135deg, rgba(125, 229, 214, 0.95), rgba(99, 201, 255, 0.9));
+}
+
 .team-tracking-team-chip {
   display: inline-flex;
   align-items: center;

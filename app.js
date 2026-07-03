@@ -68,6 +68,7 @@
   favoriteStateUpdatedAt: null,
   trackedTeams: [],
   trackedTeamArticles: [],
+  trackedTeamFilter: [],
   trackedTeamsUpdatedAt: null,
   trackedTeamFeedLoading: false,
   dailyPlanMode: "balanced",
@@ -173,7 +174,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.7.0";
+const APP_VERSION = "3.7.1";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -387,7 +388,7 @@ const buildLocalLeaguePayload = (db) => ({
 
 const readLeagueFavoritesCache = () => readJsonStorage(LEAGUE_FAVORITES_CACHE_KEY, {});
 const writeLeagueFavoritesCache = (value) => writeJsonStorage(LEAGUE_FAVORITES_CACHE_KEY, value);
-const readTeamTrackingStorage = () => readJsonStorage(TEAM_TRACKING_KEY, { teams: [], articles: [], updatedAt: null });
+const readTeamTrackingStorage = () => readJsonStorage(TEAM_TRACKING_KEY, { teams: [], articles: [], updatedAt: null, filter: [] });
 const writeTeamTrackingStorage = (value) => writeJsonStorage(TEAM_TRACKING_KEY, value);
 
 const writeLeagueFavoritesCacheEntry = (leagueId, favorites, updatedAt = new Date().toISOString()) => {
@@ -3758,11 +3759,18 @@ const applyTeamTrackingPayload = (payload = {}) => {
     ? payload.teams.map((team) => sanitizeTrackedTeamName(team)).filter(Boolean)
     : [];
   state.trackedTeamArticles = Array.isArray(payload.articles) ? payload.articles : [];
+  const allowedKeys = new Set(state.trackedTeams.map((team) => trackedTeamKey(team)));
+  state.trackedTeamFilter = Array.isArray(payload.filter)
+    ? payload.filter
+      .map((team) => sanitizeTrackedTeamName(team))
+      .filter((team) => allowedKeys.has(trackedTeamKey(team)))
+    : [];
   state.trackedTeamsUpdatedAt = payload.updatedAt || null;
   writeTeamTrackingStorage({
     teams: state.trackedTeams,
     articles: state.trackedTeamArticles,
-    updatedAt: state.trackedTeamsUpdatedAt
+    updatedAt: state.trackedTeamsUpdatedAt,
+    filter: state.trackedTeamFilter
   });
 };
 
@@ -3787,6 +3795,27 @@ const renderTrackedTeamChips = () => {
     : '<p class="muted-empty">Todavía no sigues a ningún equipo. Añade uno para reunir noticias recientes.</p>';
 };
 
+const visibleTrackedTeamArticles = () => {
+  if (!state.trackedTeamFilter.length) return state.trackedTeamArticles;
+  const selected = new Set(state.trackedTeamFilter.map((team) => trackedTeamKey(team)));
+  return state.trackedTeamArticles.filter((article) => (article.teams || []).some((team) => selected.has(trackedTeamKey(team))));
+};
+
+const renderTrackedTeamFilter = () => {
+  const target = qs("#team-tracking-filter");
+  if (!target) return;
+  if (state.trackedTeams.length <= 1) {
+    target.hidden = true;
+    target.innerHTML = "";
+    return;
+  }
+  target.hidden = false;
+  target.innerHTML = state.trackedTeams.map((team) => {
+    const active = state.trackedTeamFilter.length ? state.trackedTeamFilter.some((item) => trackedTeamKey(item) === trackedTeamKey(team)) : false;
+    return `<button class="ghost-button team-tracking-filter-chip ${active ? "active" : ""}" type="button" data-team-tracking-filter="${escapeHtml(team)}" aria-pressed="${active ? "true" : "false"}">${escapeHtml(team)}</button>`;
+  }).join("");
+};
+
 const formatTrackedTeamDate = (value) => {
   const date = value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) return "Ahora";
@@ -3797,9 +3826,10 @@ const renderTrackedTeamFeed = () => {
   const target = qs("#team-tracking-feed");
   const total = qs("#team-tracking-total");
   if (!target) return;
-  if (total) total.textContent = `${state.trackedTeamArticles.length} noticia${state.trackedTeamArticles.length === 1 ? "" : "s"}`;
-  target.innerHTML = state.trackedTeamArticles.length
-    ? state.trackedTeamArticles.map((article) => `
+  const visibleArticles = visibleTrackedTeamArticles();
+  if (total) total.textContent = `${visibleArticles.length} noticia${visibleArticles.length === 1 ? "" : "s"}`;
+  target.innerHTML = visibleArticles.length
+    ? visibleArticles.map((article) => `
       <article class="team-tracking-article">
         <header>
           <span class="team-tracking-source">${escapeHtml(article.source || "AS / MARCA")}</span>
@@ -3811,12 +3841,13 @@ const renderTrackedTeamFeed = () => {
         </div>
       </article>
     `).join("")
-    : `<p class="muted-empty">${state.trackedTeams.length ? "Todavía no han llegado titulares para los equipos seguidos. Pulsa Actualizar noticias." : "Añade equipos y aparecerán aquí las últimas noticias filtradas."}</p>`;
+    : `<p class="muted-empty">${state.trackedTeams.length ? (state.trackedTeamFilter.length ? "No hay titulares visibles con el filtro actual. Marca otro equipo o desactiva el filtro." : "Todavía no han llegado titulares para los equipos seguidos. Pulsa Actualizar noticias.") : "Añade equipos y aparecerán aquí las últimas noticias filtradas."}</p>`;
 };
 
 const renderTeamTracking = () => {
   if (shouldSkipComponentRender("team-tracking", "team-tracking")) return;
   renderTrackedTeamChips();
+  renderTrackedTeamFilter();
   renderTrackedTeamFeed();
 };
 
@@ -3843,7 +3874,8 @@ const saveTrackedTeams = async () => {
   writeTeamTrackingStorage({
     teams: state.trackedTeams,
     articles: state.trackedTeamArticles,
-    updatedAt: state.trackedTeamsUpdatedAt
+    updatedAt: state.trackedTeamsUpdatedAt,
+    filter: state.trackedTeamFilter
   });
   if (!canUseApi()) return;
   try {
@@ -3918,10 +3950,34 @@ const removeTrackedTeam = async (teamName) => {
   const key = trackedTeamKey(teamName);
   state.trackedTeams = state.trackedTeams.filter((team) => trackedTeamKey(team) !== key);
   state.trackedTeamArticles = state.trackedTeamArticles.filter((article) => !(article.teams || []).some((team) => trackedTeamKey(team) === key));
+  state.trackedTeamFilter = state.trackedTeamFilter.filter((team) => trackedTeamKey(team) !== key);
   state.trackedTeamsUpdatedAt = new Date().toISOString();
   renderTeamTracking();
   setTeamTrackingStatus(`${teamName} eliminado del seguimiento.`, "ready");
   await saveTrackedTeams();
+};
+
+const toggleTrackedTeamFilter = (teamName) => {
+  const normalized = sanitizeTrackedTeamName(teamName);
+  if (!normalized) return;
+  const key = trackedTeamKey(normalized);
+  const exists = state.trackedTeamFilter.some((team) => trackedTeamKey(team) === key);
+  state.trackedTeamFilter = exists
+    ? state.trackedTeamFilter.filter((team) => trackedTeamKey(team) !== key)
+    : [...state.trackedTeamFilter, normalized];
+  writeTeamTrackingStorage({
+    teams: state.trackedTeams,
+    articles: state.trackedTeamArticles,
+    updatedAt: state.trackedTeamsUpdatedAt,
+    filter: state.trackedTeamFilter
+  });
+  renderTeamTracking();
+  setTeamTrackingStatus(
+    state.trackedTeamFilter.length
+      ? `Filtro activo: ${state.trackedTeamFilter.join(", ")}.`
+      : "Filtro desactivado: vuelves a ver noticias de todos los equipos seguidos.",
+    "ready"
+  );
 };
 
 const healthMeta = (player) => {
@@ -11500,6 +11556,13 @@ const initEvents = () => {
     event.preventDefault();
     event.stopPropagation();
     void removeTrackedTeam(button.dataset.removeTrackedTeam || "");
+  }, true);
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-team-tracking-filter]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    toggleTrackedTeamFilter(button.dataset.teamTrackingFilter || "");
   }, true);
   document.addEventListener("mouseover", handleRecentDotHover, true);
   document.addEventListener("keydown", (event) => {

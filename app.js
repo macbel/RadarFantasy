@@ -184,7 +184,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.8.0";
+const APP_VERSION = "3.8.1";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -10511,6 +10511,7 @@ const renderLineupPitch = (groups, options = {}) => {
 
 const openView = (viewName) => {
   qsa(".nav-item, .mobile-nav-item[data-view]").forEach((item) => item.classList.toggle("active", item.dataset.view === viewName));
+  qs("#open-mobile-sidebar")?.classList.toggle("active", !["team", "market", "league"].includes(viewName));
   qsa(".view").forEach((view) => view.classList.toggle("active", view.id === `${viewName}-view`));
   updateTopbarForView(viewName);
   if (viewName !== "market") closeMobileDetail();

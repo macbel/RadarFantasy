@@ -7008,6 +7008,110 @@ tr.has-rival-bids.has-rival-sale {
     gap: 12px;
   }
 
+  #market-view {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  #market-view > .external-input-actions { order: 1; }
+  #market-view > .summary-band { order: 2; }
+  #market-view > .market-decision-center { order: 3; }
+  #market-view > .market-top-five { order: 4; }
+  #market-view > .daily-command-center { order: 5; }
+  #market-view > .results-layout { order: 6; }
+  #market-view > .bid-analysis { order: 7; }
+  #market-view > .market-analysis-center { order: 8; }
+  #market-view > .input-band { order: 9; }
+
+  #market-view > .summary-band,
+  #market-view > .market-decision-center,
+  #market-view > .market-top-five,
+  #market-view > .results-layout,
+  #market-view > .daily-command-center,
+  #market-view > .market-analysis-center,
+  #market-view > .input-band,
+  #market-view > .bid-analysis,
+  #team-view .team-panel,
+  #team-view .lineup-panel,
+  #league-view .league-command-bar,
+  #league-view .league-operation-status,
+  #league-view .league-workspace.active {
+    scroll-margin-top: 14px;
+  }
+
+  .team-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .team-panel {
+    order: 2;
+  }
+
+  .team-primary-column {
+    order: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .team-primary-column .team-actions {
+    order: 1;
+    margin-top: 0;
+  }
+
+  .team-primary-column .lineup-panel {
+    order: 2;
+  }
+
+  .team-primary-column #team-manual-entry {
+    order: 3;
+  }
+
+  .team-actions {
+    position: sticky;
+    top: calc(8px + env(safe-area-inset-top));
+    z-index: 5;
+    padding: 8px;
+    border: 1px solid rgba(101, 190, 196, 0.12);
+    border-radius: 14px;
+    background: rgba(7, 19, 24, 0.96);
+    backdrop-filter: blur(14px);
+  }
+
+  .team-panel .section-heading,
+  .lineup-panel .section-heading,
+  .table-panel .section-heading {
+    margin-bottom: 10px;
+  }
+
+  .league-command-bar {
+    position: sticky;
+    top: calc(8px + env(safe-area-inset-top));
+    z-index: 4;
+    padding: 8px;
+    margin-bottom: 10px;
+    border: 1px solid rgba(101, 190, 196, 0.12);
+    border-radius: 14px;
+    background: rgba(7, 19, 24, 0.96);
+    backdrop-filter: blur(14px);
+  }
+
+  .league-command-bar .primary-button {
+    width: 100%;
+    order: -1;
+  }
+
+  .league-operation-status {
+    margin-bottom: 10px;
+  }
+
+  .league-panel {
+    padding: 12px;
+  }
+
   .control-panel,
   .manual-entry-header,
   #market-text,

@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#081317" />
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=54" />
+    <link rel="stylesheet" href="styles.css?v=55" />
   </head>
   <body>
     <div class="app-shell">
@@ -936,7 +936,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     <p class="eyebrow">Aplicaci&oacute;n m&oacute;vil</p>
                     <h3>Actualizaciones</h3>
                   </div>
-                  <span class="app-version-badge" id="app-current-version">v3.6.8</span>
+                  <span class="app-version-badge" id="app-current-version">v3.6.9</span>
                 </div>
                 <p class="settings-help">La app comprueba autom&aacute;ticamente si existe una versi&oacute;n nueva. En Android te llevar&aacute; a instalar el APK; el sistema pedir&aacute; tu confirmaci&oacute;n.</p>
                 <div class="biwenger-actions">
@@ -1126,6 +1126,14 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
       <button class="ghost-button data-sync-cancel" type="button" id="cancel-data-sync">Detener</button>
     </aside>
 
+    <aside id="interaction-wait-popup" class="interaction-wait-popup" role="status" aria-live="polite" aria-atomic="true" hidden>
+      <span class="interaction-wait-spinner" aria-hidden="true"></span>
+      <div>
+        <strong id="interaction-wait-title">Cargando</strong>
+        <p id="interaction-wait-message">Preparando la siguiente vista...</p>
+      </div>
+    </aside>
+
     <div id="bid-count-popup" class="bid-count-popup" hidden>
       <button class="bid-count-backdrop" type="button" id="bid-count-popup-backdrop" aria-label="Cerrar resultado de pujas"></button>
       <section class="bid-count-dialog" role="dialog" aria-modal="true" aria-labelledby="bid-count-popup-title" data-mode="ready">
@@ -1202,6 +1210,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=14"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=88"></script>
+    <script src="app.js?v=89"></script>
   </body>
 </html>

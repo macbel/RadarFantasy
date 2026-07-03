@@ -169,7 +169,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.6.8";
+const APP_VERSION = "3.6.9";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -5045,6 +5045,40 @@ let activeDataSyncController = null;
 let dataSyncWasCancelled = false;
 let backgroundDataSyncDepth = 0;
 let dataSyncRunsSilently = false;
+let interactionWaitToken = 0;
+let interactionWaitShowTimer = null;
+let interactionWaitHideTimer = null;
+
+const hideInteractionWait = () => {
+  window.clearTimeout(interactionWaitShowTimer);
+  interactionWaitShowTimer = null;
+  window.clearTimeout(interactionWaitHideTimer);
+  interactionWaitHideTimer = null;
+  const popup = qs("#interaction-wait-popup");
+  if (popup) popup.hidden = true;
+};
+
+const beginInteractionWait = (message = "Preparando la siguiente vista...") => {
+  const token = ++interactionWaitToken;
+  const popup = qs("#interaction-wait-popup");
+  const detail = qs("#interaction-wait-message");
+  if (!popup || dataSyncDepth > 0) return token;
+  if (detail) detail.textContent = message;
+  window.clearTimeout(interactionWaitShowTimer);
+  interactionWaitShowTimer = window.setTimeout(() => {
+    interactionWaitShowTimer = null;
+    if (token !== interactionWaitToken || dataSyncDepth > 0) return;
+    if (detail) detail.textContent = message;
+    popup.hidden = false;
+  }, 180);
+  return token;
+};
+
+const endInteractionWait = (token = interactionWaitToken) => {
+  if (token !== interactionWaitToken) return;
+  interactionWaitToken += 1;
+  hideInteractionWait();
+};
 
 const withSilentDataSync = async (callback) => {
   backgroundDataSyncDepth += 1;
@@ -5075,6 +5109,7 @@ const cancelDataSync = () => {
 const updateDataSync = (message, mode = "busy") => {
   const popup = qs("#data-sync-popup");
   if (!popup) return;
+  hideInteractionWait();
   const title = qs("#data-sync-popup-title");
   const detail = qs("#data-sync-popup-message");
   popup.dataset.mode = mode;
@@ -10251,23 +10286,25 @@ const openLeaguePanel = (panelName) => {
   }
   qsa(".league-tab").forEach((item) => item.classList.toggle("active", item.dataset.leagueTab === panelName));
   qsa(".league-workspace").forEach((panel) => panel.classList.toggle("active", panel.dataset.leaguePanel === panelName));
+  let pending = Promise.resolve();
   if (panelName === "assistant") {
     renderBidSaleAssistant();
     if (state.biwenger.connected) {
-      refreshBiwengerOperationalContext({ operations: !state.biwengerOperations, liveRound: true }).then(() => {
+      pending = refreshBiwengerOperationalContext({ operations: !state.biwengerOperations, liveRound: true }).then(() => {
         renderBidSaleAssistant();
       });
     }
   }
   if (panelName === "bids") {
     if (state.biwenger.connected) {
-      refreshBiwengerOperationalContext({ operations: !state.biwengerOperations, liveRound: true }).then(() => {
+      pending = refreshBiwengerOperationalContext({ operations: !state.biwengerOperations, liveRound: true }).then(() => {
         renderBiwengerOperations();
       });
     }
   }
-  if (panelName === "fixtures" && !state.leagueFixtures) loadLeagueFixtures(false);
-  if (panelName === "live-round" && !state.liveRound) loadLiveRound(false);
+  if (panelName === "fixtures" && !state.leagueFixtures) pending = loadLeagueFixtures(false);
+  if (panelName === "live-round" && !state.liveRound) pending = loadLiveRound(false);
+  return Promise.resolve(pending).catch(() => null);
 };
 
 const TOPBAR_VIEW_COPY = {
@@ -10759,16 +10796,20 @@ const initNavigation = () => {
   qsa(".nav-item").forEach((button) => {
     button.addEventListener("click", () => {
       const viewName = button.dataset.view;
+      const label = button.textContent.trim();
+      const waitToken = beginInteractionWait(`Abriendo ${label}...`);
       openView(viewName);
+      let pending = Promise.resolve();
       if (viewName === "favorites" && !loadedViews.has("favorites")) {
         loadedViews.add("favorites");
-        if (!state.favoriteCatalog.length) void loadFavoriteCatalog({ force: true });
+        if (!state.favoriteCatalog.length) pending = loadFavoriteCatalog({ force: true });
       }
       if (viewName === "league" && !loadedViews.has("league")) {
         loadedViews.add("league");
         if (state.leagueOverview) renderLeagueOverview();
-        else void loadLeagueOverview();
+        else pending = loadLeagueOverview();
       }
+      Promise.resolve(pending).catch(() => null).finally(() => endInteractionWait(waitToken));
     });
   });
 };
@@ -10916,20 +10957,27 @@ const initEvents = () => {
     document.addEventListener(eventName, markInterfaceInteraction, { passive: true, capture: true });
   });
   const feedbackTimers = new WeakMap();
+  const waitTokens = new WeakMap();
   document.addEventListener("click", (event) => {
     const button = event.target.closest?.("button.primary-button, button.ghost-button, button.danger-button");
-    if (!button || button.disabled || button.matches(".nav-item, .league-tab, .daily-scenario, [data-plan-mode], [data-analysis-tab], [data-market-position]")) return;
+    if (!button || button.disabled) return;
+    if (button.matches(".nav-item, .league-tab, .daily-scenario, [data-plan-mode], [data-analysis-tab], [data-market-position]")) return;
     window.clearTimeout(feedbackTimers.get(button));
+    endInteractionWait(waitTokens.get(button));
     button.classList.remove("action-feedback");
     void button.offsetWidth;
     button.classList.add("action-feedback");
     button.setAttribute("aria-busy", "true");
+    const waitToken = beginInteractionWait(`Esperando ${button.textContent.trim() || "respuesta"}...`);
+    waitTokens.set(button, waitToken);
     const startedAt = Date.now();
     const finishFeedback = () => {
       if (button.disabled && Date.now() - startedAt < 15000) {
         feedbackTimers.set(button, window.setTimeout(finishFeedback, 250));
         return;
       }
+      endInteractionWait(waitTokens.get(button));
+      waitTokens.delete(button);
       button.classList.remove("action-feedback");
       button.removeAttribute("aria-busy");
       feedbackTimers.delete(button);
@@ -10983,7 +11031,8 @@ const initEvents = () => {
   qs("#refresh-live-round").addEventListener("click", () => loadLiveRound(true));
   qs("#rival-select").addEventListener("change", (event) => loadRivalTeam(event.target.value));
   qsa(".league-tab").forEach((button) => button.addEventListener("click", () => {
-    openLeaguePanel(button.dataset.leagueTab);
+    const waitToken = beginInteractionWait(`Abriendo ${button.textContent.trim()}...`);
+    void openLeaguePanel(button.dataset.leagueTab).finally(() => endInteractionWait(waitToken));
   }));
   qs("#renew-sales").addEventListener("click", async () => {
     try { await biwengerOperation("/api/biwenger/sales-renew", {}, "Ventas renovadas correctamente."); }

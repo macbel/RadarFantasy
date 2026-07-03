@@ -94,8 +94,12 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=88') || !sw.includes('radar-fantasy-shell-v35')) {
+if (!html.includes('app.js?v=89') || !sw.includes('radar-fantasy-shell-v36')) {
   throw new Error("The non-blocking startup must invalidate the previous cached application shell");
+}
+
+if (!html.includes('id="interaction-wait-popup"') || !js.includes("beginInteractionWait") || !css.includes(".interaction-wait-popup")) {
+  throw new Error("Slow button and menu interactions must show a lightweight waiting animation");
 }
 
 if (!js.includes("biwengerImportSignature") || !js.includes("mercado sin cambios; se omite el resto de la descarga") || !js.includes("60 * 60 * 1000")) {

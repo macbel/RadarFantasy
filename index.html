@@ -15,6 +15,15 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Navegacion principal">
+        <div class="mobile-sidebar-header">
+          <div>
+            <p class="eyebrow">Liga activa</p>
+            <strong>Menú y contexto</strong>
+          </div>
+          <button class="icon-button" type="button" id="close-mobile-sidebar" aria-label="Cerrar panel móvil">
+            <span class="icon icon-clear" aria-hidden="true"></span>
+          </button>
+        </div>
         <div class="brand">
           <div class="brand-mark" aria-hidden="true">
             <img src="assets/app-icon.png?v=5" alt="" />
@@ -26,36 +35,36 @@
         </div>
 
         <nav class="nav-list" aria-label="Vistas">
-          <button class="nav-item active" type="button" data-view="team">
+          <button class="nav-item nav-primary active" type="button" data-view="team">
             <span class="icon icon-team" aria-hidden="true"></span>
             Mi equipo
           </button>
-          <button class="nav-item" type="button" data-view="market">
+          <button class="nav-item nav-primary" type="button" data-view="market">
             <span class="icon icon-market" aria-hidden="true"></span>
             Mercado
           </button>
-          <button class="nav-item" type="button" data-view="league">
+          <button class="nav-item nav-primary" type="button" data-view="league">
             <span class="icon icon-team" aria-hidden="true"></span>
             Centro de liga
           </button>
-          <button class="nav-item" type="button" data-view="favorites">
+          <button class="nav-item nav-secondary" type="button" data-view="favorites">
             <span class="favorite-nav-star" aria-hidden="true">★</span>
             Favoritos
             <span class="nav-count" id="favorite-nav-count" hidden>0</span>
           </button>
-          <button class="nav-item" type="button" data-view="team-tracking">
+          <button class="nav-item nav-secondary" type="button" data-view="team-tracking">
             <span class="icon icon-bell" aria-hidden="true"></span>
             Equipos
           </button>
-          <button class="nav-item" type="button" data-view="compare">
+          <button class="nav-item nav-secondary" type="button" data-view="compare">
             <span class="icon icon-compare" aria-hidden="true"></span>
             Comparador
           </button>
-          <button class="nav-item" type="button" data-view="videos">
+          <button class="nav-item nav-secondary" type="button" data-view="videos">
             <span class="icon icon-video" aria-hidden="true"></span>
             Mundial en vivo
           </button>
-          <button class="nav-item" type="button" data-view="settings">
+          <button class="nav-item nav-secondary" type="button" data-view="settings">
             <span class="icon icon-settings" aria-hidden="true"></span>
             Ajustes
           </button>
@@ -114,6 +123,14 @@
       <main class="workspace">
         <header class="topbar">
           <div class="topbar-league-copy">
+            <button class="mobile-league-trigger" type="button" id="mobile-league-trigger" aria-haspopup="dialog" aria-controls="mobile-sidebar-backdrop">
+              <img id="mobile-league-icon" src="assets/app-icon.png?v=5" alt="" />
+              <span>
+                <strong id="mobile-league-title">Mi liga</strong>
+                <small id="mobile-league-provider">Local / manual</small>
+              </span>
+              <i aria-hidden="true">▾</i>
+            </button>
             <p class="eyebrow" id="topbar-eyebrow">Mercado diario</p>
             <h2 id="topbar-title">Ranking de fichajes</h2>
             <p class="topbar-subtitle" id="topbar-subtitle">Mi liga · Local / manual</p>
@@ -995,7 +1012,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     <p class="eyebrow">Aplicaci&oacute;n m&oacute;vil</p>
                     <h3>Actualizaciones</h3>
                   </div>
-                  <span class="app-version-badge" id="app-current-version">v3.7.1</span>
+                  <span class="app-version-badge" id="app-current-version">v3.8.0</span>
                 </div>
                 <p class="settings-help">La app comprueba autom&aacute;ticamente si existe una versi&oacute;n nueva. En Android te llevar&aacute; a instalar el APK; el sistema pedir&aacute; tu confirmaci&oacute;n.</p>
                 <div class="biwenger-actions">
@@ -1174,6 +1191,27 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
       </main>
     </div>
 
+    <button class="mobile-sidebar-backdrop" type="button" id="mobile-sidebar-backdrop" aria-label="Cerrar menú móvil" hidden></button>
+
+    <nav class="mobile-nav-bar" aria-label="Navegacion móvil principal">
+      <button class="mobile-nav-item active" type="button" data-view="team">
+        <span class="icon icon-team" aria-hidden="true"></span>
+        Equipo
+      </button>
+      <button class="mobile-nav-item" type="button" data-view="market">
+        <span class="icon icon-market" aria-hidden="true"></span>
+        Mercado
+      </button>
+      <button class="mobile-nav-item" type="button" data-view="league">
+        <span class="icon icon-team" aria-hidden="true"></span>
+        Liga
+      </button>
+      <button class="mobile-nav-item mobile-nav-more" type="button" id="open-mobile-sidebar">
+        <span class="icon icon-settings" aria-hidden="true"></span>
+        Más
+      </button>
+    </nav>
+
     <div id="recent-form-popover" class="recent-form-popover" role="dialog" aria-live="polite" hidden></div>
 
     <aside id="data-sync-popup" class="data-sync-popup" role="status" aria-live="polite" aria-atomic="true" hidden data-mode="busy">
@@ -1269,6 +1307,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=14"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=91"></script>
+    <script src="app.js?v=92"></script>
   </body>
 </html>

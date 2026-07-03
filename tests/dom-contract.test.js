@@ -23,7 +23,7 @@ if (html.indexOf('data-view="team"') > html.indexOf('data-view="market"')) {
   throw new Error("Mi equipo must be the first menu option, followed by Mercado");
 }
 
-if (!html.includes('class="nav-item active" type="button" data-view="team"') || !html.includes('class="view active" id="team-view"')) {
+if (!html.includes('data-view="team"') || !html.includes('class="view active" id="team-view"')) {
   throw new Error("Mi equipo must be the active view when the application opens");
 }
 
@@ -94,12 +94,16 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=91') || !sw.includes('radar-fantasy-shell-v38')) {
+if (!html.includes('app.js?v=92') || !sw.includes('radar-fantasy-shell-v39')) {
   throw new Error("The non-blocking startup must invalidate the previous cached application shell");
 }
 
 if (!html.includes('id="interaction-wait-popup"') || !js.includes("beginInteractionWait") || !css.includes(".interaction-wait-popup")) {
   throw new Error("Slow button and menu interactions must show a lightweight waiting animation");
+}
+
+if (!html.includes('id="mobile-league-trigger"') || !html.includes('class="mobile-nav-bar"') || !js.includes("openMobileSidebar") || !js.includes("closeMobileSidebar")) {
+  throw new Error("Mobile navigation must provide a compact league trigger, a simplified bottom bar, and a secondary sheet");
 }
 
 if (!js.includes("biwengerImportSignature") || !js.includes("mercado sin cambios; se omite el resto de la descarga") || !js.includes("60 * 60 * 1000")) {

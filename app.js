@@ -151,6 +151,16 @@ const qsa = (selector) => Array.from(document.querySelectorAll(selector));
 const yieldToInterface = () => new Promise((resolve) => window.setTimeout(resolve, 0));
 const activeViewName = () => String(qs(".view.active")?.id || "team-view").replace(/-view$/, "");
 const isViewActive = (viewName) => activeViewName() === viewName;
+const isMobileNavigationLayout = () => window.matchMedia("(max-width: 720px)").matches;
+const openMobileSidebar = () => {
+  if (!isMobileNavigationLayout()) return;
+  document.body.classList.add("mobile-sidebar-open");
+  qs("#mobile-sidebar-backdrop")?.removeAttribute("hidden");
+};
+const closeMobileSidebar = () => {
+  document.body.classList.remove("mobile-sidebar-open");
+  qs("#mobile-sidebar-backdrop")?.setAttribute("hidden", "");
+};
 const renderedComponents = new Set();
 const loadedViews = new Set();
 const shouldSkipComponentRender = (component, viewName) => {
@@ -174,7 +184,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.7.1";
+const APP_VERSION = "3.8.0";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -5559,7 +5569,7 @@ const renderLeagueIdentity = () => {
   const providerMeta = FANTASY_PROVIDER_META[fantasyProvider] || FANTASY_PROVIDER_META.local;
   const icon = safeRemoteImageUrl(visual.icon);
   const cover = safeRemoteImageUrl(visual.cover);
-  const iconElements = [qs("#active-league-icon"), qs("#league-select-icon")].filter(Boolean);
+  const iconElements = [qs("#active-league-icon"), qs("#league-select-icon"), qs("#mobile-league-icon")].filter(Boolean);
   iconElements.forEach((iconElement) => {
     iconElement.src = icon || "assets/app-icon.png?v=5";
     iconElement.alt = icon ? `Icono de ${leagueName}` : "";
@@ -5570,13 +5580,17 @@ const renderLeagueIdentity = () => {
   });
   const title = qs("#active-league-title");
   const provider = qs("#active-league-provider");
+  const mobileLeagueTitle = qs("#mobile-league-title");
+  const mobileLeagueProvider = qs("#mobile-league-provider");
   const settingsLeague = qs("#settings-active-league-name");
   if (title) title.textContent = leagueName;
+  if (mobileLeagueTitle) mobileLeagueTitle.textContent = leagueName;
   if (settingsLeague) settingsLeague.textContent = leagueName;
   if (provider) {
     provider.textContent = `Plataforma: ${providerMeta.label}`;
     provider.dataset.provider = providerMeta.className;
   }
+  if (mobileLeagueProvider) mobileLeagueProvider.textContent = providerMeta.label;
   const topbar = qs(".topbar");
   if (topbar) {
     topbar.style.setProperty("--league-cover", cover ? `url("${cover.replace(/["\\]/g, "\\$&")}")` : "none");
@@ -10496,10 +10510,11 @@ const renderLineupPitch = (groups, options = {}) => {
 };
 
 const openView = (viewName) => {
-  qsa(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === viewName));
+  qsa(".nav-item, .mobile-nav-item[data-view]").forEach((item) => item.classList.toggle("active", item.dataset.view === viewName));
   qsa(".view").forEach((view) => view.classList.toggle("active", view.id === `${viewName}-view`));
   updateTopbarForView(viewName);
   if (viewName !== "market") closeMobileDetail();
+  closeMobileSidebar();
   if (viewName === "team") {
     if (!renderedComponents.has("team")) renderTeam();
     if (!renderedComponents.has("lineup")) renderLineup();
@@ -11033,7 +11048,7 @@ const exportCsv = () => {
 };
 
 const initNavigation = () => {
-  qsa(".nav-item").forEach((button) => {
+  qsa(".nav-item, .mobile-nav-item[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
       const viewName = button.dataset.view;
       const label = button.textContent.trim();
@@ -11059,6 +11074,10 @@ const initNavigation = () => {
       Promise.resolve(pending).catch(() => null).finally(() => endInteractionWait(waitToken));
     });
   });
+  qs("#mobile-league-trigger")?.addEventListener("click", openMobileSidebar);
+  qs("#open-mobile-sidebar")?.addEventListener("click", openMobileSidebar);
+  qs("#close-mobile-sidebar")?.addEventListener("click", closeMobileSidebar);
+  qs("#mobile-sidebar-backdrop")?.addEventListener("click", closeMobileSidebar);
 };
 
 const activateFantasySettingsTab = (requestedTab = "biwenger") => {
@@ -11567,6 +11586,7 @@ const initEvents = () => {
   document.addEventListener("mouseover", handleRecentDotHover, true);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      closeMobileSidebar();
       closeRecentFormPopover();
       closeMobileDetail();
       closeTeamAlerts();
@@ -11575,6 +11595,7 @@ const initEvents = () => {
     }
   });
   window.addEventListener("resize", () => {
+    if (!isMobileNavigationLayout()) closeMobileSidebar();
     if (!isCompactMarketLayout()) closeMobileDetail();
     closeRecentFormPopover();
   });

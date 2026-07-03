@@ -1,6 +1,6 @@
 {
   "name": "radar-fantasy",
-  "version": "3.7.1",
+  "version": "3.8.0",
   "private": true,
   "description": "Scout de fichajes fantasy para web, Android e iOS 16+",
   "scripts": {

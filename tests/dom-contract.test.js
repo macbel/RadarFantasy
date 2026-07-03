@@ -94,7 +94,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=89') || !sw.includes('radar-fantasy-shell-v36')) {
+if (!html.includes('app.js?v=90') || !sw.includes('radar-fantasy-shell-v37')) {
   throw new Error("The non-blocking startup must invalidate the previous cached application shell");
 }
 
@@ -140,6 +140,14 @@ if (!js.includes('DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms"')) {
 
 if (!html.includes('data-view="favorites"') || !html.includes('id="favorite-search-name"') || !html.includes('id="favorite-search-position"')) {
   throw new Error("Favorites must have their own menu with incremental name and position search");
+}
+
+if (!html.includes('data-view="team-tracking"') || !html.includes('id="team-tracking-name"') || !html.includes('id="team-tracking-feed"')) {
+  throw new Error("Team tracking must expose its own navigation entry, editor, and news feed");
+}
+
+if (!js.includes("TEAM_TRACKING_KEY") || !js.includes("refreshTrackedTeamFeed") || !php.includes("/team-tracking/feed")) {
+  throw new Error("Team tracking must persist locally and refresh a cached backend feed");
 }
 
 if (!js.includes("renderFavoriteButton") || !js.includes("processFavoriteWatchTransitions") || !php.includes("/biwenger/watchlist")) {

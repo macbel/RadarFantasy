@@ -14,6 +14,7 @@ $dbDir = $root . DIRECTORY_SEPARATOR . '.fantasy-db';
 $assetsDir = __DIR__ . DIRECTORY_SEPARATOR . 'media-db';
 $playerDbPath = $dbDir . DIRECTORY_SEPARATOR . 'players.php.json';
 $leaguesDbPath = $dbDir . DIRECTORY_SEPARATOR . 'leagues.php.json';
+$teamTrackingDbPath = $dbDir . DIRECTORY_SEPARATOR . 'team-tracking.json';
 $biwengerSessionsPath = $dbDir . DIRECTORY_SEPARATOR . 'biwenger-sessions.json';
 $futbolFantasySessionsPath = $dbDir . DIRECTORY_SEPARATOR . 'futbolfantasy-sessions.json';
 $futbolFantasyCooldownPath = $dbDir . DIRECTORY_SEPARATOR . 'futbolfantasy-login-cooldown.json';
@@ -167,6 +168,7 @@ $searchOverrides = [
 $playerDb = read_json_file($playerDbPath, ['version' => 1, 'players' => [], 'identities' => [], 'updatedAt' => null]);
 $playerDb['identities'] = isset($playerDb['identities']) && is_array($playerDb['identities']) ? $playerDb['identities'] : [];
 $leaguesDb = read_json_file($leaguesDbPath, ['version' => 1, 'activeLeagueId' => null, 'leagues' => []]);
+$teamTrackingDb = read_json_file($teamTrackingDbPath, ['version' => 1, 'teams' => [], 'articles' => [], 'updatedAt' => null, 'refreshedAtTs' => 0]);
 $biwengerSessionsDb = read_json_file($biwengerSessionsPath, ['version' => 1, 'sessions' => []]);
 $futbolFantasySessionsDb = read_json_file($futbolFantasySessionsPath, ['version' => 1, 'sessions' => []]);
 ensure_directory($dbDir);
@@ -879,6 +881,49 @@ if ($route === '/leagues/save' && $requestMethod === 'POST') {
     $leaguesDb['activeLeagueId'] = $leagueId;
     write_json_file($leaguesDbPath, $leaguesDb);
     send_json(200, league_list_payload($leaguesDb));
+}
+
+if ($route === '/team-tracking' && $requestMethod === 'GET') {
+    send_json(200, team_tracking_payload($teamTrackingDb));
+}
+
+if ($route === '/team-tracking/save' && $requestMethod === 'POST') {
+    $payload = read_json_body();
+    $sanitized = sanitize_team_tracking_payload($payload);
+    $teamChanged = ($teamTrackingDb['teams'] ?? []) !== $sanitized['teams'];
+    $teamTrackingDb['teams'] = $sanitized['teams'];
+    $allowedTeams = array_fill_keys($sanitized['teams'], true);
+    $teamTrackingDb['articles'] = array_values(array_filter(array_map(static function ($article) use ($allowedTeams) {
+        if (!is_array($article)) {
+            return null;
+        }
+        $teams = array_values(array_filter(array_map(static function ($team) {
+            return sanitize_tracked_team_name($team);
+        }, (array)($article['teams'] ?? [])), static function ($team) use ($allowedTeams) {
+            return isset($allowedTeams[$team]);
+        }));
+        if (!$teams) {
+            return null;
+        }
+        $article['teams'] = $teams;
+        return $article;
+    }, (array)($teamTrackingDb['articles'] ?? []))));
+    if ($teamChanged) {
+        $teamTrackingDb['refreshedAtTs'] = 0;
+    }
+    $teamTrackingDb['updatedAt'] = gmdate('c');
+    write_json_file($teamTrackingDbPath, $teamTrackingDb);
+    send_json(200, team_tracking_payload($teamTrackingDb));
+}
+
+if ($route === '/team-tracking/feed' && $requestMethod === 'GET') {
+    $forceRefresh = ($_GET['force'] ?? '') === '1';
+    try {
+        $payload = team_tracking_refresh_feed($teamTrackingDb, $teamTrackingDbPath, $forceRefresh, $sourceTimeoutSeconds, $sourceHeaders, $strictTls);
+        send_json(200, $payload);
+    } catch (Throwable $error) {
+        send_json(502, ['error' => $error->getMessage() ?: 'No se pudieron refrescar las noticias de equipos']);
+    }
 }
 
 if ($route === '/enrich' && $requestMethod === 'POST') {
@@ -2317,6 +2362,190 @@ function league_list_payload(array $leaguesDb): array
         'activeLeagueId' => $leaguesDb['activeLeagueId'] ?? null,
         'leagues' => $leagues
     ];
+}
+
+function team_tracking_payload(array $db): array
+{
+    $teams = array_values(array_filter(array_map(static function ($team) {
+        return sanitize_tracked_team_name($team);
+    }, (array)($db['teams'] ?? []))));
+    $articles = array_values(array_filter(array_map(static function ($article) {
+        if (!is_array($article)) {
+            return null;
+        }
+        $title = trim((string)($article['title'] ?? ''));
+        $link = trim((string)($article['link'] ?? ''));
+        if ($title === '' || $link === '') {
+            return null;
+        }
+        $teams = array_values(array_filter(array_map(static function ($team) {
+            return sanitize_tracked_team_name($team);
+        }, (array)($article['teams'] ?? []))));
+        return [
+            'title' => $title,
+            'link' => $link,
+            'source' => trim((string)($article['source'] ?? 'AS / MARCA')) ?: 'AS / MARCA',
+            'publishedAt' => trim((string)($article['publishedAt'] ?? '')) ?: null,
+            'teams' => $teams
+        ];
+    }, (array)($db['articles'] ?? []))));
+    return [
+        'teams' => array_values(array_unique($teams)),
+        'articles' => $articles,
+        'updatedAt' => !empty($db['updatedAt']) ? (string)$db['updatedAt'] : null,
+        'refreshedAt' => !empty($db['refreshedAtTs']) ? gmdate('c', (int)$db['refreshedAtTs']) : null
+    ];
+}
+
+function sanitize_team_tracking_payload($payload): array
+{
+    $teams = [];
+    if (is_array($payload) && isset($payload['teams']) && is_array($payload['teams'])) {
+        foreach (array_slice($payload['teams'], 0, 25) as $team) {
+            $sanitized = sanitize_tracked_team_name($team);
+            if ($sanitized !== '' && !in_array($sanitized, $teams, true)) {
+                $teams[] = $sanitized;
+            }
+        }
+    }
+    return ['teams' => $teams];
+}
+
+function sanitize_tracked_team_name($value): string
+{
+    $name = trim(preg_replace('/\s+/u', ' ', (string)$value));
+    if ($name === '') {
+        return '';
+    }
+    if (function_exists('mb_substr')) {
+        $name = mb_substr($name, 0, 60);
+    } else {
+        $name = substr($name, 0, 60);
+    }
+    return $name;
+}
+
+function team_tracking_feed_url(string $teamName): string
+{
+    $query = sprintf('site:as.com OR site:marca.com "%s"', $teamName);
+    return 'https://news.google.com/rss/search?q=' . rawurlencode($query) . '&hl=es&gl=ES&ceid=ES:es';
+}
+
+function team_tracking_xml_value(string $xml, string $tag): string
+{
+    if (!preg_match('~<' . preg_quote($tag, '~') . '\b[^>]*>([\s\S]*?)</' . preg_quote($tag, '~') . '>~i', $xml, $match)) {
+        return '';
+    }
+    $value = preg_replace('/<!\[CDATA\[(.*?)\]\]>/s', '$1', (string)$match[1]);
+    return trim(html_entity_decode(strip_tags((string)$value), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+}
+
+function team_tracking_parse_rss_items(string $xml, string $teamName): array
+{
+    if (!preg_match_all('~<item\b[^>]*>([\s\S]*?)</item>~i', $xml, $matches)) {
+        return [];
+    }
+    $articles = [];
+    foreach ((array)($matches[1] ?? []) as $itemXml) {
+        $title = team_tracking_xml_value($itemXml, 'title');
+        $link = team_tracking_xml_value($itemXml, 'link');
+        if ($title === '' || $link === '') {
+            continue;
+        }
+        $source = team_tracking_xml_value($itemXml, 'source');
+        if ($source === '') {
+            if (stripos($link, 'as.com') !== false) {
+                $source = 'Diario AS';
+            } elseif (stripos($link, 'marca.com') !== false) {
+                $source = 'MARCA';
+            } else {
+                $source = 'AS / MARCA';
+            }
+        }
+        $publishedRaw = team_tracking_xml_value($itemXml, 'pubDate');
+        $publishedAt = null;
+        if ($publishedRaw !== '') {
+            $timestamp = strtotime($publishedRaw);
+            if ($timestamp !== false) {
+                $publishedAt = gmdate('c', $timestamp);
+            }
+        }
+        $articles[] = [
+            'title' => $title,
+            'link' => $link,
+            'source' => $source,
+            'publishedAt' => $publishedAt,
+            'teams' => [$teamName]
+        ];
+    }
+    return $articles;
+}
+
+function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh, int $timeoutSeconds, array $headers, bool $strictTls): array
+{
+    $teams = array_values(array_filter(array_map(static function ($team) {
+        return sanitize_tracked_team_name($team);
+    }, (array)($db['teams'] ?? []))));
+    $refreshCooldownSeconds = 15 * 60;
+    $lastRefreshTs = (int)($db['refreshedAtTs'] ?? 0);
+    if (!$forceRefresh && $lastRefreshTs > 0 && (time() - $lastRefreshTs) < $refreshCooldownSeconds) {
+        return team_tracking_payload($db);
+    }
+    if (!$teams) {
+        $db['articles'] = [];
+        $db['refreshedAtTs'] = time();
+        write_json_file($path, $db);
+        return team_tracking_payload($db);
+    }
+    $urls = [];
+    foreach ($teams as $team) {
+        $urls[$team] = team_tracking_feed_url($team);
+    }
+    $pages = http_get_text_many(array_values($urls), max($timeoutSeconds, 8), $headers, $strictTls);
+    $merged = [];
+    foreach ($urls as $team => $url) {
+        $xml = (string)($pages[$url] ?? '');
+        if ($xml === '') {
+            continue;
+        }
+        foreach (team_tracking_parse_rss_items($xml, $team) as $article) {
+            $sourceKey = trim((string)($article['source'] ?? ''));
+            $titleKey = trim((string)($article['title'] ?? ''));
+            if (function_exists('mb_strtolower')) {
+                $sourceKey = mb_strtolower($sourceKey, 'UTF-8');
+                $titleKey = mb_strtolower($titleKey, 'UTF-8');
+            } else {
+                $sourceKey = strtolower($sourceKey);
+                $titleKey = strtolower($titleKey);
+            }
+            $signature = sha1(
+                $sourceKey . '|' .
+                $titleKey . '|' .
+                trim((string)($article['publishedAt'] ?? ''))
+            );
+            if (!isset($merged[$signature])) {
+                $merged[$signature] = $article;
+                continue;
+            }
+            $merged[$signature]['teams'] = array_values(array_unique(array_merge(
+                (array)($merged[$signature]['teams'] ?? []),
+                (array)($article['teams'] ?? [])
+            )));
+        }
+    }
+    $articles = array_values($merged);
+    usort($articles, static function ($left, $right) {
+        $leftTs = !empty($left['publishedAt']) ? strtotime((string)$left['publishedAt']) : 0;
+        $rightTs = !empty($right['publishedAt']) ? strtotime((string)$right['publishedAt']) : 0;
+        if ($leftTs === $rightTs) {
+            return strcasecmp((string)($left['title'] ?? ''), (string)($right['title'] ?? ''));
+        }
+        return $rightTs <=> $leftTs;
+    });
+    $db['articles'] = array_slice($articles, 0, 60);
+    $db['refreshedAtTs'] = time();
+    write_json_file($path, $db);
+    return team_tracking_payload($db);
 }
 
 function sanitize_scoring($value): string

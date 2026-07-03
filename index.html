@@ -43,6 +43,10 @@
             Favoritos
             <span class="nav-count" id="favorite-nav-count" hidden>0</span>
           </button>
+          <button class="nav-item" type="button" data-view="team-tracking">
+            <span class="icon icon-bell" aria-hidden="true"></span>
+            Equipos
+          </button>
           <button class="nav-item" type="button" data-view="compare">
             <span class="icon icon-compare" aria-hidden="true"></span>
             Comparador
@@ -647,6 +651,60 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
           </section>
         </section>
 
+        <section class="view" id="team-tracking-view" aria-label="Seguimiento transversal de equipos">
+          <section class="team-tracking-layout">
+            <div class="team-tracking-heading">
+              <div>
+                <p class="eyebrow">Seguimiento transversal</p>
+                <h3>Equipos vigilados</h3>
+                <p>Guarda equipos al margen de tus ligas y revisa sus últimas noticias publicadas por AS y MARCA.</p>
+              </div>
+              <div class="team-tracking-actions">
+                <button class="ghost-button" type="button" id="refresh-team-tracking">
+                  <span class="icon icon-refresh" aria-hidden="true"></span>
+                  Actualizar noticias
+                </button>
+              </div>
+            </div>
+
+            <div class="ocr-status" id="team-tracking-status" role="status" aria-live="polite">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>Añade un equipo para empezar a seguir noticias.</span>
+            </div>
+
+            <section class="team-tracking-control-panel" aria-labelledby="team-tracking-control-title">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">Lista global</p>
+                  <h3 id="team-tracking-control-title">Añadir equipos</h3>
+                </div>
+              </div>
+              <div class="team-tracking-form">
+                <label>
+                  Equipo
+                  <input id="team-tracking-name" type="search" maxlength="60" autocomplete="off" placeholder="Ejemplo: Real Madrid, Betis, Valencia..." />
+                </label>
+                <button class="primary-button" type="button" id="add-team-tracking">
+                  <span class="icon icon-team" aria-hidden="true"></span>
+                  Añadir
+                </button>
+              </div>
+              <div id="team-tracking-list" class="team-tracking-list"></div>
+            </section>
+
+            <section class="team-tracking-feed-panel" aria-labelledby="team-tracking-feed-title">
+              <div class="section-heading compact-heading">
+                <div>
+                  <p class="eyebrow">Titulares recientes</p>
+                  <h3 id="team-tracking-feed-title">Feed AS / MARCA</h3>
+                </div>
+                <span class="app-version-badge" id="team-tracking-total">0 noticias</span>
+              </div>
+              <div id="team-tracking-feed" class="team-tracking-feed"></div>
+            </section>
+          </section>
+        </section>
+
         <section class="view" id="league-view" aria-label="Clasificacion y rivales">
           <div class="league-command-bar">
             <button class="primary-button" type="button" id="refresh-league">
@@ -936,7 +994,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     <p class="eyebrow">Aplicaci&oacute;n m&oacute;vil</p>
                     <h3>Actualizaciones</h3>
                   </div>
-                  <span class="app-version-badge" id="app-current-version">v3.6.9</span>
+                  <span class="app-version-badge" id="app-current-version">v3.7.0</span>
                 </div>
                 <p class="settings-help">La app comprueba autom&aacute;ticamente si existe una versi&oacute;n nueva. En Android te llevar&aacute; a instalar el APK; el sistema pedir&aacute; tu confirmaci&oacute;n.</p>
                 <div class="biwenger-actions">
@@ -1210,6 +1268,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=14"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=89"></script>
+    <script src="app.js?v=90"></script>
   </body>
 </html>

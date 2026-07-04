@@ -7264,6 +7264,10 @@ tr.has-rival-bids.has-rival-sale {
     gap: 7px;
   }
 
+  .market-card-grid > .market-card-stat:nth-child(n+7) {
+    display: none;
+  }
+
   .market-card-stat {
     gap: 4px;
     min-width: 0;
@@ -7275,7 +7279,18 @@ tr.has-rival-bids.has-rival-sale {
   }
 
   .market-card-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 2px;
+  }
+
+  .market-card-footer .score-meter {
     display: none;
+  }
+
+  .market-card-footer-copy small {
+    display: block;
   }
 
   .results-layout .detail-panel {
@@ -7323,11 +7338,24 @@ tr.has-rival-bids.has-rival-sale {
 
   .mini-player-row {
     grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    padding: 9px;
   }
 
   .mini-player-actions {
     grid-column: 1 / -1;
     justify-content: flex-start;
+    gap: 6px;
+  }
+
+  .mini-player-row > div:nth-child(2) > span {
+    display: none;
+  }
+
+  .mini-player-row .recent-form-dots,
+  .mini-player-actions .profile-link,
+  .mini-player-actions .value-trend {
+    display: none;
   }
 
   .lineup-summary {

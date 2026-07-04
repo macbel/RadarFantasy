@@ -94,7 +94,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=96') || !sw.includes('radar-fantasy-shell-v43')) {
+if (!html.includes('app.js?v=97') || !sw.includes('radar-fantasy-shell-v44')) {
   throw new Error("The non-blocking startup must invalidate the previous cached application shell");
 }
 

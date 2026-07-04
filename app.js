@@ -100,6 +100,7 @@
     investmentMode: false,
     showImageUpload: false,
     showMarketAnalysis: false,
+    showSportDirector: true,
     showExperimentalLiveRound: false,
     startupSync: true,
     autoSync: true,
@@ -127,6 +128,7 @@ const DEFAULT_LEAGUE_PREFERENCES = {
   investmentMode: false,
   showImageUpload: false,
   showMarketAnalysis: false,
+  showSportDirector: true,
   showExperimentalLiveRound: false,
   startupSync: true,
   autoSync: true,
@@ -185,7 +187,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.8.6";
+const APP_VERSION = "3.8.7";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -346,6 +348,7 @@ const OCR_ENGINE_OPTIONS = {
 };
 const createClientLeagueId = () => `league-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const isCompactMarketLayout = () => window.matchMedia("(max-width: 1360px)").matches;
+const isCompactTeamLayout = () => window.matchMedia("(max-width: 900px)").matches;
 
 const apiUnavailableMessage = () => configuredApiBase()
   ? `No se pudo conectar con la API configurada (${configuredApiBase()}).`
@@ -2373,7 +2376,7 @@ const renderDailyPlan = (marketPlayers = null) => {
 };
 
 const renderDailyPlanIfVisible = () => {
-  if (!isViewActive("market")) return;
+  if (!isViewActive("market") || !shouldShowSportDirector()) return;
   renderDailyPlan(filteredPlayers());
 };
 
@@ -2933,14 +2936,18 @@ const renderSourceQualityPanel = (players) => {
 };
 
 const renderStrategicMarket = (players) => {
-  renderDailyPlan(players);
-  renderMarketPlan(players);
-  renderOpportunityRadar(players);
-  renderMarketAlerts(players);
-  renderSourceQualityPanel(players);
-  renderBidSaleAssistant();
-  if (players.length && state.filters.position === "all") recordDecisionHistory(players);
-  renderDecisionHistoryPanel();
+  if (shouldShowSportDirector()) {
+    renderDailyPlan(players);
+  }
+  if (shouldShowMarketAnalysis()) {
+    renderMarketPlan(players);
+    renderOpportunityRadar(players);
+    renderMarketAlerts(players);
+    renderSourceQualityPanel(players);
+    renderBidSaleAssistant();
+    if (players.length && state.filters.position === "all") recordDecisionHistory(players);
+    renderDecisionHistoryPanel();
+  }
 };
 
 const renderDecisionDetail = (player) => {
@@ -9520,6 +9527,8 @@ const syncSettingsControls = () => {
   }
   const showMarketAnalysis = qs("#show-market-analysis");
   if (showMarketAnalysis) showMarketAnalysis.checked = Boolean(state.preferences.showMarketAnalysis);
+  const showSportDirector = qs("#show-sport-director");
+  if (showSportDirector) showSportDirector.checked = state.preferences.showSportDirector !== false;
   const showExperimentalLiveRound = qs("#show-live-round");
   if (showExperimentalLiveRound) showExperimentalLiveRound.checked = Boolean(state.preferences.showExperimentalLiveRound);
   const autoSync = qs("#auto-sync-enabled");
@@ -9557,9 +9566,11 @@ const syncSettingsControls = () => {
 };
 
 const shouldShowMarketAnalysis = () => Boolean(state.preferences.showMarketAnalysis);
+const shouldShowSportDirector = () => state.preferences.showSportDirector !== false;
 const shouldShowExperimentalLiveRound = () => Boolean(state.preferences.showExperimentalLiveRound);
 
 const applyVisibilityPreferences = () => {
+  qs("#daily-command-center")?.toggleAttribute("hidden", !shouldShowSportDirector());
   qs("#market-analysis-center")?.toggleAttribute("hidden", !shouldShowMarketAnalysis());
   qs("#market-decision-center")?.toggleAttribute("hidden", !shouldShowMarketAnalysis());
   const liveRoundTab = qs('[data-league-tab="live-round"]');
@@ -10155,6 +10166,21 @@ const openMobileDetail = () => {
   window.setTimeout(() => qs("#close-market-detail")?.focus(), 0);
 };
 
+const closeTeamDetail = () => {
+  const sheet = qs("#team-detail-sheet");
+  if (!sheet) return;
+  sheet.hidden = true;
+  document.body.classList.remove("sheet-open");
+};
+
+const openTeamDetail = () => {
+  const sheet = qs("#team-detail-sheet");
+  if (!sheet) return;
+  sheet.hidden = false;
+  document.body.classList.add("sheet-open");
+  window.setTimeout(() => qs("#close-team-detail")?.focus(), 0);
+};
+
 const renderEmptyDetail = (title, description) => {
   const detail = qs("#player-detail");
   const mobileDetail = qs("#mobile-player-detail");
@@ -10197,6 +10223,66 @@ const renderDetail = (player, options = {}) => {
   });
   if (options.openSheet && isCompactMarketLayout()) {
     openMobileDetail();
+  }
+};
+
+const buildTeamPlayerDetailMarkup = (player) => {
+  const intelligence = player.marketIntelligence || marketIntelligenceForPlayer(player, systemScore(player, state.scoring), player.priceScore || 50, player.squadFitScore || squadFitScore(player));
+  const recent = player.recentForm || recentFormProfile(player);
+  const confidence = analysisConfidence(player);
+  const health = healthMeta(player);
+  const points = playerAccumulatedPoints(player);
+  const lineupScore = lineupPlayerScore(player);
+  return `
+    <div class="team-detail-card">
+      <div class="team-detail-hero">
+        ${renderPlayerMedia(player, "lg")}
+        <div>
+          <p class="eyebrow">Mi equipo</p>
+          <h3>${escapeHtml(player.name)}</h3>
+          <p>${renderPositionIcon(player.position)} ${renderScoringBadge(player)} ${escapeHtml(player.team || "Sin equipo")}</p>
+        </div>
+      </div>
+      <div class="detail-grid">
+        <div class="detail-stat"><span>Puntos</span><strong>${points.toLocaleString("es-ES")} pts</strong></div>
+        <div class="detail-stat"><span>Titularidad</span><strong>${player.starter}%</strong></div>
+        <div class="detail-stat"><span>Once ideal</span><strong>${lineupScore}/100</strong></div>
+        <div class="detail-stat"><span>Estado</span><strong>${health.label}</strong></div>
+        <div class="detail-stat"><span>Racha</span><strong>${escapeHtml(recent.label)} · ${recent.score}/100</strong></div>
+        <div class="detail-stat"><span>Confianza</span><strong>${confidence.label} · ${confidence.score}/100</strong></div>
+        <div class="detail-stat"><span>Precio</span><strong>${formatMoney(player.price)}</strong></div>
+        <div class="detail-stat"><span>Rol esperado</span><strong>${escapeHtml(intelligence.role)}</strong></div>
+      </div>
+      <div class="team-detail-actions">
+        ${renderFavoriteButton(player, true)}
+        ${renderHealthBadge(player)}
+        ${renderValueTrend(player, { compact: true })}
+        ${renderProfileLink(player)}
+      </div>
+      <div class="recommendation-box">
+        <strong>${escapeHtml(player.name)}</strong><br />
+        ${health.detail ? `${escapeHtml(health.detail)}. ` : ""}${intelligence.summary || "Sin incidencias críticas con los datos guardados."}
+      </div>
+      ${renderUpcomingCalendar(player)}
+    </div>
+  `;
+};
+
+const renderTeamPlayerDetail = (player, { openSheet = false } = {}) => {
+  const target = qs("#mobile-team-detail");
+  const title = qs("#team-detail-title");
+  if (!target || !player) return;
+  target.className = "";
+  target.innerHTML = buildTeamPlayerDetailMarkup(player);
+  if (title) title.textContent = player.name;
+  target.querySelectorAll("[data-favorite-player]").forEach((button) => button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const favorite = favoritePlayerFromKey(button.dataset.favoritePlayer);
+    if (favorite) toggleFavoritePlayer(favorite);
+  }));
+  if (openSheet && isCompactTeamLayout()) {
+    openTeamDetail();
   }
 };
 
@@ -10272,7 +10358,8 @@ const renderTeam = () => {
 
   if (!state.teamPlayers.length) {
     roster.innerHTML = `<p class="muted-empty">Carga tu equipo para ajustar las recomendaciones del mercado.</p>`;
-    renderBidSaleAssistant();
+    closeTeamDetail();
+    if (shouldShowMarketAnalysis()) renderBidSaleAssistant();
     renderTeamAlerts();
     return;
   }
@@ -10299,7 +10386,7 @@ const renderTeam = () => {
             const incomingOffer = incomingByPlayerId.get(Number(player.biwengerPlayerId || 0));
             const hasOffer = Boolean(incomingOffer);
             return `
-          <div class="mini-player-row" data-team-player-id="${escapeHtml(player.id)}">
+          <div class="mini-player-row" data-team-player-id="${escapeHtml(player.id)}" tabindex="0" role="button" aria-label="Ver detalle de ${escapeHtml(player.name)}">
         ${renderPlayerMedia(player, "sm")}
             <div>
               <div class="player-name-line"><strong>${escapeHtml(player.name)}</strong>${renderRecentFormDots(player)}</div>
@@ -10325,7 +10412,25 @@ const renderTeam = () => {
     const offerRow = qs(`#bid-center [data-player-id="${playerId}"]`);
     if (offerRow) offerRow.scrollIntoView({ behavior: "smooth", block: "center" });
   }));
-  renderBidSaleAssistant();
+  roster.querySelectorAll("[data-team-player-id]").forEach((row) => {
+    const openDetail = () => {
+      const player = players.find((candidate) => String(candidate.id) === String(row.dataset.teamPlayerId || ""));
+      if (!player) return;
+      renderTeamPlayerDetail(player, { openSheet: true });
+    };
+    row.addEventListener("click", (event) => {
+      if (!isCompactTeamLayout()) return;
+      if (event.target.closest("button, a, input, label")) return;
+      openDetail();
+    });
+    row.addEventListener("keydown", (event) => {
+      if (!isCompactTeamLayout()) return;
+      if (!["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      openDetail();
+    });
+  });
+  if (shouldShowMarketAnalysis()) renderBidSaleAssistant();
   renderTeamAlerts();
 };
 
@@ -10535,6 +10640,7 @@ const openView = (viewName) => {
   qsa(".view").forEach((view) => view.classList.toggle("active", view.id === `${viewName}-view`));
   updateTopbarForView(viewName);
   if (viewName !== "market") closeMobileDetail();
+  if (viewName !== "team") closeTeamDetail();
   closeMobileSidebar();
   if (viewName === "team") {
     if (!renderedComponents.has("team")) renderTeam();
@@ -11086,6 +11192,67 @@ const exportCsv = () => {
   URL.revokeObjectURL(url);
 };
 
+const refreshLeagueSettingsManually = async () => {
+  const localPayload = buildLocalLeaguePayload(ensureLocalLeagueDb());
+  await syncLeaguesFromServer(localPayload);
+  await refreshBiwengerStatus("Liga preparada. Usa los botones de mercado, equipo o centro cuando quieras refrescar datos concretos.", { refreshFixtures: false });
+};
+
+const refreshTeamSettingsManually = async () => {
+  if (!state.biwenger.connected) {
+    setTeamStatus("Conecta Biwenger para actualizar el equipo.", "error");
+    return;
+  }
+  await importFromBiwenger("team", { deferFollowUp: true });
+  await notifyDailyPlanIfNeeded();
+};
+
+const refreshMarketSettingsManually = async () => {
+  if (!state.biwenger.connected) {
+    setOcrStatus("Conecta Biwenger para actualizar el mercado.", "error");
+    return;
+  }
+  await importFromBiwenger("market", { deferFollowUp: true });
+  if (state.favorites.length) await loadFavoriteCatalog({ force: true });
+};
+
+const refreshSourcesSettingsManually = async () => {
+  if (state.players.length) await enrichCurrentMarket(false);
+  if (state.teamPlayers.length) await refreshTeamAlertSources();
+  if (state.favorites.length) await loadFavoriteCatalog({ force: true });
+};
+
+const refreshLeagueCenterSettingsManually = async () => {
+  if (!state.biwenger.connected) {
+    setLeagueOperationStatus("Conecta Biwenger para actualizar el centro de liga.", "error");
+    return;
+  }
+  await loadLeagueFixtures(false);
+  await loadLeagueOverview();
+  if (shouldShowExperimentalLiveRound()) await ensureLiveRoundForFinance(false);
+};
+
+const runSettingsRefreshAction = async (button, action, label) => {
+  if (state.autoSync.running) return;
+  const controls = qsa(".settings-refresh-grid button");
+  controls.forEach((control) => { control.disabled = true; });
+  const waitToken = beginInteractionWait(`Ejecutando ${label}...`, { delay: 80 });
+  try {
+    await action();
+  } finally {
+    endInteractionWait(waitToken);
+    controls.forEach((control) => { control.disabled = false; });
+  }
+};
+
+const refreshAllSettingsManually = async () => {
+  await refreshLeagueSettingsManually();
+  await refreshTeamSettingsManually();
+  await refreshMarketSettingsManually();
+  await refreshSourcesSettingsManually();
+  await refreshLeagueCenterSettingsManually();
+};
+
 const handleNavigationButtonClick = async (button) => {
   const viewName = button?.dataset?.view;
   if (!viewName) return;
@@ -11094,24 +11261,12 @@ const handleNavigationButtonClick = async (button) => {
   await waitForNextPaint();
   try {
     openView(viewName);
-    let pending = Promise.resolve();
-    if (viewName === "favorites" && !loadedViews.has("favorites")) {
-      loadedViews.add("favorites");
-      if (!state.favoriteCatalog.length) pending = loadFavoriteCatalog({ force: true });
+    if (viewName === "league" && state.leagueOverview) {
+      renderLeagueOverview();
     }
-    if (viewName === "league" && !loadedViews.has("league")) {
-      loadedViews.add("league");
-      if (state.leagueOverview) renderLeagueOverview();
-      else pending = loadLeagueOverview();
-    }
-    if (viewName === "team-tracking" && !loadedViews.has("team-tracking")) {
-      loadedViews.add("team-tracking");
+    if (viewName === "team-tracking") {
       renderTeamTracking();
-      if (state.trackedTeams.length && !state.trackedTeamArticles.length) {
-        pending = refreshTrackedTeamFeed({ force: false });
-      }
     }
-    await Promise.resolve(pending).catch(() => null);
   } finally {
     endInteractionWait(waitToken);
   }
@@ -11316,6 +11471,12 @@ const initEvents = () => {
   qs("#biwenger-import-team").addEventListener("click", () => { invalidateCalculatedViews(); void importFromBiwenger("team"); });
   qs("#market-refresh-inline")?.addEventListener("click", () => { invalidateCalculatedViews(); void importFromBiwenger("market"); });
   qs("#team-refresh-inline")?.addEventListener("click", () => { invalidateCalculatedViews(); void importFromBiwenger("team"); });
+  qs("#refresh-league-settings")?.addEventListener("click", () => { void runSettingsRefreshAction(qs("#refresh-league-settings"), refreshLeagueSettingsManually, "Actualizar liga"); });
+  qs("#refresh-team-settings")?.addEventListener("click", () => { invalidateCalculatedViews(); void runSettingsRefreshAction(qs("#refresh-team-settings"), refreshTeamSettingsManually, "Actualizar equipo"); });
+  qs("#refresh-market-settings")?.addEventListener("click", () => { invalidateCalculatedViews(); void runSettingsRefreshAction(qs("#refresh-market-settings"), refreshMarketSettingsManually, "Actualizar mercado"); });
+  qs("#refresh-sources-settings")?.addEventListener("click", () => { invalidateCalculatedViews(); void runSettingsRefreshAction(qs("#refresh-sources-settings"), refreshSourcesSettingsManually, "Actualizar fuentes"); });
+  qs("#refresh-league-center-settings")?.addEventListener("click", () => { void runSettingsRefreshAction(qs("#refresh-league-center-settings"), refreshLeagueCenterSettingsManually, "Actualizar centro de liga"); });
+  qs("#refresh-all-settings")?.addEventListener("click", () => { invalidateCalculatedViews(); void runSettingsRefreshAction(qs("#refresh-all-settings"), refreshAllSettingsManually, "Actualizar todo"); });
   qs("#biwenger-logout").addEventListener("click", biwengerLogout);
   qs("#refresh-favorites")?.addEventListener("click", () => loadFavoriteCatalog({ force: true }));
   qs("#refresh-team-tracking")?.addEventListener("click", () => refreshTrackedTeamFeed({ force: true }));
@@ -11544,7 +11705,15 @@ const initEvents = () => {
   qs("#show-market-analysis")?.addEventListener("change", (event) => {
     state.preferences.showMarketAnalysis = event.target.checked;
     syncSettingsControls();
+    invalidateCalculatedViews();
     if (event.target.checked) renderTable();
+    persistLeagueSettings();
+  });
+  qs("#show-sport-director")?.addEventListener("change", (event) => {
+    state.preferences.showSportDirector = event.target.checked;
+    syncSettingsControls();
+    renderedComponents.delete("daily-plan");
+    if (event.target.checked && isViewActive("market")) renderDailyPlan(filteredPlayers());
     persistLeagueSettings();
   });
   qs("#show-live-round")?.addEventListener("change", (event) => {
@@ -11616,6 +11785,8 @@ const initEvents = () => {
   });
   qs("#close-market-detail").addEventListener("click", closeMobileDetail);
   qs("#close-market-detail-backdrop").addEventListener("click", closeMobileDetail);
+  qs("#close-team-detail")?.addEventListener("click", closeTeamDetail);
+  qs("#close-team-detail-backdrop")?.addEventListener("click", closeTeamDetail);
   qs("#team-alerts-button")?.addEventListener("click", openTeamAlerts);
   qs("#close-team-alerts")?.addEventListener("click", closeTeamAlerts);
   qs("#team-alerts-backdrop")?.addEventListener("click", closeTeamAlerts);
@@ -11653,6 +11824,7 @@ const initEvents = () => {
       closeMobileSidebar();
       closeRecentFormPopover();
       closeMobileDetail();
+      closeTeamDetail();
       closeTeamAlerts();
       closeBidCountPopup();
       closeAppUpdatePopup();
@@ -11661,6 +11833,7 @@ const initEvents = () => {
   window.addEventListener("resize", () => {
     if (!isMobileNavigationLayout()) closeMobileSidebar();
     if (!isCompactMarketLayout()) closeMobileDetail();
+    if (!isCompactTeamLayout()) closeTeamDetail();
     closeRecentFormPopover();
   });
 

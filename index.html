@@ -156,7 +156,7 @@
         </header>
 
         <section class="view" id="market-view" aria-label="Analisis de mercado">
-          <section class="daily-command-center" aria-label="Plan diario del director deportivo">
+          <section class="daily-command-center" id="daily-command-center" aria-label="Plan diario del director deportivo">
             <div class="daily-command-header">
               <div>
                 <p class="eyebrow">Director deportivo</p>
@@ -561,6 +561,29 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
               </div>
             </div>
           </section>
+          <div id="team-detail-sheet" class="detail-sheet" hidden>
+            <button class="detail-sheet-backdrop" type="button" id="close-team-detail-backdrop" aria-label="Cerrar detalle"></button>
+            <div class="detail-sheet-dialog" id="team-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="team-detail-title">
+              <div class="detail-sheet-header">
+                <div>
+                  <p class="eyebrow">Detalle del jugador</p>
+                  <h3 id="team-detail-title">Plantilla</h3>
+                </div>
+                <button class="icon-button" type="button" id="close-team-detail" aria-label="Cerrar detalle">
+                  <span class="icon icon-clear" aria-hidden="true"></span>
+                </button>
+              </div>
+              <div id="mobile-team-detail" class="detail-empty">
+                <div class="pitch-visual" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <h3>Selecciona un jugador</h3>
+                <p>En móvil verás aquí el detalle completo de tu plantilla sin recargar la pantalla.</p>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="view" id="favorites-view" aria-label="Jugadores favoritos y seguimiento">
@@ -1012,7 +1035,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     <p class="eyebrow">Aplicaci&oacute;n m&oacute;vil</p>
                     <h3>Actualizaciones</h3>
                   </div>
-                  <span class="app-version-badge" id="app-current-version">v3.8.6</span>
+                  <span class="app-version-badge" id="app-current-version">v3.8.7</span>
                 </div>
                 <p class="settings-help">La app comprueba autom&aacute;ticamente si existe una versi&oacute;n nueva. En Android te llevar&aacute; a instalar el APK; el sistema pedir&aacute; tu confirmaci&oacute;n.</p>
                 <div class="biwenger-actions">
@@ -1130,7 +1153,11 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
               </label>
               <label class="toggle-row">
                 <input id="show-market-analysis" type="checkbox" />
-                <span>Mostrar el centro de análisis del mercado</span>
+                <span>Mostrar el centro de análisis y decisión</span>
+              </label>
+              <label class="toggle-row">
+                <input id="show-sport-director" type="checkbox" checked />
+                <span>Mostrar director deportivo</span>
               </label>
               <label class="toggle-row">
                 <input id="show-live-round" type="checkbox" />
@@ -1154,6 +1181,23 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                   Activar avisos del dispositivo
                 </button>
                 <span id="notification-status">Avisos desactivados.</span>
+              </div>
+              <div class="settings-refresh-card">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Actualización manual</p>
+                    <h3>Control total de la liga</h3>
+                  </div>
+                </div>
+                <p class="settings-help">Usa estos botones cuando quieras refrescar datos. Navegar por la app no volverá a lanzar actualizaciones por su cuenta.</p>
+                <div class="settings-refresh-grid">
+                  <button class="ghost-button" type="button" id="refresh-league-settings">Actualizar liga</button>
+                  <button class="ghost-button" type="button" id="refresh-team-settings">Actualizar equipo</button>
+                  <button class="ghost-button" type="button" id="refresh-market-settings">Actualizar mercado</button>
+                  <button class="ghost-button" type="button" id="refresh-sources-settings">Actualizar fuentes</button>
+                  <button class="ghost-button" type="button" id="refresh-league-center-settings">Actualizar centro de liga</button>
+                  <button class="primary-button" type="button" id="refresh-all-settings">Actualizar todo</button>
+                </div>
               </div>
               <div class="reward-config-card">
                 <div class="section-heading compact-heading">
@@ -1307,6 +1351,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=14"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=98"></script>
+    <script src="app.js?v=99"></script>
   </body>
 </html>

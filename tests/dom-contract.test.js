@@ -94,7 +94,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=98') || !sw.includes('radar-fantasy-shell-v45')) {
+if (!html.includes('app.js?v=99') || !sw.includes('radar-fantasy-shell-v46')) {
   throw new Error("The non-blocking startup must invalidate the previous cached application shell");
 }
 
@@ -186,8 +186,25 @@ if (!html.includes('id="show-market-analysis"') || !js.includes("preferences.sho
   throw new Error("Market analysis center visibility must be configurable per league");
 }
 
+if (!html.includes('id="show-sport-director"') || !js.includes("preferences.showSportDirector") || !php.includes("'showSportDirector'")) {
+  throw new Error("Sport director visibility must be configurable per league");
+}
+
 if (!html.includes('id="show-live-round"') || !js.includes("showExperimentalLiveRound") || !php.includes("'showExperimentalLiveRound'")) {
   throw new Error("Experimental live round visibility must be configurable and persisted");
+}
+
+if (!html.includes('id="refresh-all-settings"') || !html.includes('id="refresh-league-settings"') || !js.includes("refreshAllSettingsManually") || !js.includes("runSettingsRefreshAction")) {
+  throw new Error("Settings must expose manual refresh controls for league data");
+}
+
+const navigationHandlerBlock = js.slice(js.indexOf("const handleNavigationButtonClick"), js.indexOf("const initNavigation"));
+if (navigationHandlerBlock.includes("loadFavoriteCatalog({ force: true })") || navigationHandlerBlock.includes("loadLeagueOverview()") || navigationHandlerBlock.includes("refreshTrackedTeamFeed({ force: false })")) {
+  throw new Error("Navigating between views must not trigger new data refreshes");
+}
+
+if (!html.includes('id="team-detail-sheet"') || !html.includes('id="mobile-team-detail"') || !js.includes("renderTeamPlayerDetail") || !js.includes("closeTeamDetail")) {
+  throw new Error("Phase 2 mobile must move squad detail into a dedicated mobile sheet");
 }
 
 if (html.indexOf('id="market-refresh-inline"') > html.indexOf('id="market-manual-entry"')

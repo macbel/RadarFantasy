@@ -2678,6 +2678,7 @@ function sanitize_preferences_payload($preferences): array
         'investmentMode' => !empty($preferences['investmentMode']),
         'showImageUpload' => !empty($preferences['showImageUpload']),
         'showMarketAnalysis' => !empty($preferences['showMarketAnalysis']),
+        'showSportDirector' => !array_key_exists('showSportDirector', $preferences) || !empty($preferences['showSportDirector']),
         'showExperimentalLiveRound' => !empty($preferences['showExperimentalLiveRound']),
         'startupSync' => !array_key_exists('startupSync', $preferences) || !empty($preferences['startupSync']),
         'autoSync' => !array_key_exists('autoSync', $preferences) || !empty($preferences['autoSync']),

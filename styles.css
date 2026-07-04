@@ -1408,7 +1408,8 @@ input[type="range"] {
 }
 
 .api-config-card,
-.reward-config-card {
+.reward-config-card,
+.settings-refresh-card {
   margin-bottom: 14px;
   padding: 14px;
   border: 1px solid var(--line);
@@ -1456,6 +1457,17 @@ input[type="range"] {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.settings-refresh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.settings-refresh-grid button {
+  min-height: 42px;
 }
 
 .app-version-badge {
@@ -4152,6 +4164,24 @@ body.sheet-open {
   min-height: 520px;
   place-items: center;
   text-align: center;
+}
+
+.team-detail-card {
+  display: grid;
+  gap: 14px;
+}
+
+.team-detail-hero,
+.team-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.team-detail-hero h3,
+.team-detail-hero p {
+  margin: 0;
 }
 
 .pitch-visual {
@@ -7340,6 +7370,7 @@ tr.has-rival-bids.has-rival-sale {
     grid-template-columns: auto minmax(0, 1fr);
     gap: 8px;
     padding: 9px;
+    cursor: pointer;
   }
 
   .mini-player-actions {
@@ -7356,6 +7387,22 @@ tr.has-rival-bids.has-rival-sale {
   .mini-player-actions .profile-link,
   .mini-player-actions .value-trend {
     display: none;
+  }
+
+  #team-view .mini-player-actions {
+    display: none;
+  }
+
+  #team-view .mini-player-row::after {
+    content: "Ver";
+    align-self: center;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .settings-refresh-grid {
+    grid-template-columns: 1fr;
   }
 
   .lineup-summary {

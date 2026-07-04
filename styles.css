@@ -7041,7 +7041,7 @@ tr.has-rival-bids.has-rival-sale {
     gap: 12px;
   }
 
-  #market-view {
+  #market-view.active {
     display: flex;
     flex-direction: column;
     gap: 12px;

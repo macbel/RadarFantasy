@@ -102,8 +102,8 @@
     showMarketAnalysis: false,
     showSportDirector: true,
     showExperimentalLiveRound: false,
-    startupSync: true,
-    autoSync: true,
+    startupSync: false,
+    autoSync: false,
     notifications: false,
     planMode: "balanced",
     rewards: {
@@ -130,8 +130,8 @@ const DEFAULT_LEAGUE_PREFERENCES = {
   showMarketAnalysis: false,
   showSportDirector: true,
   showExperimentalLiveRound: false,
-  startupSync: true,
-  autoSync: true,
+  startupSync: false,
+  autoSync: false,
   notifications: false,
   planMode: "balanced",
   rewards: {
@@ -187,7 +187,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.8.7";
+const APP_VERSION = "3.8.8";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -5917,7 +5917,7 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
 const loadLocalLeagues = () => {
   const localPayload = buildLocalLeaguePayload(ensureLocalLeagueDb());
   applyLeaguePayload(localPayload);
-  setLeagueStatus("Ligas guardadas cargadas. Sincronizando servidor...");
+  setLeagueStatus("Ligas guardadas cargadas. Usa Actualizar cuando quieras consultar datos nuevos.");
   return localPayload;
 };
 
@@ -9537,7 +9537,10 @@ const syncSettingsControls = () => {
     autoSync.disabled = true;
   }
   const startupSync = qs("#startup-sync-enabled");
-  if (startupSync) startupSync.checked = state.preferences.startupSync !== false;
+  if (startupSync) {
+    startupSync.checked = false;
+    startupSync.disabled = true;
+  }
   const notifications = qs("#notifications-enabled");
   if (notifications) notifications.checked = Boolean(state.preferences.notifications);
   state.dailyPlanMode = state.preferences.planMode || state.dailyPlanMode || "balanced";
@@ -11198,6 +11201,16 @@ const refreshLeagueSettingsManually = async () => {
   await refreshBiwengerStatus("Liga preparada. Usa los botones de mercado, equipo o centro cuando quieras refrescar datos concretos.", { refreshFixtures: false });
 };
 
+const refreshDailyPlanSettingsManually = async () => {
+  if (state.biwenger.connected) {
+    await loadBiwengerOperations(false);
+  }
+  renderedComponents.delete("daily-plan");
+  if (isViewActive("market")) {
+    renderDailyPlan(filteredPlayers());
+  }
+};
+
 const refreshTeamSettingsManually = async () => {
   if (!state.biwenger.connected) {
     setTeamStatus("Conecta Biwenger para actualizar el equipo.", "error");
@@ -11250,6 +11263,7 @@ const refreshAllSettingsManually = async () => {
   await refreshTeamSettingsManually();
   await refreshMarketSettingsManually();
   await refreshSourcesSettingsManually();
+  await refreshDailyPlanSettingsManually();
   await refreshLeagueCenterSettingsManually();
 };
 
@@ -11475,6 +11489,7 @@ const initEvents = () => {
   qs("#refresh-team-settings")?.addEventListener("click", () => { invalidateCalculatedViews(); void runSettingsRefreshAction(qs("#refresh-team-settings"), refreshTeamSettingsManually, "Actualizar equipo"); });
   qs("#refresh-market-settings")?.addEventListener("click", () => { invalidateCalculatedViews(); void runSettingsRefreshAction(qs("#refresh-market-settings"), refreshMarketSettingsManually, "Actualizar mercado"); });
   qs("#refresh-sources-settings")?.addEventListener("click", () => { invalidateCalculatedViews(); void runSettingsRefreshAction(qs("#refresh-sources-settings"), refreshSourcesSettingsManually, "Actualizar fuentes"); });
+  qs("#refresh-daily-plan-settings")?.addEventListener("click", () => { void runSettingsRefreshAction(qs("#refresh-daily-plan-settings"), refreshDailyPlanSettingsManually, "Actualizar director deportivo"); });
   qs("#refresh-league-center-settings")?.addEventListener("click", () => { void runSettingsRefreshAction(qs("#refresh-league-center-settings"), refreshLeagueCenterSettingsManually, "Actualizar centro de liga"); });
   qs("#refresh-all-settings")?.addEventListener("click", () => { invalidateCalculatedViews(); void runSettingsRefreshAction(qs("#refresh-all-settings"), refreshAllSettingsManually, "Actualizar todo"); });
   qs("#biwenger-logout").addEventListener("click", biwengerLogout);
@@ -11576,8 +11591,7 @@ const initEvents = () => {
   qs("#run-compare").addEventListener("click", runCompare);
   qs("#refresh-sources").addEventListener("click", () => enrichCurrentMarket(true));
   qs("#refresh-daily-plan")?.addEventListener("click", () => {
-    invalidateCalculatedViews();
-    void runAutomaticSync({ force: true, reason: "manual" });
+    void runSettingsRefreshAction(qs("#refresh-daily-plan"), refreshDailyPlanSettingsManually, "Actualizar director deportivo");
   });
   qsa("[data-plan-mode]").forEach((button) => button.addEventListener("click", () => {
     state.dailyPlanMode = button.dataset.planMode;
@@ -11918,24 +11932,14 @@ const init = () => {
   initNavigation();
   initEvents();
   initScorebatWidget();
-  const localPayload = loadLocalLeagues();
+  loadLocalLeagues();
   loadLocalTeamTracking();
-  void syncTeamTrackingFromServer();
   registerRadarServiceWorker();
   syncApiConfigUi();
   updateWeightLabels();
   updateTopbarForView("team");
   refreshOcrAvailability();
   setSourceBusy(false);
-
-  const startBackgroundRefresh = () => window.setTimeout(() => {
-    void refreshStartupDataInBackground(localPayload);
-  }, 0);
-  if (typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(() => window.requestAnimationFrame(startBackgroundRefresh));
-  } else {
-    startBackgroundRefresh();
-  }
   window.setTimeout(() => checkForAppUpdate(), 60 * 1000);
 };
 

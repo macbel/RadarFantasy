@@ -47,25 +47,8 @@ if (!js.includes("const batchSize = 12") || !js.includes("deferFollowUp") || !js
   throw new Error("Startup synchronization must avoid duplicate follow-up work and support request cancellation");
 }
 
-if (!js.includes("const localPayload = loadLocalLeagues();") || !js.includes("refreshStartupDataInBackground(localPayload)") || !js.includes("await yieldToInterface()")) {
-  throw new Error("Startup must paint local data immediately and yield while remote refresh continues in the background");
-}
-
-if (!js.includes("skipEnrichment: fastStartup") || !js.includes("refreshDeferredSourcesInBackground") || !js.includes("state.autoSync.deferredSources")) {
-  throw new Error("Startup must prioritize core market and team data before deferred source enrichment");
-}
-
-if (!js.includes("teamFirst: fastStartup") || js.indexOf('teamImported = await importPart("team")') > js.indexOf('const marketImported = await importPart("market")')) {
-  throw new Error("Startup must render the team before waiting for the market import");
-}
-
-if (!js.includes("withSilentDataSync") || !js.includes("window.requestAnimationFrame(() => window.requestAnimationFrame(startBackgroundRefresh))")) {
-  throw new Error("Automatic startup work must wait for the first paint and stay visually non-blocking");
-}
-
-const startupRefreshBlock = js.slice(js.indexOf("const refreshStartupDataInBackground"), js.indexOf("const init = () =>"));
-if (startupRefreshBlock.includes("await refreshFutbolFantasyStatus()") || !js.includes("window.setTimeout(() => checkForAppUpdate(), 60 * 1000)")) {
-  throw new Error("Secondary services and app update checks must stay outside the essential startup path");
+if (!js.includes("loadLocalLeagues();") || !js.includes("loadLocalTeamTracking();")) {
+  throw new Error("Startup must paint cached league and tracking data immediately");
 }
 
 if (!js.includes("const activeViewName") || !js.includes("shouldSkipComponentRender") || !js.includes("renderedComponents.has(component)") || !js.includes("renderDailyPlanIfVisible")) {
@@ -86,16 +69,16 @@ if (rewardInputBlock.includes("renderBidSaleAssistant") || rewardInputBlock.incl
 }
 
 const initBlock = js.slice(js.indexOf("const init = () =>"), js.indexOf("init();"));
-if (initBlock.includes("setInterval") || !startupRefreshBlock.includes("shouldRefreshAtStartup && !hasCachedData")) {
-  throw new Error("Cached leagues must not start periodic or startup recalculation");
+if (initBlock.includes("setInterval") || initBlock.includes("refreshStartupDataInBackground(") || initBlock.includes("syncTeamTrackingFromServer()")) {
+  throw new Error("Startup must not trigger automatic remote refreshes");
 }
 
 if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none") || !css.includes(".data-sync-cancel") || !css.includes("pointer-events: auto")) {
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=99') || !sw.includes('radar-fantasy-shell-v46')) {
-  throw new Error("The non-blocking startup must invalidate the previous cached application shell");
+if (!html.includes('app.js?v=100') || !sw.includes('radar-fantasy-shell-v47')) {
+  throw new Error("The manual-refresh build must invalidate the previous cached application shell");
 }
 
 if (!html.includes('id="interaction-wait-popup"') || !js.includes("beginInteractionWait") || !css.includes(".interaction-wait-popup")) {
@@ -107,7 +90,7 @@ if (!html.includes('id="mobile-league-trigger"') || !html.includes('class="mobil
 }
 
 if (!js.includes("biwengerImportSignature") || !js.includes("mercado sin cambios; se omite el resto de la descarga") || !js.includes("60 * 60 * 1000")) {
-  throw new Error("Automatic synchronization must stop early when the Biwenger market has not changed and still perform periodic full refreshes");
+  throw new Error("Manual synchronization must still reuse the incremental Biwenger guards");
 }
 
 if (!js.includes('checkTeamWhenMarketUnchanged: reason === "startup"')) {
@@ -194,7 +177,7 @@ if (!html.includes('id="show-live-round"') || !js.includes("showExperimentalLive
   throw new Error("Experimental live round visibility must be configurable and persisted");
 }
 
-if (!html.includes('id="refresh-all-settings"') || !html.includes('id="refresh-league-settings"') || !js.includes("refreshAllSettingsManually") || !js.includes("runSettingsRefreshAction")) {
+if (!html.includes('id="refresh-all-settings"') || !html.includes('id="refresh-league-settings"') || !html.includes('id="refresh-daily-plan-settings"') || !js.includes("refreshAllSettingsManually") || !js.includes("refreshDailyPlanSettingsManually") || !js.includes("runSettingsRefreshAction")) {
   throw new Error("Settings must expose manual refresh controls for league data");
 }
 
@@ -205,6 +188,10 @@ if (navigationHandlerBlock.includes("loadFavoriteCatalog({ force: true })") || n
 
 if (!html.includes('id="team-detail-sheet"') || !html.includes('id="mobile-team-detail"') || !js.includes("renderTeamPlayerDetail") || !js.includes("closeTeamDetail")) {
   throw new Error("Phase 2 mobile must move squad detail into a dedicated mobile sheet");
+}
+
+if (!css.includes("#market-view.active {") || css.includes("\n  #market-view {\n    display: flex;")) {
+  throw new Error("Mobile navigation must only display the market layout when the market view is active");
 }
 
 if (html.indexOf('id="market-refresh-inline"') > html.indexOf('id="market-manual-entry"')

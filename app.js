@@ -78,6 +78,7 @@
     status: "pending",
     deferredSources: false
   },
+  lineupRequested: false,
   recommendedLineup: null,
   editableLineup: null,
   competition: "club",
@@ -184,7 +185,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.8.5";
+const APP_VERSION = "3.8.6";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -523,6 +524,7 @@ const saveLocalLeagueSnapshot = () => {
     biwengerLeagueId: activeLeague()?.biwengerLeagueId || existing.biwengerLeagueId || null,
     fantasyProvider: leagueFantasyProvider(activeLeague() || existing),
     editableLineup: state.editableLineup,
+    lineupRequested: Boolean(state.lineupRequested && state.editableLineup?.playerIds?.length),
     favoritesUpdatedAt: state.favoriteStateUpdatedAt || existing.favoritesUpdatedAt || now,
     leagueFixtures: state.leagueFixtures,
     leagueFixturesSavedAt: state.leagueFixtures ? now : (existing.leagueFixturesSavedAt || null)
@@ -5304,7 +5306,7 @@ const waitForNextPaint = () => new Promise((resolve) => {
 
 const isPrimaryNavigationButton = (target) => {
   if (!target?.matches) return false;
-  return target.matches(".nav-item[data-view], .mobile-nav-item[data-view]");
+  return target.matches(".nav-item[data-view]");
 };
 
 const resetWorkspaceScroll = () => {
@@ -5801,6 +5803,7 @@ const applyLeague = (league) => {
   state.selectedPlayerId = null;
   state.recommendedLineup = null;
   state.editableLineup = league.editableLineup || null;
+  state.lineupRequested = Boolean(league.lineupRequested && state.editableLineup?.playerIds?.length);
   state.biwengerOperations = null;
   state.leagueOverview = league.leagueOverview || (previousLeagueId === league.id ? previousLeagueOverview : null);
   state.leagueFixtures = league.leagueFixtures || (previousLeagueId === league.id ? previousLeagueFixtures : null);
@@ -6751,25 +6754,15 @@ const importFromBiwenger = async (kind, options = {}) => {
 
     if (kind === "team") {
       state.teamPlayers = importedPlayers;
-      if (payload.lineup?.type && Array.isArray(payload.lineup.playersID)) {
-        const localIdByBiwengerId = new Map(importedPlayers.map((player) => [Number(player.biwengerPlayerId || 0), player.id]));
-        const formation = FORMATIONS.find((item) => item.name === payload.lineup.type);
-        const playerIds = payload.lineup.playersID.map((id) => localIdByBiwengerId.get(Number(id))).filter(Boolean);
-        if (formation && playerIds.length) {
-          state.editableLineup = {
-            formationName: formation.name,
-            playerIds,
-            captainId: localIdByBiwengerId.get(Number(payload.lineup.captain || 0)) || null,
-            strikerId: localIdByBiwengerId.get(Number(payload.lineup.striker || 0)) || null
-          };
-        }
-      }
+      state.lineupRequested = false;
+      state.recommendedLineup = null;
+      state.editableLineup = null;
       state.teamDepartures = hydrateImportedPlayers(payload.departedPlayers || []);
       state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
       qs("#team-text").value = biwengerPlayersToText(importedPlayers);
       qs("#market-text").value = biwengerPlayersToText(state.players);
       renderTeam();
-      renderLineup();
+      renderLineupPlaceholder("Plantilla importada. Pulsa \"Once ideal\" si quieres generar la alineación recomendada.");
       renderTable();
       setTeamStatus(`Plantilla importada desde Biwenger: ${importedPlayers.length} jugadores.`, importedPlayers.length ? "ready" : "error");
       if (importedPlayers.length && canUseApi() && !options.skipEnrichment) {
@@ -6782,7 +6775,7 @@ const importFromBiwenger = async (kind, options = {}) => {
         state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
         qs("#market-text").value = biwengerPlayersToText(state.players);
         renderTeam();
-        renderLineup();
+        renderLineupPlaceholder("Plantilla enriquecida. Pulsa \"Once ideal\" si quieres recalcular la alineación recomendada.");
         renderTable();
         setTeamStatus(`Plantilla importada y enriquecida: ${state.teamPlayers.length} jugadores.`, "ready");
       }
@@ -10465,6 +10458,7 @@ const resolvedEditableLineup = () => {
 };
 
 const selectIdealLineup = () => {
+  state.lineupRequested = true;
   state.recommendedLineup = calculateBestLineup();
   state.editableLineup = editableLineupFromRecommendation(state.recommendedLineup);
   renderLineup();
@@ -10614,21 +10608,38 @@ const updateTopbarForView = (viewName = activeViewName()) => {
   qs("#team-alerts-button")?.toggleAttribute("hidden", !["team", "league"].includes(viewName));
 };
 
+const renderLineupPlaceholder = (message = "Guarda tu equipo y pulsa \"Once ideal\" para calcular la alineación.") => {
+  const output = qs("#lineup-output");
+  if (!output) return;
+  output.innerHTML = `<p class="muted-empty">${escapeHtml(message)}</p>`;
+  renderTeamAlerts();
+};
+
+const resetLineupPreview = (message = "Guarda tu equipo y pulsa \"Once ideal\" para calcular la alineación.") => {
+  state.lineupRequested = false;
+  state.recommendedLineup = null;
+  state.editableLineup = null;
+  renderLineupPlaceholder(message);
+};
+
 const renderLineup = () => {
   if (shouldSkipComponentRender("lineup", "team")) return;
   const output = qs("#lineup-output");
   if (!output) return;
 
   if (!state.teamPlayers.length) {
-    output.innerHTML = `<p class="muted-empty">Guarda tu equipo y calcula el once ideal para ver formacion, titulares y alertas.</p>`;
-    renderTeamAlerts();
+    renderLineupPlaceholder("Guarda tu equipo y pulsa \"Once ideal\" para calcular la alineación.");
+    return;
+  }
+
+  if (!state.lineupRequested) {
+    renderLineupPlaceholder("Pulsa \"Once ideal\" para generar la alineación recomendada sin tocar tu equipo actual.");
     return;
   }
 
   const best = calculateBestLineup();
   if (!best) {
-    output.innerHTML = `<p class="muted-empty">No hay suficientes datos para calcular alineacion.</p>`;
-    renderTeamAlerts();
+    renderLineupPlaceholder("No hay suficientes datos para calcular la alineación.");
     return;
   }
   state.recommendedLineup = best;
@@ -11004,7 +11015,7 @@ const analyzeTeam = async () => {
     state.teamPlayers = players;
     state.teamDepartures = [];
     state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
-    state.editableLineup = null;
+    resetLineupPreview("Equipo actualizado. Pulsa \"Once ideal\" si quieres recalcular la alineación recomendada.");
     qs("#market-text").value = biwengerPlayersToText(state.players);
     renderTeam();
     renderTable();
@@ -11026,7 +11037,6 @@ const analyzeTeam = async () => {
 
     renderTeam();
     renderTable();
-    renderLineup();
     await saveActiveLeague();
   } catch (error) {
     setTeamStatus(error.message || "No se pudo leer tu equipo.", "error");
@@ -11108,8 +11118,15 @@ const handleNavigationButtonClick = async (button) => {
 };
 
 const initNavigation = () => {
+  qsa(".mobile-nav-item[data-view]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void handleNavigationButtonClick(button);
+    });
+  });
   document.addEventListener("click", (event) => {
-    const button = event.target.closest?.(".nav-item[data-view], .mobile-nav-item[data-view]");
+    const button = event.target.closest?.(".nav-item[data-view]");
     if (!isPrimaryNavigationButton(button)) return;
     event.preventDefault();
     void handleNavigationButtonClick(button);
@@ -11413,6 +11430,8 @@ const initEvents = () => {
     qs("#team-text").value = "";
     state.teamPlayers = [];
     state.teamDepartures = [];
+    state.lineupRequested = false;
+    state.recommendedLineup = null;
     state.editableLineup = null;
     state.selectedTeamImageFile = null;
     qs("#team-image-upload").value = "";
@@ -11663,6 +11682,8 @@ const initEvents = () => {
     state.selectedTeamImageFile = file;
     state.teamPlayers = [];
     state.teamDepartures = [];
+    state.lineupRequested = false;
+    state.recommendedLineup = null;
     state.editableLineup = null;
     qs("#team-text").value = "";
     renderTeam();

@@ -1273,6 +1273,104 @@ const handleEnrich = async (req, res) => {
   }
 };
 
+const xmlValue = (xml, tag) => {
+  const match = String(xml || "").match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  if (!match) return "";
+  return stripHtml(match[1].replace(/<!\[CDATA\[(.*?)\]\]>/gs, "$1"));
+};
+
+const favoriteNewsSourceLabel = (link, fallback = "") => {
+  const host = (() => {
+    try { return new URL(link).hostname.toLowerCase(); } catch { return ""; }
+  })();
+  if (host.includes("as.com")) return "Diario AS";
+  if (host.includes("marca.com")) return "MARCA";
+  if (host.includes("futbolfantasy.com")) return "FutbolFantasy";
+  if (host.includes("biwenger")) return "Biwenger";
+  if (host.includes("jornadaperfecta.com")) return "Jornada Perfecta";
+  return fallback || "Fuente";
+};
+
+const favoriteNewsFeedUrl = (player) => {
+  const parts = [
+    `"${player.name}"`,
+    "(site:as.com OR site:marca.com OR site:futbolfantasy.com OR site:biwenger.as.com OR site:jornadaperfecta.com)"
+  ];
+  if (player.team) parts.push(`"${player.team}"`);
+  return `https://news.google.com/rss/search?q=${encodeURIComponent(parts.join(" "))}&hl=es&gl=ES&ceid=ES:es`;
+};
+
+const parseFavoriteNewsItems = (xml, player) => {
+  const blocks = String(xml || "").match(/<item\b[^>]*>[\s\S]*?<\/item>/gi) || [];
+  const nameKey = normalizeText(player.name);
+  const teamKey = normalizeText(player.team);
+  return blocks.map((item) => {
+    const title = xmlValue(item, "title");
+    const link = xmlValue(item, "link");
+    if (!title || !link) return null;
+    const normalizedTitle = normalizeText(title);
+    if (nameKey && !normalizedTitle.includes(nameKey) && (!teamKey || !normalizedTitle.includes(teamKey))) return null;
+    const source = favoriteNewsSourceLabel(link, xmlValue(item, "source"));
+    const publishedRaw = xmlValue(item, "pubDate");
+    const publishedAt = publishedRaw && !Number.isNaN(Date.parse(publishedRaw)) ? new Date(publishedRaw).toISOString() : null;
+    return { title, link, source, publishedAt };
+  }).filter(Boolean);
+};
+
+const favoriteDirectLinks = (player) => {
+  const links = player.sourceLinks && typeof player.sourceLinks === "object" ? player.sourceLinks : {};
+  return [
+    ["FutbolFantasy", links.futbolFantasy || footballFantasyUrlFor(player.name)],
+    ["Biwenger", links.biwenger || (player.biwengerPlayerId ? `https://biwenger.as.com/player/${Number(player.biwengerPlayerId)}` : "https://biwenger.as.com/")],
+    ["Jornada Perfecta", links.jornadaPerfecta || `https://www.jornadaperfecta.com/?s=${encodeURIComponent(player.name)}`]
+  ].filter(([, link]) => link).map(([source, link]) => ({
+    title: `Abrir ficha y noticias de ${player.name}`,
+    link,
+    source,
+    publishedAt: null
+  }));
+};
+
+const handleFavoriteNews = async (req, res) => {
+  try {
+    const raw = await readRequestBody(req);
+    const payload = raw ? JSON.parse(raw) : {};
+    const players = (Array.isArray(payload.players) ? payload.players : []).slice(0, 40)
+      .map((player) => ({
+        key: String(player.key || normalizeText(`${player.name || ""}|${player.team || ""}`)),
+        name: String(player.name || "").trim(),
+        team: String(player.team || "").trim(),
+        position: String(player.position || "").trim(),
+        biwengerPlayerId: Number(player.biwengerPlayerId || 0),
+        sourceLinks: player.sourceLinks || {}
+      }))
+      .filter((player) => player.name);
+    const results = await mapLimit(players, 4, async (player) => {
+      let articles = [];
+      try {
+        articles = parseFavoriteNewsItems(await sourceGetText(favoriteNewsFeedUrl(player)), player);
+      } catch {
+        articles = [];
+      }
+      const merged = new Map([...articles, ...favoriteDirectLinks(player)].map((article) => [
+        `${article.source}|${article.title}|${article.link}`.toLowerCase(),
+        article
+      ]));
+      return {
+        key: player.key,
+        name: player.name,
+        team: player.team,
+        articles: [...merged.values()]
+          .sort((a, b) => Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0))
+          .slice(0, 6)
+      };
+    });
+    sendJson(req, res, 200, { generatedAt: new Date().toISOString(), players: results });
+  } catch (error) {
+    sendJson(req, res, 500, { error: error.message || "No se pudieron cargar noticias de favoritos" });
+  }
+};
+
 const server = http.createServer((req, res) => {
   const requestUrl = new URL(req.url, `http://${host}:${port}`);
 
@@ -1286,6 +1384,11 @@ const server = http.createServer((req, res) => {
 
   if (requestUrl.pathname === "/api/enrich" && req.method === "POST") {
     handleEnrich(req, res);
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/favorite-news" && req.method === "POST") {
+    handleFavoriteNews(req, res);
     return;
   }
 

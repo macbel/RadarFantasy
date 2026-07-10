@@ -926,6 +926,19 @@ if ($route === '/team-tracking/feed' && $requestMethod === 'GET') {
     }
 }
 
+if ($route === '/favorite-news' && $requestMethod === 'POST') {
+    $payload = read_json_body();
+    $players = isset($payload['players']) && is_array($payload['players']) ? array_slice($payload['players'], 0, 40) : [];
+    if (!$players) {
+        send_json(200, ['generatedAt' => gmdate('c'), 'players' => []]);
+    }
+    try {
+        send_json(200, favorite_news_payload($players, max($sourceTimeoutSeconds, 8), $sourceHeaders, $strictTls));
+    } catch (Throwable $error) {
+        send_json(502, ['error' => $error->getMessage() ?: 'No se pudieron refrescar las noticias de favoritos']);
+    }
+}
+
 if ($route === '/enrich' && $requestMethod === 'POST') {
     $payload = read_json_body();
     $players = isset($payload['players']) && is_array($payload['players']) ? array_slice($payload['players'], 0, 40) : [];
@@ -2546,6 +2559,139 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
     $db['refreshedAtTs'] = time();
     write_json_file($path, $db);
     return team_tracking_payload($db);
+}
+
+function favorite_news_source_label(string $link, string $fallback = ''): string
+{
+    $host = strtolower((string)(parse_url($link, PHP_URL_HOST) ?: ''));
+    if (strpos($host, 'as.com') !== false) return 'Diario AS';
+    if (strpos($host, 'marca.com') !== false) return 'MARCA';
+    if (strpos($host, 'futbolfantasy.com') !== false) return 'FutbolFantasy';
+    if (strpos($host, 'biwenger') !== false) return 'Biwenger';
+    if (strpos($host, 'jornadaperfecta.com') !== false) return 'Jornada Perfecta';
+    return trim($fallback) !== '' ? trim($fallback) : 'Fuente';
+}
+
+function favorite_news_feed_url(array $player): string
+{
+    $name = trim((string)($player['name'] ?? ''));
+    $team = trim((string)($player['team'] ?? ''));
+    $queryParts = [
+        '"' . $name . '"',
+        '(site:as.com OR site:marca.com OR site:futbolfantasy.com OR site:biwenger.as.com OR site:jornadaperfecta.com)'
+    ];
+    if ($team !== '') {
+        $queryParts[] = '"' . $team . '"';
+    }
+    return 'https://news.google.com/rss/search?q=' . rawurlencode(implode(' ', $queryParts)) . '&hl=es&gl=ES&ceid=ES:es';
+}
+
+function favorite_news_parse_rss_items(string $xml, array $player): array
+{
+    if (!preg_match_all('~<item\b[^>]*>([\s\S]*?)</item>~i', $xml, $matches)) {
+        return [];
+    }
+    $articles = [];
+    $nameKey = normalize_text((string)($player['name'] ?? ''));
+    $teamKey = normalize_text((string)($player['team'] ?? ''));
+    foreach ((array)($matches[1] ?? []) as $itemXml) {
+        $title = team_tracking_xml_value($itemXml, 'title');
+        $link = team_tracking_xml_value($itemXml, 'link');
+        if ($title === '' || $link === '') continue;
+        $normalizedTitle = normalize_text($title);
+        if ($nameKey !== '' && strpos($normalizedTitle, $nameKey) === false && ($teamKey === '' || strpos($normalizedTitle, $teamKey) === false)) {
+            continue;
+        }
+        $source = favorite_news_source_label($link, team_tracking_xml_value($itemXml, 'source'));
+        $publishedRaw = team_tracking_xml_value($itemXml, 'pubDate');
+        $publishedAt = null;
+        if ($publishedRaw !== '') {
+            $timestamp = strtotime($publishedRaw);
+            if ($timestamp !== false) $publishedAt = gmdate('c', $timestamp);
+        }
+        $articles[] = [
+            'title' => $title,
+            'link' => $link,
+            'source' => $source,
+            'publishedAt' => $publishedAt
+        ];
+    }
+    return $articles;
+}
+
+function favorite_news_direct_links(array $player): array
+{
+    $name = trim((string)($player['name'] ?? ''));
+    if ($name === '') return [];
+    $sourceLinks = is_array($player['sourceLinks'] ?? null) ? $player['sourceLinks'] : [];
+    $links = [];
+    $candidates = [
+        ['FutbolFantasy', $sourceLinks['futbolFantasy'] ?? football_fantasy_url_for($name)],
+        ['Biwenger', $sourceLinks['biwenger'] ?? (!empty($player['biwengerPlayerId']) ? 'https://biwenger.as.com/player/' . (int)$player['biwengerPlayerId'] : 'https://biwenger.as.com/')],
+        ['Jornada Perfecta', $sourceLinks['jornadaPerfecta'] ?? ('https://www.jornadaperfecta.com/?s=' . rawurlencode($name))]
+    ];
+    foreach ($candidates as [$source, $link]) {
+        $link = trim((string)$link);
+        if ($link === '') continue;
+        $links[] = [
+            'title' => 'Abrir ficha y noticias de ' . $name,
+            'link' => $link,
+            'source' => $source,
+            'publishedAt' => null
+        ];
+    }
+    return $links;
+}
+
+function favorite_news_payload(array $players, int $timeoutSeconds, array $headers, bool $strictTls): array
+{
+    $sanitizedPlayers = [];
+    $urls = [];
+    foreach ($players as $player) {
+        if (!is_array($player)) continue;
+        $name = trim((string)($player['name'] ?? ''));
+        if ($name === '') continue;
+        $key = trim((string)($player['key'] ?? ''));
+        if ($key === '') $key = normalize_text($name . '|' . (string)($player['team'] ?? ''));
+        $sanitized = [
+            'key' => $key,
+            'name' => $name,
+            'team' => sanitize_tracked_team_name($player['team'] ?? ''),
+            'position' => trim((string)($player['position'] ?? '')),
+            'biwengerPlayerId' => (int)($player['biwengerPlayerId'] ?? 0),
+            'sourceLinks' => is_array($player['sourceLinks'] ?? null) ? $player['sourceLinks'] : []
+        ];
+        $url = favorite_news_feed_url($sanitized);
+        $sanitizedPlayers[$key] = $sanitized;
+        $urls[$key] = $url;
+    }
+    $pages = $urls ? http_get_text_many(array_values($urls), $timeoutSeconds, $headers, $strictTls) : [];
+    $result = [];
+    foreach ($sanitizedPlayers as $key => $player) {
+        $articles = [];
+        $xml = (string)($pages[$urls[$key] ?? ''] ?? '');
+        if ($xml !== '') {
+            $articles = favorite_news_parse_rss_items($xml, $player);
+        }
+        $merged = [];
+        foreach (array_merge($articles, favorite_news_direct_links($player)) as $article) {
+            $signature = sha1(strtolower(trim((string)($article['source'] ?? ''))) . '|' . strtolower(trim((string)($article['title'] ?? ''))) . '|' . trim((string)($article['link'] ?? '')));
+            if (!isset($merged[$signature])) $merged[$signature] = $article;
+        }
+        $articles = array_values($merged);
+        usort($articles, static function ($left, $right) {
+            $leftTs = !empty($left['publishedAt']) ? strtotime((string)$left['publishedAt']) : 0;
+            $rightTs = !empty($right['publishedAt']) ? strtotime((string)$right['publishedAt']) : 0;
+            return $rightTs <=> $leftTs;
+        });
+        $result[] = [
+            'key' => $player['key'],
+            'name' => $player['name'],
+            'team' => $player['team'],
+            'articles' => array_slice($articles, 0, 6)
+        ];
+    }
+    return ['generatedAt' => gmdate('c'), 'players' => $result];
 }
 
 function sanitize_scoring($value): string

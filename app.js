@@ -61,6 +61,9 @@
   favorites: [],
   favoriteCatalog: [],
   favoriteAlerts: [],
+  favoriteNews: [],
+  favoriteNewsLoading: false,
+  favoriteNewsUpdatedAt: null,
   favoriteCatalogLoading: false,
   favoriteCatalogExtended: false,
   favoriteCatalogExtending: false,
@@ -3613,15 +3616,42 @@ const renderFavoriteStatusBadges = (player) => {
   return badges.join("");
 };
 
+const favoriteNewsForPlayer = (player) => {
+  const key = favoritePlayerKey(player);
+  const match = state.favoriteNews.find((entry) => entry.key === key
+    || (normalize(entry.name) === normalize(player.name) && normalize(entry.team || "") === normalize(player.team || "")));
+  return Array.isArray(match?.articles) ? match.articles.slice(0, 4) : [];
+};
+
+const renderFavoriteNews = (player) => {
+  const articles = favoriteNewsForPlayer(player);
+  if (state.favoriteNewsLoading && !articles.length) {
+    return '<div class="favorite-news-list loading"><span>Actualizando noticias...</span></div>';
+  }
+  if (!articles.length) {
+    return '<div class="favorite-news-list empty"><span>Sin titulares recientes para este jugador.</span></div>';
+  }
+  return `<div class="favorite-news-list">
+    ${articles.map((article) => `<a class="favorite-news-item" href="${escapeHtml(article.link || "#")}" target="_blank" rel="noopener">
+      <span>${escapeHtml(article.source || "Fuente")}</span>
+      <strong>${escapeHtml(article.title || "Abrir fuente")}</strong>
+      ${article.publishedAt ? `<time datetime="${escapeHtml(article.publishedAt)}">${escapeHtml(formatTrackedTeamDate(article.publishedAt))}</time>` : ""}
+    </a>`).join("")}
+  </div>`;
+};
+
 const renderFavoritePlayerRow = (player, options = {}) => `
   <article class="favorite-player-row" data-favorite-row="${escapeHtml(favoritePlayerKey(player))}">
-    ${renderPlayerMedia(player, "sm")}
-    <div class="favorite-player-copy">
-      <div class="player-name-line"><strong>${escapeHtml(player.name)}</strong>${renderRecentFormDots(player)}</div>
-      <span>${renderPositionBadge(player.position)} ${escapeHtml(player.team || "Sin equipo")} · ${formatMoney(Number(player.biwengerValue || player.price || 0))}</span>
-      ${options.showStatus === false ? "" : renderFavoriteStatusBadges(player)}
+    <div class="favorite-player-main">
+      ${renderPlayerMedia(player, "sm")}
+      <div class="favorite-player-copy">
+        <div class="player-name-line"><strong>${escapeHtml(player.name)}</strong>${renderRecentFormDots(player)}</div>
+        <span>${renderPositionBadge(player.position)} ${escapeHtml(player.team || "Sin equipo")} · ${formatMoney(Number(player.biwengerValue || player.price || 0))}</span>
+        ${options.showStatus === false ? "" : renderFavoriteStatusBadges(player)}
+      </div>
+      ${renderFavoriteButton(player)}
     </div>
-    ${renderFavoriteButton(player)}
+    ${options.showNews === false ? "" : renderFavoriteNews(player)}
   </article>
 `;
 
@@ -3714,7 +3744,7 @@ const renderFavorites = () => {
     return nameMatches && positionMatches;
   }).sort((left, right) => left.score - right.score || left.player.name.localeCompare(right.player.name, "es")).slice(0, 80).map(({ player }) => player);
   results.innerHTML = filtered.length
-    ? filtered.map((player) => renderFavoritePlayerRow(player, { showStatus: true })).join("")
+    ? filtered.map((player) => renderFavoritePlayerRow(player, { showStatus: true, showNews: false })).join("")
     : '<p class="muted-empty">No hay jugadores que coincidan con esta búsqueda.</p>';
 };
 
@@ -3821,6 +3851,57 @@ const processFavoriteWatchTransitions = async (payload) => {
   }
 };
 
+const refreshFavoriteNews = async ({ force = false, silent = false } = {}) => {
+  const favorites = state.favorites.map(currentFavoritePlayer);
+  if (!favorites.length) {
+    state.favoriteNews = [];
+    state.favoriteNewsUpdatedAt = null;
+    renderFavorites();
+    return false;
+  }
+  if (state.favoriteNewsLoading) return false;
+  state.favoriteNewsLoading = true;
+  if (!silent) setFavoritesStatus("Actualizando noticias de favoritos...", "busy");
+  renderFavorites();
+  try {
+    let payload = { players: [] };
+    if (canUseApi()) {
+      const response = await apiFetch(`/api/favorite-news${force ? "?force=1" : ""}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          competition: state.competition === "worldcup" ? "worldcup" : "club",
+          players: favorites.map((player) => ({
+            key: favoritePlayerKey(player),
+            name: player.name,
+            team: player.team,
+            position: player.position,
+            biwengerPlayerId: player.biwengerPlayerId,
+            sourceLinks: player.sourceLinks || {}
+          }))
+        })
+      });
+      payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "No se pudieron cargar noticias de favoritos.");
+    }
+    state.favoriteNews = Array.isArray(payload.players) ? payload.players : [];
+    state.favoriteNewsUpdatedAt = payload.generatedAt || new Date().toISOString();
+    renderFavorites();
+    if (!silent) {
+      const newsCount = state.favoriteNews.reduce((sum, entry) => sum + (Array.isArray(entry.articles) ? entry.articles.length : 0), 0);
+      setFavoritesStatus(`Favoritos actualizados: ${newsCount} enlaces y noticias para ${favorites.length} jugador${favorites.length === 1 ? "" : "es"}.`, "ready");
+    }
+    return true;
+  } catch (error) {
+    if (!silent) setFavoritesStatus(error.message || "No se pudieron actualizar las noticias de favoritos.", "error");
+    renderFavorites();
+    return false;
+  } finally {
+    state.favoriteNewsLoading = false;
+    renderFavorites();
+  }
+};
+
 const loadFavoriteCatalog = async ({ force = false, notify = true } = {}) => {
   if (state.favoriteCatalogLoading) return false;
   if (!force && state.favoriteCatalog.length) {
@@ -3887,6 +3968,12 @@ const loadFavoriteCatalog = async ({ force = false, notify = true } = {}) => {
   }
 };
 
+const refreshFavoritesAll = async ({ force = true } = {}) => {
+  const loaded = await loadFavoriteCatalog({ force });
+  if (state.favorites.length) await refreshFavoriteNews({ force, silent: !loaded });
+  return loaded;
+};
+
 const toggleFavoritePlayer = async (player) => {
   if (!player) return;
   const key = favoritePlayerKey(player);
@@ -3901,6 +3988,7 @@ const toggleFavoritePlayer = async (player) => {
   renderTeam();
   renderFavorites();
   setFavoritesStatus(existingIndex >= 0 ? `${player.name} eliminado de favoritos.` : `${player.name} añadido a favoritos.`, "ready");
+  if (existingIndex < 0) refreshFavoriteNews({ force: true, silent: true });
 };
 
 const trackedTeamKey = (name) => normalize(String(name || "")).replace(/\s+/g, " ").trim();
@@ -6893,16 +6981,21 @@ const importFromBiwenger = async (kind, options = {}) => {
     }
 
     if (kind === "team") {
+      const previousEditableLineup = state.editableLineup;
+      const previousLineupRequested = state.lineupRequested;
       state.teamPlayers = importedPlayers;
-      state.lineupRequested = false;
       state.recommendedLineup = null;
-      state.editableLineup = null;
+      const importedEditableLineup = editableLineupFromBiwengerPayload(payload.lineup, state.teamPlayers);
+      const preservedEditableLineup = reconcileEditableLineup(previousEditableLineup, state.teamPlayers);
+      state.editableLineup = importedEditableLineup || preservedEditableLineup || null;
+      state.lineupRequested = Boolean(state.editableLineup?.playerIds?.length && (importedEditableLineup || previousLineupRequested));
       state.teamDepartures = hydrateImportedPlayers(payload.departedPlayers || []);
       state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
       qs("#team-text").value = biwengerPlayersToText(importedPlayers);
       qs("#market-text").value = biwengerPlayersToText(state.players);
       renderTeam();
-      renderLineupPlaceholder("Plantilla importada. Pulsa \"Once ideal\" si quieres generar la alineación recomendada.");
+      if (state.lineupRequested) renderLineup();
+      else renderLineupPlaceholder("Plantilla importada. Pulsa \"Once ideal\" si quieres generar la alineación recomendada.");
       renderTable();
       setTeamStatus(`Plantilla importada desde Biwenger: ${importedPlayers.length} jugadores.`, importedPlayers.length ? "ready" : "error");
       if (importedPlayers.length && canUseApi() && !options.skipEnrichment) {
@@ -6911,11 +7004,14 @@ const importFromBiwenger = async (kind, options = {}) => {
           setTeamStatus(`Enriqueciendo plantilla: ${done}/${total} jugadores...`, "busy");
         });
         state.teamPlayers = enriched;
+        state.editableLineup = reconcileEditableLineup(state.editableLineup, state.teamPlayers);
+        state.lineupRequested = Boolean(state.editableLineup?.playerIds?.length && state.lineupRequested);
         throwIfDataSyncCancelled();
         state.players = removeTeamPlayersFromMarket(state.players, state.teamPlayers);
         qs("#market-text").value = biwengerPlayersToText(state.players);
         renderTeam();
-        renderLineupPlaceholder("Plantilla enriquecida. Pulsa \"Once ideal\" si quieres recalcular la alineación recomendada.");
+        if (state.lineupRequested) renderLineup();
+        else renderLineupPlaceholder("Plantilla enriquecida. Pulsa \"Once ideal\" si quieres recalcular la alineación recomendada.");
         renderTable();
         setTeamStatus(`Plantilla importada y enriquecida: ${state.teamPlayers.length} jugadores.`, "ready");
       }
@@ -6950,7 +7046,7 @@ const importFromBiwenger = async (kind, options = {}) => {
           ? `Equipo importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
           : `Mercado importado desde ${payload.leagueName || state.biwenger.leagueName || "Biwenger"}.`
       );
-      if (kind === "market" && state.favorites.length) await loadFavoriteCatalog({ force: true });
+      if (kind === "market" && state.favorites.length) await refreshFavoritesAll({ force: true });
       if (kind === "team") await notifyDailyPlanIfNeeded();
     }
     return options.returnMeta ? { success: true, changed: true, signature } : true;
@@ -7090,7 +7186,7 @@ const refreshDeferredSourcesInBackground = ({ enrich = false } = {}) => {
       await refreshSourceDbStatus();
       if (enrich && state.players.length) await enrichCurrentMarket(false);
       if (enrich && state.teamPlayers.length) await refreshTeamAlertSources();
-      if (enrich && state.favorites.length) await loadFavoriteCatalog({ force: true });
+      if (enrich && state.favorites.length) await refreshFavoritesAll({ force: true });
     } finally {
       state.autoSync.deferredSources = false;
       endDataSync();
@@ -7174,7 +7270,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
     });
     renderDailyPlanIfVisible();
     if (!fastStartup && state.favorites.length && (!syncResult?.unchanged || fullSyncDue)) {
-      await loadFavoriteCatalog({ force: true });
+      await refreshFavoritesAll({ force: true });
     }
     await notifyDailyPlanIfNeeded();
     return true;
@@ -10654,6 +10750,38 @@ const editableLineupFromRecommendation = (recommendation = calculateBestLineup()
   };
 };
 
+const editableLineupFromBiwengerPayload = (lineup = null, players = state.teamPlayers) => {
+  if (!lineup || typeof lineup !== "object") return null;
+  const byBiwengerId = new Map((players || [])
+    .filter((player) => Number(player.biwengerPlayerId || 0) > 0)
+    .map((player) => [Number(player.biwengerPlayerId), player]));
+  const playerIds = [...(lineup.playersID || lineup.playersId || lineup.playersIDs || [])]
+    .map((id) => byBiwengerId.get(Number(id || 0))?.id)
+    .filter(Boolean);
+  if (!playerIds.length) return null;
+  const captainId = byBiwengerId.get(Number(lineup.captain || 0))?.id || null;
+  const strikerId = byBiwengerId.get(Number(lineup.striker || 0))?.id || null;
+  return {
+    formationName: FORMATIONS.some((formation) => formation.name === lineup.type) ? lineup.type : (lineup.type || "4-4-2"),
+    playerIds,
+    captainId: captainId && playerIds.includes(captainId) ? captainId : null,
+    strikerId: strikerId && playerIds.includes(strikerId) ? strikerId : null
+  };
+};
+
+const reconcileEditableLineup = (lineup = state.editableLineup, players = state.teamPlayers) => {
+  if (!lineup?.playerIds?.length) return null;
+  const validIds = new Set((players || []).map((player) => String(player.id)));
+  const playerIds = lineup.playerIds.map(String).filter((id) => validIds.has(id));
+  if (!playerIds.length) return null;
+  const formationName = FORMATIONS.some((formation) => formation.name === lineup.formationName)
+    ? lineup.formationName
+    : "4-4-2";
+  const captainId = playerIds.includes(String(lineup.captainId || "")) ? lineup.captainId : null;
+  const strikerId = playerIds.includes(String(lineup.strikerId || "")) ? lineup.strikerId : null;
+  return { formationName, playerIds, captainId, strikerId };
+};
+
 const teamPlayersWithLineupScore = () => state.teamPlayers
   .map(playerForCompetition)
   .map((player) => ({
@@ -10787,6 +10915,7 @@ const openView = (viewName) => {
     if (!renderedComponents.has("market")) renderTable();
   } else if (viewName === "favorites") {
     if (!renderedComponents.has("favorites")) renderFavorites();
+    if (state.favorites.length && !state.favoriteNews.length && !state.favoriteNewsLoading) refreshFavoriteNews({ force: false, silent: true });
   } else if (viewName === "team-tracking") {
     if (!renderedComponents.has("team-tracking")) renderTeamTracking();
   } else if (viewName === "compare") {
@@ -11361,13 +11490,13 @@ const refreshMarketSettingsManually = async () => {
     return;
   }
   await importFromBiwenger("market", { deferFollowUp: true });
-  if (state.favorites.length) await loadFavoriteCatalog({ force: true });
+  if (state.favorites.length) await refreshFavoritesAll({ force: true });
 };
 
 const refreshSourcesSettingsManually = async () => {
   if (state.players.length) await enrichCurrentMarket(true);
   if (state.teamPlayers.length) await refreshTeamAlertSources();
-  if (state.favorites.length) await loadFavoriteCatalog({ force: true });
+  if (state.favorites.length) await refreshFavoritesAll({ force: true });
 };
 
 const refreshLeagueCenterSettingsManually = async () => {
@@ -11650,7 +11779,7 @@ const initEvents = () => {
   qs("#refresh-league-center-settings")?.addEventListener("click", () => { void runSettingsRefreshAction(qs("#refresh-league-center-settings"), refreshLeagueCenterSettingsManually, "Actualizar centro de liga"); });
   qs("#refresh-all-settings")?.addEventListener("click", () => { invalidateCalculatedViews(); void runSettingsRefreshAction(qs("#refresh-all-settings"), refreshAllSettingsManually, "Actualizar todo"); });
   qs("#biwenger-logout").addEventListener("click", biwengerLogout);
-  qs("#refresh-favorites")?.addEventListener("click", () => loadFavoriteCatalog({ force: true }));
+  qs("#refresh-favorites")?.addEventListener("click", () => refreshFavoritesAll({ force: true }));
   qs("#refresh-team-tracking")?.addEventListener("click", () => refreshTrackedTeamFeed({ force: true }));
   qs("#add-team-tracking")?.addEventListener("click", addTrackedTeam);
   qs("#team-tracking-name")?.addEventListener("keydown", (event) => {

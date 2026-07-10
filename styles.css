@@ -1189,6 +1189,289 @@ html[data-theme="day"] .pitch-score {
   box-shadow: 0 2px 8px rgba(9, 47, 52, 0.22);
 }
 
+html[data-theme="day"] .primary-button {
+  background-color: #08747a;
+}
+
+html[data-theme="day"] .nav-count,
+html[data-theme="day"] .favorite-nav-star,
+html[data-theme="day"] .favorite-toggle,
+html[data-theme="day"] .app-version-badge {
+  color: #6f4300;
+  border-color: #a86d08;
+  background: #fff0c7;
+}
+
+html[data-theme="day"] .favorite-toggle.active,
+html[data-theme="day"] .favorite-toggle:hover {
+  color: #593500;
+  background: #ffe2a1;
+}
+
+html[data-theme="day"] .team-alerts-count {
+  border-color: #ffffff;
+  background: #c6283a;
+  color: #ffffff;
+}
+
+html[data-theme="day"] .segmented-control,
+html[data-theme="day"] .fantasy-platform-tabs {
+  border-color: #8fb0ab;
+  background: #e3eee9;
+  color: #13272b;
+}
+
+html[data-theme="day"] .segmented-control button {
+  color: #2f4f53;
+}
+
+html[data-theme="day"] .segmented-control button.active {
+  background: #087f87;
+  color: #ffffff;
+}
+
+html[data-theme="day"] .market-position-filter button {
+  background: #f7fbf8;
+}
+
+html[data-theme="day"] .market-position-filter button.active {
+  background: #ffffff;
+  color: #13272b;
+}
+
+html[data-theme="day"] .market-position-filter .pos-POR,
+html[data-theme="day"] .position-icon.pos-POR {
+  color: #6f4300;
+}
+
+html[data-theme="day"] .market-position-filter .pos-DF,
+html[data-theme="day"] .position-icon.pos-DF {
+  color: #0b5595;
+}
+
+html[data-theme="day"] .market-position-filter .pos-MC,
+html[data-theme="day"] .position-icon.pos-MC {
+  color: #086238;
+}
+
+html[data-theme="day"] .market-position-filter .pos-DL,
+html[data-theme="day"] .position-icon.pos-DL {
+  color: #9b1724;
+}
+
+html[data-theme="day"] .market-position-filter .pos-ENT,
+html[data-theme="day"] .position-icon.pos-ENT {
+  color: #4b3f7f;
+}
+
+html[data-theme="day"] .position-count.pos-POR,
+html[data-theme="day"] .position-count.pos-DF,
+html[data-theme="day"] .position-count.pos-MC,
+html[data-theme="day"] .position-count.pos-DL,
+html[data-theme="day"] .position-count.pos-ENT {
+  background: #ffffff;
+}
+
+html[data-theme="day"] .position-count.pos-POR {
+  border-color: #b57612;
+  color: #593500;
+}
+
+html[data-theme="day"] .position-count.pos-DF {
+  border-color: #1e6fb8;
+  color: #0b477f;
+}
+
+html[data-theme="day"] .position-count.pos-MC {
+  border-color: #0f8a64;
+  color: #075f34;
+}
+
+html[data-theme="day"] .position-count.pos-DL {
+  border-color: #d93e51;
+  color: #8c1421;
+}
+
+html[data-theme="day"] .position-count.pos-ENT {
+  border-color: #6f5bd6;
+  color: #413078;
+}
+
+html[data-theme="day"] .team-finance-summary > div,
+html[data-theme="day"] .daily-plan-metric,
+html[data-theme="day"] .market-top-five,
+html[data-theme="day"] .top-five-card,
+html[data-theme="day"] .assistant-card,
+html[data-theme="day"] .assistant-action-row,
+html[data-theme="day"] .operation-metrics > div,
+html[data-theme="day"] .operation-row,
+html[data-theme="day"] .detail-stat,
+html[data-theme="day"] .bid-analysis,
+html[data-theme="day"] .bid-limit-box,
+html[data-theme="day"] .team-detail-card,
+html[data-theme="day"] .league-panel,
+html[data-theme="day"] .rival-metric,
+html[data-theme="day"] .rival-source-status,
+html[data-theme="day"] .team-alert-row,
+html[data-theme="day"] .lineup-player-select,
+html[data-theme="day"] .live-team-card,
+html[data-theme="day"] .debug-panel {
+  border-color: #9dbbb6;
+  background: #f8fcfa;
+  color: #13272b;
+}
+
+html[data-theme="day"] .team-finance-summary strong,
+html[data-theme="day"] .daily-plan-metric strong,
+html[data-theme="day"] .top-five-card strong,
+html[data-theme="day"] .assistant-card strong,
+html[data-theme="day"] .assistant-plan-summary,
+html[data-theme="day"] .operation-row strong,
+html[data-theme="day"] .detail-stat strong,
+html[data-theme="day"] .bid-analysis strong,
+html[data-theme="day"] .team-detail-card strong,
+html[data-theme="day"] .league-panel strong,
+html[data-theme="day"] .rival-metric strong,
+html[data-theme="day"] .lineup-player-select strong,
+html[data-theme="day"] .live-team-card strong {
+  color: #0a2f34;
+}
+
+html[data-theme="day"] .team-finance-summary strong.finance-positive,
+html[data-theme="day"] .finance-positive,
+html[data-theme="day"] .positive,
+html[data-theme="day"] .smart-bid-grid .positive,
+html[data-theme="day"] .operation-comparison .positive,
+html[data-theme="day"] .assistant-metrics .positive {
+  color: #075f34;
+}
+
+html[data-theme="day"] .team-finance-summary strong.finance-negative,
+html[data-theme="day"] .finance-negative,
+html[data-theme="day"] .negative,
+html[data-theme="day"] .smart-bid-grid .negative,
+html[data-theme="day"] .operation-comparison .negative,
+html[data-theme="day"] .assistant-metrics .negative {
+  color: #9b1724;
+}
+
+html[data-theme="day"] .market-signal,
+html[data-theme="day"] .confidence-badge,
+html[data-theme="day"] .data-badge,
+html[data-theme="day"] .seller-badge,
+html[data-theme="day"] .decision-badge,
+html[data-theme="day"] .bid-limit-badge,
+html[data-theme="day"] .provider-status,
+html[data-theme="day"] .daily-confidence,
+html[data-theme="day"] .scoring-badge,
+html[data-theme="day"] .clause-badge {
+  border-color: #8fb0ab;
+  background: #ffffff;
+  color: #263f43;
+}
+
+html[data-theme="day"] .market-signal.role,
+html[data-theme="day"] .market-signal.warning,
+html[data-theme="day"] .bid-limit-badge.active,
+html[data-theme="day"] .bid-limit-badge.available,
+html[data-theme="day"] .provider-status.planning,
+html[data-theme="day"] .provider-status.planned,
+html[data-theme="day"] .operation-readonly-note {
+  border-color: #b57612;
+  background: #fff0c7;
+  color: #6f4300;
+}
+
+html[data-theme="day"] .market-signal.positive,
+html[data-theme="day"] .decision-badge.buy,
+html[data-theme="day"] .bid-limit-badge.available {
+  border-color: #0f8a64;
+  background: #dff4e8;
+  color: #075f34;
+}
+
+html[data-theme="day"] .market-signal.negative,
+html[data-theme="day"] .decision-badge.avoid,
+html[data-theme="day"] .bid-limit-badge.blocked {
+  border-color: #d93e51;
+  background: #fadde1;
+  color: #8c1421;
+}
+
+html[data-theme="day"] .market-signal.efficiency,
+html[data-theme="day"] .seller-badge.free,
+html[data-theme="day"] .provider-status.available {
+  border-color: #1e6fb8;
+  background: #e1f0ff;
+  color: #0b477f;
+}
+
+html[data-theme="day"] .ocr-status.ready {
+  color: #075f34;
+  border-color: #0f8a64;
+  background: #dff4e8;
+}
+
+html[data-theme="day"] .ocr-status.busy {
+  color: #6f4300;
+  border-color: #b57612;
+  background: #fff0c7;
+}
+
+html[data-theme="day"] .ocr-status.error,
+html[data-theme="day"] .mini-status.error {
+  color: #8c1421;
+  border-color: #d93e51;
+  background: #fadde1;
+}
+
+html[data-theme="day"] .profile-link,
+html[data-theme="day"] .team-tracking-source,
+html[data-theme="day"] .team-tracking-badge,
+html[data-theme="day"] .team-tracking-filter-chip,
+html[data-theme="day"] .team-tracking-team-chip {
+  border-color: #087f87;
+  background: #e1f4f1;
+  color: #075f66;
+}
+
+html[data-theme="day"] .profile-link.muted,
+html[data-theme="day"] .bid-limit-badge.muted,
+html[data-theme="day"] .data-badge.manual {
+  border-color: #9dbbb6;
+  background: #eef5f2;
+  color: #415d61;
+}
+
+html[data-theme="day"] .score-ring,
+html[data-theme="day"] .source-quality-score {
+  background: conic-gradient(#087f87 calc(var(--score) * 1%), #d7e5df 0);
+}
+
+html[data-theme="day"] .score-ring span,
+html[data-theme="day"] .source-quality-score strong {
+  background: #ffffff;
+  color: #0a2f34;
+}
+
+html[data-theme="day"] .section-heading,
+html[data-theme="day"] .fantasy-platform-tabs,
+html[data-theme="day"] .fantasy-platform-panel,
+html[data-theme="day"] .fantasy-provider-card {
+  background-color: #f8fcfa;
+  color: #13272b;
+}
+
+html[data-theme="day"] .section-heading h3,
+html[data-theme="day"] .section-heading .eyebrow,
+html[data-theme="day"] .compact-heading h3 {
+  color: #0a2f34;
+}
+
+html[data-theme="day"] .section-heading .eyebrow {
+  color: #415d61;
+}
+
 html[data-theme="day"] tr.over-maximum-bid td,
 html[data-theme="day"] .market-card.over-maximum-bid {
   border-color: #c84a58;

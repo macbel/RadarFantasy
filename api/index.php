@@ -1667,6 +1667,7 @@ function biwenger_build_session(string $token, string $version, string $preferre
         'competition' => biwenger_competition_value($league['competition'] ?? ''),
         'scoreId' => max(1, (int)($league['scoreID'] ?? $league['scoreId'] ?? $league['score']['id'] ?? 2)),
         'balance' => isset($user['balance']) ? (int)$user['balance'] : null,
+        'maximumBid' => biwenger_maximum_bid_from_data((array)$user, (array)$league, (array)$data),
         'credits' => biwenger_first_numeric_value($data, ['credits', 'account.credits', 'user.credits', 'coins']),
         'rewardSettings' => biwenger_reward_settings_from_node((array)($league['settings'] ?? $league)),
         'bidCountFree' => !empty($user['isPremium']) || in_array(strtolower((string)($league['type'] ?? '')), ['premium', 'ultra'], true),
@@ -1877,6 +1878,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
             ];
         }
         $finance['balance'] = isset($userData['balance']) ? (int)$userData['balance'] : $finance['balance'];
+        $finance['maximumBid'] = biwenger_maximum_bid_from_data($userData) ?? $finance['maximumBid'];
         $finance['teamValue'] = array_sum(array_map(static function ($player) {
             return (int)($player['biwengerValue'] ?? $player['price'] ?? 0);
         }, $players));
@@ -1941,7 +1943,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
         }
         $status = is_array($marketData['status'] ?? null) ? $marketData['status'] : [];
         $finance['balance'] = isset($status['balance']) ? (int)$status['balance'] : $finance['balance'];
-        $finance['maximumBid'] = isset($status['maximumBid']) ? (int)$status['maximumBid'] : $finance['maximumBid'];
+        $finance['maximumBid'] = biwenger_maximum_bid_from_data($status, $marketData, $userOffersData ?? []) ?? $finance['maximumBid'];
         $finance['activeBids'] = count(array_filter($offerMap, static function ($offer) {
             return !empty($offer['hasBid']);
         }));
@@ -3670,6 +3672,60 @@ function biwenger_first_money_path(array $node, array $paths, bool $signed = fal
     return null;
 }
 
+function biwenger_first_money_deep(array $node, array $keyPatterns, bool $signed = false, int $depth = 0): ?int
+{
+    if ($depth > 6) return null;
+    foreach ($node as $key => $value) {
+        $keyName = strtolower((string)$key);
+        foreach ($keyPatterns as $pattern) {
+            if (!preg_match($pattern, $keyName)) continue;
+            if (is_scalar($value) && $value !== '') {
+                $money = $signed ? biwenger_signed_money_int($value) : biwenger_money_int($value);
+                if ($money !== 0 || is_numeric($value) || preg_match('/^-/', (string)$value)) return $money;
+            }
+            if (is_array($value)) {
+                $nested = biwenger_first_money_deep($value, $keyPatterns, $signed, $depth + 1);
+                if ($nested !== null) return $nested;
+            }
+        }
+    }
+    foreach ($node as $value) {
+        if (!is_array($value)) continue;
+        $nested = biwenger_first_money_deep($value, $keyPatterns, $signed, $depth + 1);
+        if ($nested !== null) return $nested;
+    }
+    return null;
+}
+
+function biwenger_maximum_bid_from_data(array ...$sources): ?int
+{
+    $paths = [
+        'maximumBid', 'maximum_bid', 'maxBid', 'max_bid', 'maxOffer', 'max_offer',
+        'bidBudget', 'bid_budget', 'availableBid', 'available_bid', 'maximumOffer',
+        'maximum_offer', 'maxAllowedBid', 'max_allowed_bid', 'purchaseLimit',
+        'purchase_limit', 'bidLimit', 'bid_limit', 'offerLimit', 'offer_limit',
+        'limits.maximumBid', 'limits.maxBid', 'limits.bidLimit',
+        'finance.maximumBid', 'finance.maxBid', 'finance.bidLimit',
+        'status.maximumBid', 'status.maxBid', 'status.bidLimit',
+        'user.maximumBid', 'user.maxBid', 'user.bidLimit'
+    ];
+    $patterns = [
+        '/^(maximum|max).*(bid|offer)$/',
+        '/^(bid|offer).*(budget|limit|available)$/',
+        '/^(available).*(bid|offer)$/',
+        '/^maxallowedbid$/',
+        '/^purchaselimit$/'
+    ];
+    foreach ($sources as $source) {
+        if (!$source) continue;
+        $direct = biwenger_first_money_path($source, $paths);
+        if ($direct !== null) return $direct;
+        $deep = biwenger_first_money_deep($source, $patterns);
+        if ($deep !== null) return $deep;
+    }
+    return null;
+}
+
 function biwenger_reward_amount_from_value($value): ?int
 {
     if ($value === null || $value === '') return null;
@@ -3845,10 +3901,7 @@ function biwenger_finance_snapshot(array $data, array $players = []): array
         'account.balance', 'account.money', 'finance.balance', 'finance.cash', 'user.cash',
         'user.balance', 'user.money'
     ], true);
-    $maximumBid = biwenger_first_money_path($data, [
-        'maximumBid', 'maxBid', 'maxOffer', 'bidBudget', 'availableBid', 'maximumOffer',
-        'maxAllowedBid', 'limits.maximumBid', 'finance.maximumBid', 'user.maximumBid'
-    ]);
+    $maximumBid = biwenger_maximum_bid_from_data($data);
     $dailyIncrease = biwenger_first_money_path($data, [
         'dailyIncrease', 'dailyInc', 'dailyValueIncrease', 'dailyPriceIncrease',
         'teamValueIncrement', 'teamPriceIncrement', 'marketValueChange', 'valueIncrement',
@@ -6475,6 +6528,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
     }
 
     $status = is_array($market['status'] ?? null) ? $market['status'] : [];
+    $maximumBid = biwenger_maximum_bid_from_data($status, $market, $session);
     return [
         'ok' => true,
         'offers' => $normalizedOffers,
@@ -6485,7 +6539,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
         'marketBidCountSources' => $marketBidCountSources,
         'finance' => [
             'balance' => isset($status['balance']) ? (int)$status['balance'] : ($session['balance'] ?? null),
-            'maximumBid' => isset($status['maximumBid']) ? (int)$status['maximumBid'] : ($session['maximumBid'] ?? null)
+            'maximumBid' => $maximumBid ?? ($session['maximumBid'] ?? null)
         ],
         'diagnostics' => [
             'rawOfferCandidates' => count($offers),

@@ -145,7 +145,12 @@ if (!expensiveStar?.exceedsMaximumBid || expensiveStar.recommendation > 44) {
 if (!affordableFit || budgetAnalyzed[0].id !== "affordable-fit") {
   throw new Error("Affordable player should outrank unaffordable player: " + JSON.stringify(budgetAnalyzed));
 }
-state.finance.maximumBid = previousMaximumBid;
+state.finance.maximumBid = 0;
+const zeroBidPlayer = analyzePlayer(affordableFit, budgetPlayers);
+if (!zeroBidPlayer.exceedsMaximumBid || zeroBidPlayer.marketDecision.type !== "avoid" || zeroBidPlayer.marketDecision.recommendedBid !== 0) {
+  throw new Error("Zero maximum bid must block all paid recommendations: " + JSON.stringify(zeroBidPlayer.marketDecision));
+}
+state.finance.maximumBid = Number(previousMaximumBid) === 0 ? null : previousMaximumBid;
 state.biwengerOperations = previousOperations;
 
 const noMinutesPlayers = hydrateImportedPlayers([
@@ -280,6 +285,7 @@ if (eliminatedSale.action !== "Vender hoy" || eliminatedSale.score < 90) {
 state.teamPlayers = previousNeedTeam;
 
 state.competition = "club";
+state.finance.maximumBid = null;
 state.leagueFixtures = {
   events: [{
     id: "unrelated-next",

@@ -1368,8 +1368,8 @@ const renderConfidenceBadge = (player) => {
 const smartBidPlan = (player) => {
   const price = Number(player.price || player.biwengerValue || 0);
   const referenceValue = Number(player.referenceValue || player.biwengerValue || player.sourceSummary?.fantasy?.marketValue || price || 0);
-  const maximumBid = Number(state.finance.maximumBid);
-  const hasMaximumBid = Number.isFinite(maximumBid) && maximumBid > 0;
+  const maximumBid = currentMaximumBid();
+  const hasMaximumBid = maximumBid !== null && maximumBid >= 0;
   const ownBidAmount = playerOwnBidAmount(player);
   const hasOwnBid = playerHasOwnBid(player);
   const demand = Math.max(0, Number(player.bidCount || 0), Number(player.rivalBidCount || 0));
@@ -1688,9 +1688,9 @@ const renderMarketPlan = (players) => {
   const needs = teamNeedPositions().slice(0, 2);
   const incomingOffers = activeIncomingOffers(state.biwengerOperations?.offers || []);
   const balance = Number(state.finance.balance);
-  const maximumBid = Number(state.finance.maximumBid);
+  const maximumBid = currentMaximumBid();
   const futureBalanceText = Number.isFinite(balance)
-    ? `Saldo actual ${formatFinanceMoney(balance)}${Number.isFinite(maximumBid) ? ` · puja máxima ${formatFinanceMoney(maximumBid)}` : ""}`
+    ? `Saldo actual ${formatFinanceMoney(balance)}${maximumBid !== null ? ` · puja máxima ${formatFinanceMoney(maximumBid)}` : ""}`
     : "Conecta Biwenger para usar saldo y puja máxima reales.";
   const negativeAdvice = Number.isFinite(balance) && balance < 0
     ? `Prioridad: salir del negativo. Simula ofertas recibidas antes de fichar; necesitas ${formatFinanceMoney(Math.abs(balance))}.`
@@ -1741,8 +1741,8 @@ const activeSaleForPlayer = (player) => {
 };
 
 const assistantBidBudget = () => {
-  const maximumBid = Number(state.finance.maximumBid);
-  return Number.isFinite(maximumBid) && maximumBid > 0 ? maximumBid : Infinity;
+  const maximumBid = currentMaximumBid();
+  return maximumBid !== null && maximumBid >= 0 ? maximumBid : Infinity;
 };
 
 const isIncomingOffer = (offer) => {
@@ -4868,17 +4868,24 @@ const renderValueTrend = (player, options = {}) => {
 
 const offerIdKey = (offer) => String(offer.offerId || `${offer.playerId || 0}-${offer.fromId || 0}-${offer.amount || 0}`);
 
+const currentMaximumBid = () => {
+  const value = state.finance.maximumBid;
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
 const playerExceedsMaximumBid = (player) => {
   if (playerHasOwnBid(player)) return false;
-  const maximumBid = Number(state.finance.maximumBid);
+  const maximumBid = currentMaximumBid();
   const price = Number(player.price || player.biwengerValue || 0);
-  return Number.isFinite(maximumBid) && maximumBid > 0 && price > maximumBid;
+  return maximumBid !== null && maximumBid >= 0 && price > maximumBid;
 };
 
 const maximumBidGap = (player) => {
-  const maximumBid = Number(state.finance.maximumBid);
+  const maximumBid = currentMaximumBid();
   const price = Number(player.price || player.biwengerValue || 0);
-  return Number.isFinite(maximumBid) ? price - maximumBid : 0;
+  return maximumBid !== null ? price - maximumBid : 0;
 };
 
 const maximumBidRecommendationCap = (player) => {
@@ -4890,8 +4897,8 @@ const maximumBidRecommendationCap = (player) => {
 };
 
 const renderMaximumBidBadge = (player, compact = false) => {
-  const maximumBid = Number(state.finance.maximumBid);
-  if (!Number.isFinite(maximumBid) || maximumBid <= 0) {
+  const maximumBid = currentMaximumBid();
+  if (maximumBid === null || maximumBid < 0) {
     return `<span class="bid-limit-badge muted">${compact ? "Sin techo" : "Puja maxima sin dato"}</span>`;
   }
   if (playerHasOwnBid(player)) {
@@ -4942,8 +4949,8 @@ const marketTopCandidates = (players, limit = 5) => players
 
 const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) => {
   const price = Number(player.price || player.biwengerValue || 0);
-  const maximumBid = Number(state.finance.maximumBid);
-  const hasMaximumBid = Number.isFinite(maximumBid) && maximumBid > 0;
+  const maximumBid = currentMaximumBid();
+  const hasMaximumBid = maximumBid !== null && maximumBid >= 0;
   const ownBid = playerHasOwnBid(player);
   const recent = player.recentForm || null;
   const unavailableBlocked = player.health?.status === "suspended"
@@ -5886,9 +5893,9 @@ const applyBiwengerSession = (payload) => {
     ? payload.rewardSettings
     : state.biwenger.rewardSettings;
   mergeFinance({
-    balance: Number.isFinite(payload?.balance) ? payload.balance : state.finance.balance,
-    teamValue: Number.isFinite(payload?.teamValue) ? payload.teamValue : state.finance.teamValue,
-    maximumBid: Number.isFinite(payload?.maximumBid) ? payload.maximumBid : state.finance.maximumBid
+    balance: Number.isFinite(Number(payload?.balance)) ? Number(payload.balance) : state.finance.balance,
+    teamValue: Number.isFinite(Number(payload?.teamValue)) ? Number(payload.teamValue) : state.finance.teamValue,
+    maximumBid: Number.isFinite(Number(payload?.maximumBid)) ? Number(payload.maximumBid) : state.finance.maximumBid
   });
   if (state.biwenger.authenticated && activeLeague()) {
     const visual = activeLeagueVisual();
@@ -7303,8 +7310,8 @@ const placeBiwengerBid = async (form, options = {}) => {
     amountInput?.focus();
     return;
   }
-  const maximumBid = Number(state.finance.maximumBid);
-  if (Number.isFinite(maximumBid) && maximumBid > 0 && amount > maximumBid) {
+  const maximumBid = currentMaximumBid();
+  if (maximumBid !== null && maximumBid >= 0 && amount > maximumBid) {
     const message = `Tu puja maxima actual es ${formatFinanceMoney(maximumBid)}. Acepta ofertas, vende jugadores o baja el importe.`;
     setOcrStatus(message, "error");
     setLeagueOperationStatus(message, "error");
@@ -8740,7 +8747,7 @@ const buildRivalAnalysis = (players, teamValue, weakest, payload = {}) => {
   const depth = clamp(players.length / 18 * 72 + Math.min(...Object.keys(SQUAD_TARGETS).map((position) => (players.filter((p) => p.position === position).length / SQUAD_TARGETS[position]) * 28)));
   const performance = clamp(players.length ? totalPoints / players.length * 7 : 0);
   const form = clamp(averageForm);
-  const liquidity = Number.isFinite(maximumBid) && maximumBid > 0
+  const liquidity = Number.isFinite(maximumBid) && maximumBid >= 0
     ? clamp(Math.log10(maximumBid) * 18 - 78)
     : (Number.isFinite(cash) ? clamp(Math.log10(Math.max(1, Math.abs(cash))) * 16 - 70 + (cash > 0 ? 14 : -18)) : null);
   const marketActivity = clamp(Number(tradeSummary.activityCount || 0) * 14 + (Number.isFinite(dailyIncrease) ? Math.min(22, Math.max(-16, dailyIncrease / 100000)) : 0));
@@ -8791,7 +8798,7 @@ const buildRivalAnalysis = (players, teamValue, weakest, payload = {}) => {
   if (availability >= 85) strengths.push("Tiene casi toda la plantilla disponible.");
   if (performance >= 70) strengths.push("Su rendimiento acumulado es alto.");
   if (depth >= 75) strengths.push("Dispone de buena profundidad para cubrir bajas.");
-  if (Number.isFinite(maximumBid) && maximumBid > 0) strengths.push(`Puede pujar hasta ${formatFinanceMoney(maximumBid)} si Biwenger expone bien su límite.`);
+  if (Number.isFinite(maximumBid) && maximumBid >= 0) strengths.push(`Puede pujar hasta ${formatFinanceMoney(maximumBid)} si Biwenger expone bien su límite.`);
   if (Number.isFinite(dailyIncrease) && dailyIncrease > 0) strengths.push(`Su plantilla se ha revalorizado ${formatFinanceMoney(dailyIncrease)} en el último tramo visible.`);
   if (Number(tradeSummary.boughtCount || 0) > 2) strengths.push("Está activo fichando: conviene vigilar sus movimientos antes del cierre.");
   if (valueDiff > 0) strengths.push(`Su plantilla vale ${formatFinanceMoney(valueDiff)} más que la tuya.`);
@@ -10293,9 +10300,9 @@ const buildDetailMarkup = (player) => {
     `Precio objetivo: hasta ${formatMoney(player.maxBid)} segun riesgo y puntuacion.`,
     bidPlan.recommendedBid ? `Puja inteligente: sugerida ${formatFinanceMoney(bidPlan.recommendedBid)}, tope racional ${formatFinanceMoney(bidPlan.rationalMax)} y agresiva ${formatFinanceMoney(bidPlan.aggressiveBid)}.` : "Puja inteligente: no comprometer saldo ahora.",
     player.exceedsMaximumBid
-      ? `Puja maxima Biwenger: ${formatFinanceMoney(state.finance.maximumBid)}. No puedes pujar salvo que aumentes saldo o vendas por al menos ${formatFinanceMoney(player.maximumBidGap)}.`
-      : Number.isFinite(state.finance.maximumBid) && state.finance.maximumBid > 0
-        ? `Puja maxima Biwenger: ${formatFinanceMoney(state.finance.maximumBid)}.`
+      ? `Puja maxima Biwenger: ${formatFinanceMoney(currentMaximumBid())}. No puedes pujar salvo que aumentes saldo o vendas por al menos ${formatFinanceMoney(player.maximumBidGap)}.`
+      : currentMaximumBid() !== null && currentMaximumBid() >= 0
+        ? `Puja maxima Biwenger: ${formatFinanceMoney(currentMaximumBid())}.`
         : null,
     health.status && health.status !== "available" && health.status !== "unknown"
       ? `Estado medico: ${health.label}${health.expectedReturn ? ` (${health.expectedReturn})` : ""}.`

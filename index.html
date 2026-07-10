@@ -10,7 +10,7 @@
     <meta name="theme-color" content="#081317" />
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=55" />
+    <link rel="stylesheet" href="styles.css?v=57" />
   </head>
   <body>
     <div class="app-shell">
@@ -1163,6 +1163,14 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <input id="show-live-round" type="checkbox" />
                 <span>Mostrar Jornada Fantasy experimental</span>
               </label>
+              <label class="appearance-row" for="appearance-mode">
+                <span>Apariencia</span>
+                <select id="appearance-mode">
+                  <option value="night">Modo noche</option>
+                  <option value="day">Modo dia</option>
+                  <option value="auto">Automatico por luz solar</option>
+                </select>
+              </label>
               <label class="toggle-row">
                 <input id="startup-sync-enabled" type="checkbox" checked />
                 <span>Actualizar al iniciar solo si no hay datos guardados</span>
@@ -1352,6 +1360,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=14"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=100"></script>
+    <script src="app.js?v=101"></script>
   </body>
 </html>

@@ -199,6 +199,9 @@ const FAVORITE_WATCH_STATE_KEY = "radar-fantasy.favorite-watch-state.v1";
 const FAVORITE_ALERT_HISTORY_KEY = "radar-fantasy.favorite-alert-history.v1";
 const LEAGUE_FAVORITES_CACHE_KEY = "radar-fantasy.league-favorites.v1";
 const TEAM_TRACKING_KEY = "radar-fantasy.team-tracking.v1";
+const APP_THEME_MODE_KEY = "radar-fantasy.theme-mode.v1";
+const APP_THEME_LOCATION_KEY = "radar-fantasy.theme-location.v1";
+const APP_THEME_MODES = new Set(["auto", "day", "night"]);
 let lastDecisionHistorySignature = "";
 const trimTrailingSlash = (value) => String(value || "").replace(/\/+$/, "");
 const currentProtocol = window.location?.protocol || "http:";
@@ -276,6 +279,136 @@ const writeLocalValue = (key, value) => {
     else window.localStorage.removeItem(key);
   } catch (error) {
     // Native Preferences remains authoritative when WebView storage is unavailable.
+  }
+};
+const readJsonLocalValue = (key, fallback = null) => {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (error) {
+    return fallback;
+  }
+};
+const writeJsonLocalValue = (key, value) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    // Theme location is only a convenience cache.
+  }
+};
+const readAppThemeMode = () => {
+  const mode = readLocalValue(APP_THEME_MODE_KEY) || "night";
+  return APP_THEME_MODES.has(mode) ? mode : "night";
+};
+let appThemeMode = readAppThemeMode();
+let themeLocationPromise = null;
+let themeRefreshTimer = null;
+let systemThemeListenerBound = false;
+const systemPrefersDay = () => {
+  try {
+    return !window.matchMedia("(prefers-color-scheme: dark)").matches;
+  } catch (error) {
+    return false;
+  }
+};
+const dayOfYear = (date) => {
+  const start = new Date(date.getFullYear(), 0, 0);
+  return Math.floor((date - start) / 86400000);
+};
+const solarDaylightFor = (date, latitude, longitude) => {
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const rad = Math.PI / 180;
+  const gamma = (2 * Math.PI / 365) * (dayOfYear(date) - 1 + ((date.getHours() - 12) / 24));
+  const equation = 229.18 * (
+    0.000075
+    + 0.001868 * Math.cos(gamma)
+    - 0.032077 * Math.sin(gamma)
+    - 0.014615 * Math.cos(2 * gamma)
+    - 0.040849 * Math.sin(2 * gamma)
+  );
+  const declination = 0.006918
+    - 0.399912 * Math.cos(gamma)
+    + 0.070257 * Math.sin(gamma)
+    - 0.006758 * Math.cos(2 * gamma)
+    + 0.000907 * Math.sin(2 * gamma)
+    - 0.002697 * Math.cos(3 * gamma)
+    + 0.00148 * Math.sin(3 * gamma);
+  const zenith = 90.833 * rad;
+  const cosHourAngle = (Math.cos(zenith) / (Math.cos(lat * rad) * Math.cos(declination))) - (Math.tan(lat * rad) * Math.tan(declination));
+  if (cosHourAngle < -1) return true;
+  if (cosHourAngle > 1) return false;
+  const hourAngle = Math.acos(cosHourAngle) / rad;
+  const solarNoon = 720 - (4 * lon) - equation - date.getTimezoneOffset();
+  const sunrise = solarNoon - (hourAngle * 4);
+  const sunset = solarNoon + (hourAngle * 4);
+  const currentMinutes = date.getHours() * 60 + date.getMinutes();
+  return currentMinutes >= sunrise && currentMinutes < sunset;
+};
+const requestThemeLocation = () => {
+  if (themeLocationPromise) return themeLocationPromise;
+  const cached = readJsonLocalValue(APP_THEME_LOCATION_KEY, null);
+  if (cached && Date.now() - Number(cached.savedAt || 0) < 30 * 86400000) {
+    return Promise.resolve(cached);
+  }
+  if (!navigator.geolocation) return Promise.resolve(null);
+  themeLocationPromise = new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const location = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          savedAt: Date.now()
+        };
+        writeJsonLocalValue(APP_THEME_LOCATION_KEY, location);
+        resolve(location);
+      },
+      () => resolve(cached || null),
+      { enableHighAccuracy: false, maximumAge: 12 * 60 * 60 * 1000, timeout: 8000 }
+    );
+  }).finally(() => {
+    themeLocationPromise = null;
+  });
+  return themeLocationPromise;
+};
+const resolveAppTheme = async () => {
+  if (appThemeMode === "day" || appThemeMode === "night") return appThemeMode;
+  const location = await requestThemeLocation();
+  const daylight = location ? solarDaylightFor(new Date(), location.latitude, location.longitude) : null;
+  return daylight == null ? (systemPrefersDay() ? "day" : "night") : (daylight ? "day" : "night");
+};
+const applyAppTheme = async () => {
+  const resolved = await resolveAppTheme();
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.dataset.themeMode = appThemeMode;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", resolved === "day" ? "#f7faf8" : "#081317");
+  const selector = qs("#appearance-mode");
+  if (selector && selector.value !== appThemeMode) selector.value = appThemeMode;
+};
+const scheduleAppThemeRefresh = () => {
+  window.clearTimeout(themeRefreshTimer);
+  themeRefreshTimer = window.setTimeout(() => {
+    void applyAppTheme().finally(scheduleAppThemeRefresh);
+  }, appThemeMode === "auto" ? 5 * 60 * 1000 : 60 * 60 * 1000);
+};
+const setAppThemeMode = async (mode) => {
+  appThemeMode = APP_THEME_MODES.has(mode) ? mode : "night";
+  writeLocalValue(APP_THEME_MODE_KEY, appThemeMode);
+  await applyAppTheme();
+  scheduleAppThemeRefresh();
+};
+const initAppTheme = () => {
+  void applyAppTheme().finally(scheduleAppThemeRefresh);
+  if (!systemThemeListenerBound && window.matchMedia) {
+    systemThemeListenerBound = true;
+    try {
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+        if (appThemeMode === "auto") void applyAppTheme();
+      });
+    } catch (error) {
+      // Older WebViews do not support media query listeners.
+    }
   }
 };
 const createDeviceKey = () => {
@@ -9531,6 +9664,8 @@ const syncSettingsControls = () => {
   if (showSportDirector) showSportDirector.checked = state.preferences.showSportDirector !== false;
   const showExperimentalLiveRound = qs("#show-live-round");
   if (showExperimentalLiveRound) showExperimentalLiveRound.checked = Boolean(state.preferences.showExperimentalLiveRound);
+  const appearanceMode = qs("#appearance-mode");
+  if (appearanceMode && appearanceMode.value !== appThemeMode) appearanceMode.value = appThemeMode;
   const autoSync = qs("#auto-sync-enabled");
   if (autoSync) {
     autoSync.checked = false;
@@ -11198,7 +11333,7 @@ const exportCsv = () => {
 const refreshLeagueSettingsManually = async () => {
   const localPayload = buildLocalLeaguePayload(ensureLocalLeagueDb());
   await syncLeaguesFromServer(localPayload);
-  await refreshBiwengerStatus("Liga preparada. Usa los botones de mercado, equipo o centro cuando quieras refrescar datos concretos.", { refreshFixtures: false });
+  await refreshBiwengerStatus("Liga sincronizada. Estado de Biwenger y calendario revisados.");
 };
 
 const refreshDailyPlanSettingsManually = async () => {
@@ -11230,7 +11365,7 @@ const refreshMarketSettingsManually = async () => {
 };
 
 const refreshSourcesSettingsManually = async () => {
-  if (state.players.length) await enrichCurrentMarket(false);
+  if (state.players.length) await enrichCurrentMarket(true);
   if (state.teamPlayers.length) await refreshTeamAlertSources();
   if (state.favorites.length) await loadFavoriteCatalog({ force: true });
 };
@@ -11259,12 +11394,34 @@ const runSettingsRefreshAction = async (button, action, label) => {
 };
 
 const refreshAllSettingsManually = async () => {
-  await refreshLeagueSettingsManually();
-  await refreshTeamSettingsManually();
-  await refreshMarketSettingsManually();
-  await refreshSourcesSettingsManually();
-  await refreshDailyPlanSettingsManually();
-  await refreshLeagueCenterSettingsManually();
+  beginDataSync("Actualizando liga, plantilla, mercado, calendario y director deportivo...");
+  try {
+    updateDataSync("Sincronizando ligas y sesion de Biwenger...");
+    await refreshLeagueSettingsManually();
+    if (!state.biwenger.connected) {
+      setBiwengerStatus("Conecta Biwenger para que Actualizar todo pueda traer plantilla, mercado, calendario y director deportivo.", "error");
+      return;
+    }
+    updateDataSync("Actualizando plantilla...");
+    await refreshTeamSettingsManually();
+    throwIfDataSyncCancelled();
+    updateDataSync("Actualizando mercado...");
+    await refreshMarketSettingsManually();
+    throwIfDataSyncCancelled();
+    updateDataSync("Actualizando fuentes deportivas...");
+    await refreshSourcesSettingsManually();
+    throwIfDataSyncCancelled();
+    updateDataSync("Actualizando calendario y centro de liga...");
+    await refreshLeagueCenterSettingsManually();
+    throwIfDataSyncCancelled();
+    updateDataSync("Actualizando director deportivo...");
+    await refreshDailyPlanSettingsManually();
+    renderDailyPlanIfVisible();
+    await notifyDailyPlanIfNeeded();
+    updateDataSync("Todo actualizado.", "ready");
+  } finally {
+    endDataSync();
+  }
 };
 
 const handleNavigationButtonClick = async (button) => {
@@ -11740,6 +11897,9 @@ const initEvents = () => {
     }
     persistLeagueSettings();
   });
+  qs("#appearance-mode")?.addEventListener("change", (event) => {
+    void setAppThemeMode(event.target.value);
+  });
   qs("#auto-sync-enabled")?.addEventListener("change", (event) => {
     state.preferences.autoSync = event.target.checked;
     persistLeagueSettings();
@@ -11929,6 +12089,7 @@ const refreshStartupDataInBackground = (localPayload) => {
 };
 
 const init = () => {
+  initAppTheme();
   initNavigation();
   initEvents();
   initScorebatWidget();

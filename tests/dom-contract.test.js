@@ -77,7 +77,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=100') || !sw.includes('radar-fantasy-shell-v47')) {
+if (!html.includes('app.js?v=101') || !sw.includes('radar-fantasy-shell-v48')) {
   throw new Error("The manual-refresh build must invalidate the previous cached application shell");
 }
 
@@ -175,6 +175,10 @@ if (!html.includes('id="show-sport-director"') || !js.includes("preferences.show
 
 if (!html.includes('id="show-live-round"') || !js.includes("showExperimentalLiveRound") || !php.includes("'showExperimentalLiveRound'")) {
   throw new Error("Experimental live round visibility must be configurable and persisted");
+}
+
+if (!html.includes('id="appearance-mode"') || !js.includes("APP_THEME_MODE_KEY") || !js.includes("solarDaylightFor") || !css.includes('html[data-theme="day"]')) {
+  throw new Error("Appearance mode must support persisted day, night, and automatic solar themes");
 }
 
 if (!html.includes('id="refresh-all-settings"') || !html.includes('id="refresh-league-settings"') || !html.includes('id="refresh-daily-plan-settings"') || !js.includes("refreshAllSettingsManually") || !js.includes("refreshDailyPlanSettingsManually") || !js.includes("runSettingsRefreshAction")) {

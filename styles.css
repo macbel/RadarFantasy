@@ -13,8 +13,32 @@
   --amber-soft: rgba(255, 200, 87, 0.2);
   --teal: #35d9e6;
   --blue: #72aefb;
+  --gold: #f2b84c;
+  --mint: #7be7c0;
+  --panel: #102a32;
   --shadow: 0 22px 50px rgba(0, 0, 0, 0.32);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html[data-theme="day"] {
+  --bg: #eef5f1;
+  --surface: #fbfdfb;
+  --surface-soft: #e4eee9;
+  --ink: #13272b;
+  --muted: #536a6b;
+  --line: #9dbbb6;
+  --green: #0f9f64;
+  --green-soft: rgba(15, 159, 100, 0.13);
+  --red: #d93e51;
+  --red-soft: rgba(217, 62, 81, 0.12);
+  --amber: #a66f05;
+  --amber-soft: rgba(214, 145, 22, 0.14);
+  --teal: #087f87;
+  --blue: #1e6fb8;
+  --gold: #b57612;
+  --mint: #0f8a64;
+  --panel: #f3f8f5;
+  --shadow: 0 16px 36px rgba(31, 61, 66, 0.18);
 }
 
 * {
@@ -46,6 +70,14 @@ body {
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
+}
+
+html[data-theme="day"] body {
+  background:
+    linear-gradient(180deg, rgba(247, 251, 248, 0.96), rgba(230, 241, 236, 0.98)),
+    repeating-linear-gradient(90deg, rgba(8, 127, 135, 0.045) 0 1px, transparent 1px 96px),
+    repeating-linear-gradient(0deg, rgba(8, 127, 135, 0.035) 0 1px, transparent 1px 96px),
+    var(--bg);
 }
 
 img {
@@ -98,6 +130,12 @@ button:not(:disabled):active {
   backdrop-filter: blur(16px);
 }
 
+html[data-theme="day"] .sidebar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 247, 242, 0.92)),
+    radial-gradient(circle at top, rgba(181, 118, 18, 0.12), transparent 34%);
+}
+
 .mobile-sidebar-header,
 .mobile-league-trigger,
 .mobile-nav-bar,
@@ -125,6 +163,11 @@ button:not(:disabled):active {
   overflow: hidden;
   background: rgba(5, 15, 18, 0.72);
   box-shadow: inset 0 0 0 1px rgba(242, 184, 76, 0.22);
+}
+
+html[data-theme="day"] .brand-mark {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(181, 118, 18, 0.18);
 }
 
 .brand-mark img {
@@ -186,6 +229,11 @@ button:not(:disabled):active {
   border-color: rgba(242, 184, 76, 0.34);
   background: linear-gradient(180deg, rgba(242, 184, 76, 0.18), rgba(37, 201, 197, 0.08));
   color: #fff6db;
+}
+
+html[data-theme="day"] .nav-item.active {
+  background: linear-gradient(180deg, rgba(181, 118, 18, 0.13), rgba(8, 127, 135, 0.07));
+  color: #263016;
 }
 
 .nav-secondary {
@@ -384,6 +432,10 @@ textarea {
   opacity: 0;
 }
 
+html[data-theme="day"] .topbar::after {
+  background: linear-gradient(90deg, rgba(247, 250, 248, 0.96) 0%, rgba(247, 250, 248, 0.78) 54%, rgba(247, 250, 248, 0.5) 100%);
+}
+
 .topbar.has-league-cover {
   min-height: 112px;
   padding: 18px;
@@ -425,6 +477,12 @@ textarea {
   background: rgba(8, 24, 29, 0.92);
   color: var(--ink);
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+}
+
+html[data-theme="day"] .mobile-league-trigger {
+  border-color: rgba(8, 127, 135, 0.22);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(19, 39, 43, 0.03);
 }
 
 .mobile-league-trigger img {
@@ -920,6 +978,121 @@ textarea {
     linear-gradient(180deg, rgba(15, 32, 38, 0.96), rgba(13, 28, 34, 0.96)),
     var(--surface);
   box-shadow: var(--shadow);
+}
+
+html[data-theme="day"] .market-input,
+html[data-theme="day"] .control-panel,
+html[data-theme="day"] .table-panel,
+html[data-theme="day"] .detail-panel,
+html[data-theme="day"] .compare-controls,
+html[data-theme="day"] .compare-output,
+html[data-theme="day"] .roadmap-panel,
+html[data-theme="day"] .settings-panel,
+html[data-theme="day"] .team-panel,
+html[data-theme="day"] .lineup-panel {
+  background:
+    linear-gradient(180deg, rgba(251, 253, 251, 0.98), rgba(242, 248, 245, 0.98)),
+    var(--surface);
+  box-shadow: 0 18px 40px rgba(31, 61, 66, 0.16);
+}
+
+html[data-theme="day"] .api-config-card,
+html[data-theme="day"] .reward-config-card,
+html[data-theme="day"] .settings-refresh-card,
+html[data-theme="day"] .settings-scope-card,
+html[data-theme="day"] .integration-card,
+html[data-theme="day"] .daily-command-center,
+html[data-theme="day"] .daily-scenarios,
+html[data-theme="day"] .daily-rival-intel,
+html[data-theme="day"] .filter-bar,
+html[data-theme="day"] .finance-card,
+html[data-theme="day"] .summary-card,
+html[data-theme="day"] .team-summary-card,
+html[data-theme="day"] .lineup-summary,
+html[data-theme="day"] .operation-card,
+html[data-theme="day"] .favorite-card,
+html[data-theme="day"] .team-tracking-card,
+html[data-theme="day"] .compare-card,
+html[data-theme="day"] .market-card,
+html[data-theme="day"] .detail-card {
+  border-color: #9dbbb6;
+  background: #edf5f1;
+  box-shadow: inset 0 0 0 1px rgba(19, 39, 43, 0.035);
+}
+
+html[data-theme="day"] .nav-item,
+html[data-theme="day"] .ghost-button,
+html[data-theme="day"] .icon-button,
+html[data-theme="day"] select,
+html[data-theme="day"] input[type="number"],
+html[data-theme="day"] input[type="text"],
+html[data-theme="day"] input[type="email"],
+html[data-theme="day"] input[type="password"],
+html[data-theme="day"] textarea {
+  border-color: #8fb0ab;
+  background: #f7fbf8;
+  color: var(--ink);
+}
+
+html[data-theme="day"] .primary-button {
+  border-color: #087f87;
+  background: linear-gradient(180deg, #0d9ba2, #08747a);
+  color: #ffffff;
+}
+
+html[data-theme="day"] .toggle-row,
+html[data-theme="day"] .fantasy-platform-tab,
+html[data-theme="day"] .roadmap-list > div,
+html[data-theme="day"] .provider-capabilities span,
+html[data-theme="day"] .ocr-status,
+html[data-theme="day"] .mini-status {
+  border-color: rgba(83, 106, 107, 0.28);
+  background-color: rgba(228, 238, 233, 0.78);
+}
+
+html[data-theme="day"] .muted-empty,
+html[data-theme="day"] .settings-help,
+html[data-theme="day"] .muted-label,
+html[data-theme="day"] .topbar-subtitle {
+  color: #536a6b;
+}
+
+html[data-theme="day"] .fantasy-platform-tab strong {
+  color: var(--ink);
+}
+
+html[data-theme="day"] .fantasy-platform-tab:hover,
+html[data-theme="day"] .fantasy-platform-tab.active,
+html[data-theme="day"] .segmented-control button.active,
+html[data-theme="day"] [data-analysis-tab].active,
+html[data-theme="day"] [data-market-position].active {
+  color: #063d42;
+  border-color: #087f87;
+  background: #d8ece7;
+  box-shadow: inset 0 -3px 0 rgba(8, 127, 135, 0.45);
+}
+
+html[data-theme="day"] .market-card:not(.empty):hover,
+html[data-theme="day"] .market-card.selected,
+html[data-theme="day"] tr.selected td {
+  border-color: #b57612;
+  background: linear-gradient(180deg, rgba(246, 223, 178, 0.82), rgba(218, 237, 232, 0.92));
+  color: var(--ink);
+}
+
+html[data-theme="day"] tr.over-maximum-bid td,
+html[data-theme="day"] .market-card.over-maximum-bid {
+  border-color: #c84a58;
+  background: linear-gradient(180deg, rgba(250, 221, 225, 0.95), rgba(240, 229, 226, 0.95));
+  color: var(--ink);
+}
+
+html[data-theme="day"] .market-warning,
+html[data-theme="day"] .risk-badge.high,
+html[data-theme="day"] .status-badge.error {
+  color: #7b1f2b;
+  border-color: rgba(200, 74, 88, 0.45);
+  background: rgba(250, 221, 225, 0.95);
 }
 
 .market-input,
@@ -1457,6 +1630,23 @@ input[type="range"] {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.appearance-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  margin: 10px 0;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(171, 196, 193, 0.14);
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.appearance-row span {
+  color: var(--ink);
 }
 
 .settings-refresh-grid {
@@ -6835,6 +7025,11 @@ tr.has-rival-bids.has-rival-sale {
     box-shadow: 0 -24px 60px rgba(0, 0, 0, 0.45);
   }
 
+  html[data-theme="day"] .sidebar {
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 -24px 60px rgba(31, 61, 66, 0.18);
+  }
+
   body.mobile-sidebar-open .sidebar {
     transform: translateY(0);
   }
@@ -6874,6 +7069,11 @@ tr.has-rival-bids.has-rival-sale {
     border-radius: 12px;
     background: rgba(12, 30, 36, 0.82);
     font-size: 12px;
+  }
+
+  html[data-theme="day"] .nav-item {
+    border-color: rgba(8, 127, 135, 0.14);
+    background: rgba(255, 255, 255, 0.86);
   }
 
   .nav-item.active {
@@ -7403,6 +7603,11 @@ tr.has-rival-bids.has-rival-sale {
 
   .settings-refresh-grid {
     grid-template-columns: 1fr;
+  }
+
+  .appearance-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .lineup-summary {

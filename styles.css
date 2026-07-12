@@ -1327,6 +1327,7 @@ html[data-theme="day"] .top-five-card strong,
 html[data-theme="day"] .assistant-card strong,
 html[data-theme="day"] .assistant-plan-summary,
 html[data-theme="day"] .operation-row strong,
+html[data-theme="day"] .operation-player-link,
 html[data-theme="day"] .detail-stat strong,
 html[data-theme="day"] .bid-analysis strong,
 html[data-theme="day"] .team-detail-card strong,
@@ -1353,6 +1354,79 @@ html[data-theme="day"] .smart-bid-grid .negative,
 html[data-theme="day"] .operation-comparison .negative,
 html[data-theme="day"] .assistant-metrics .negative {
   color: #9b1724;
+}
+
+html[data-theme="day"] .operations-list .player-name-line strong,
+html[data-theme="day"] .operations-list .player-name-line b,
+html[data-theme="day"] .operations-list .player-name-line a,
+html[data-theme="day"] .operation-player .player-name-line strong,
+html[data-theme="day"] .operation-player .player-name-line b,
+html[data-theme="day"] .operation-player .player-name-line a,
+html[data-theme="day"] .league-panel .player-name-line strong,
+html[data-theme="day"] .league-panel .player-name-line b,
+html[data-theme="day"] .league-panel .player-name-line a {
+  color: #092f35;
+}
+
+html[data-theme="day"] .operation-player-link:hover {
+  color: #075f66;
+}
+
+html[data-theme="day"] .operation-amount {
+  border-color: #7ea6a2;
+  background: #ffffff;
+  color: #092f35;
+}
+
+html[data-theme="day"] .entity-avatar {
+  border-color: #9dbbb6;
+  background: #eef5f2;
+  color: #075f66;
+}
+
+html[data-theme="day"] .league-standings-summary > div {
+  border-color: #9dbbb6;
+  background: #ffffff;
+  color: #13272b;
+}
+
+html[data-theme="day"] .league-standings-summary > div.is-me {
+  border-color: #b57612;
+  background: #fff4d6;
+}
+
+html[data-theme="day"] .league-standings-summary span,
+html[data-theme="day"] .league-standings-summary small,
+html[data-theme="day"] .standing-main small,
+html[data-theme="day"] .standing-points small {
+  color: #415d61;
+}
+
+html[data-theme="day"] .standing-row {
+  border-color: #9dbbb6;
+  background: #ffffff;
+  color: #13272b;
+}
+
+html[data-theme="day"] .standing-row.is-me {
+  border-color: #b57612;
+  background: #fff4d6;
+}
+
+html[data-theme="day"] .standing-rank {
+  background: #e1f4f1;
+  color: #075f66;
+}
+
+html[data-theme="day"] .standing-main b,
+html[data-theme="day"] .standing-points b {
+  color: #092f35;
+}
+
+html[data-theme="day"] .standing-action {
+  border-color: #087f87;
+  background: #e1f4f1;
+  color: #075f66;
 }
 
 html[data-theme="day"] .market-signal,

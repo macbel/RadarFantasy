@@ -2636,13 +2636,28 @@ function favorite_news_direct_links(array $player): array
         $link = trim((string)$link);
         if ($link === '') continue;
         $links[] = [
-            'title' => 'Abrir ficha y noticias de ' . $name,
+            'title' => $source === 'Biwenger'
+                ? 'Abrir ficha, valor y mercado de ' . $name
+                : ($source === 'FutbolFantasy'
+                    ? 'Abrir ficha y noticias de ' . $name
+                    : 'Buscar noticias de ' . $name),
             'link' => $link,
             'source' => $source,
             'publishedAt' => null
         ];
     }
     return $links;
+}
+
+function favorite_news_source_priority(array $article): int
+{
+    $source = normalize_text((string)($article['source'] ?? ''));
+    if (strpos($source, 'futbolfantasy') !== false) return 0;
+    if (strpos($source, 'biwenger') !== false) return 1;
+    if (strpos($source, 'jornada perfecta') !== false || strpos($source, 'jornadaperfecta') !== false) return 2;
+    if (strpos($source, 'marca') !== false) return 3;
+    if (strpos($source, 'as') !== false) return 4;
+    return 5;
 }
 
 function favorite_news_payload(array $players, int $timeoutSeconds, array $headers, bool $strictTls): array
@@ -2682,9 +2697,12 @@ function favorite_news_payload(array $players, int $timeoutSeconds, array $heade
         }
         $articles = array_values($merged);
         usort($articles, static function ($left, $right) {
+            $priorityDiff = favorite_news_source_priority($left) <=> favorite_news_source_priority($right);
+            if ($priorityDiff !== 0) return $priorityDiff;
             $leftTs = !empty($left['publishedAt']) ? strtotime((string)$left['publishedAt']) : 0;
             $rightTs = !empty($right['publishedAt']) ? strtotime((string)$right['publishedAt']) : 0;
-            return $rightTs <=> $leftTs;
+            if ($leftTs !== $rightTs) return $rightTs <=> $leftTs;
+            return strcasecmp((string)($left['title'] ?? ''), (string)($right['title'] ?? ''));
         });
         $result[] = [
             'key' => $player['key'],

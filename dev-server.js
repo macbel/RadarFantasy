@@ -1324,11 +1324,25 @@ const favoriteDirectLinks = (player) => {
     ["Biwenger", links.biwenger || (player.biwengerPlayerId ? `https://biwenger.as.com/player/${Number(player.biwengerPlayerId)}` : "https://biwenger.as.com/")],
     ["Jornada Perfecta", links.jornadaPerfecta || `https://www.jornadaperfecta.com/?s=${encodeURIComponent(player.name)}`]
   ].filter(([, link]) => link).map(([source, link]) => ({
-    title: `Abrir ficha y noticias de ${player.name}`,
+    title: source === "Biwenger"
+      ? `Abrir ficha, valor y mercado de ${player.name}`
+      : source === "FutbolFantasy"
+        ? `Abrir ficha y noticias de ${player.name}`
+        : `Buscar noticias de ${player.name}`,
     link,
     source,
     publishedAt: null
   }));
+};
+
+const favoriteNewsSourcePriority = (article) => {
+  const source = normalizeText(article.source || "");
+  if (source.includes("futbolfantasy")) return 0;
+  if (source.includes("biwenger")) return 1;
+  if (source.includes("jornada perfecta") || source.includes("jornadaperfecta")) return 2;
+  if (source.includes("marca")) return 3;
+  if (source.includes("as")) return 4;
+  return 5;
 };
 
 const handleFavoriteNews = async (req, res) => {
@@ -1361,7 +1375,12 @@ const handleFavoriteNews = async (req, res) => {
         name: player.name,
         team: player.team,
         articles: [...merged.values()]
-          .sort((a, b) => Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0))
+          .sort((a, b) => {
+            const priorityDiff = favoriteNewsSourcePriority(a) - favoriteNewsSourcePriority(b);
+            if (priorityDiff) return priorityDiff;
+            const timeDiff = Date.parse(b.publishedAt || 0) - Date.parse(a.publishedAt || 0);
+            return timeDiff || String(a.title || "").localeCompare(String(b.title || ""), "es");
+          })
           .slice(0, 6)
       };
     });

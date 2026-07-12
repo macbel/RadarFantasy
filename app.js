@@ -3620,7 +3620,7 @@ const favoriteNewsForPlayer = (player) => {
   const key = favoritePlayerKey(player);
   const match = state.favoriteNews.find((entry) => entry.key === key
     || (normalize(entry.name) === normalize(player.name) && normalize(entry.team || "") === normalize(player.team || "")));
-  return Array.isArray(match?.articles) ? match.articles.slice(0, 4) : [];
+  return Array.isArray(match?.articles) ? match.articles.slice(0, 6) : [];
 };
 
 const renderFavoriteNews = (player) => {

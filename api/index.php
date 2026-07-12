@@ -2762,11 +2762,11 @@ function favorite_news_make_article(string $source, string $title, string $link,
 function favorite_news_worldcup_article_relevant(array $article, array $player): bool
 {
     $link = strtolower((string)($article['link'] ?? ''));
-    if (strpos($link, '/world-cup/') !== false || strpos($link, 'world-cup-2026') !== false) return true;
+    if (strpos($link, '/world-cup/') !== false) return true;
     $contextTeam = normalize_text(favorite_news_worldcup_team_for_player($player));
     $haystack = normalize_text((string)($article['title'] ?? '') . ' ' . favorite_news_title_from_url((string)($article['link'] ?? '')));
     if ($haystack === '') return false;
-    if (preg_match('/\b(mundial|world cup|seleccion|seleccionador|convocad|semifinal|cuartos|octavos|grupo|internacional|naciones)\b/', $haystack)) {
+    if (preg_match('/\b(mundial|world cup|seleccion|seleccionador|convocad|internacional|naciones)\b/', $haystack)) {
         return true;
     }
     return $contextTeam !== '' && strpos($haystack, $contextTeam) !== false;
@@ -2906,15 +2906,17 @@ function favorite_news_futbolfantasy_urls(array $player, string $competition): a
 {
     $sourceLinks = is_array($player['sourceLinks'] ?? null) ? $player['sourceLinks'] : [];
     $urls = [];
-    $profileUrl = favorite_news_futbolfantasy_profile_url((string)($sourceLinks['futbolFantasy'] ?? ''), $competition);
-    if ($profileUrl !== '') {
-        $urls[] = $profileUrl;
-    }
-    $name = trim((string)($player['name'] ?? ''));
-    if ($name !== '') {
-        $slug = slugify($name);
-        if ($slug !== '') {
-            $urls[] = 'https://www.futbolfantasy.com/jugadores/' . $slug . ($competition === 'worldcup' ? '/world-cup-2026' : '');
+    if ($competition !== 'worldcup') {
+        $profileUrl = favorite_news_futbolfantasy_profile_url((string)($sourceLinks['futbolFantasy'] ?? ''), $competition);
+        if ($profileUrl !== '') {
+            $urls[] = $profileUrl;
+        }
+        $name = trim((string)($player['name'] ?? ''));
+        if ($name !== '') {
+            $slug = slugify($name);
+            if ($slug !== '') {
+                $urls[] = 'https://www.futbolfantasy.com/jugadores/' . $slug;
+            }
         }
     }
     $contextTeam = $competition === 'worldcup'
@@ -3125,7 +3127,7 @@ function favorite_news_payload(array $players, int $timeoutSeconds, array $heade
             $source = (string)($request['source'] ?? '');
             if ($source === 'ff') {
                 $articles = favorite_news_parse_ff_html($html, $sourceUrl, $sanitizedPlayers[$key]);
-                if (strpos($sourceUrl, '/equipos/') !== false) {
+                if ($competition !== 'worldcup' && strpos($sourceUrl, '/equipos/') !== false) {
                     $profileUrl = futbol_fantasy_profile_url_from_team_html($html, [$sanitizedPlayers[$key]['name']], $competition);
                     if ($profileUrl) $ffProfileRequests[$profileUrl][] = $key;
                 }

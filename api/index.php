@@ -2739,6 +2739,7 @@ function favorite_news_title_from_url(string $url): string
 function favorite_news_make_article(string $source, string $title, string $link, ?string $publishedAt = null): ?array
 {
     $title = trim(strip_html_text($title));
+    $title = trim(preg_replace('/^\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}\s+/u', '', $title) ?? $title);
     $link = trim(html_entity_decode($link, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
     if ($link === '' || !preg_match('#^https?://#i', $link)) return null;
     $host = strtolower((string)(parse_url($link, PHP_URL_HOST) ?: ''));
@@ -2756,6 +2757,19 @@ function favorite_news_make_article(string $source, string $title, string $link,
         'source' => $source,
         'publishedAt' => $publishedAt
     ];
+}
+
+function favorite_news_worldcup_article_relevant(array $article, array $player): bool
+{
+    $link = strtolower((string)($article['link'] ?? ''));
+    if (strpos($link, '/world-cup/') !== false || strpos($link, 'world-cup-2026') !== false) return true;
+    $contextTeam = normalize_text(favorite_news_worldcup_team_for_player($player));
+    $haystack = normalize_text((string)($article['title'] ?? '') . ' ' . favorite_news_title_from_url((string)($article['link'] ?? '')));
+    if ($haystack === '') return false;
+    if (preg_match('/\b(mundial|world cup|seleccion|seleccionador|convocad|semifinal|cuartos|octavos|grupo|internacional|naciones)\b/', $haystack)) {
+        return true;
+    }
+    return $contextTeam !== '' && strpos($haystack, $contextTeam) !== false;
 }
 
 function favorite_news_team_slug_candidates(string $team): array
@@ -3155,6 +3169,7 @@ function favorite_news_payload(array $players, int $timeoutSeconds, array $heade
                 !empty($article['publishedAt']) ? (string)$article['publishedAt'] : null
             );
             if (!$article) continue;
+            if ($competition === 'worldcup' && !favorite_news_worldcup_article_relevant($article, $player)) continue;
             $signature = sha1(strtolower(trim((string)($article['source'] ?? ''))) . '|' . strtolower(trim((string)($article['title'] ?? ''))) . '|' . trim((string)($article['link'] ?? '')));
             if (!isset($merged[$signature])) $merged[$signature] = $article;
         }

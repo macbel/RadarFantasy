@@ -1435,6 +1435,38 @@ html[data-theme="day"] .team-tracking-team-chip {
   color: #075f66;
 }
 
+html[data-theme="day"] .team-tracking-filter-chip {
+  border-color: #74a8a3;
+  background: #ffffff;
+  color: #263f43;
+  box-shadow: inset 0 0 0 1px rgba(8, 127, 135, 0.04);
+}
+
+html[data-theme="day"] .team-tracking-filter-chip.active {
+  border-color: #055e66;
+  background: #087f87;
+  color: #ffffff;
+  box-shadow: 0 2px 10px rgba(8, 127, 135, 0.22), inset 0 -2px 0 rgba(3, 63, 69, 0.28);
+}
+
+html[data-theme="day"] .team-tracking-article {
+  border-color: #8fb0ab;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(31, 61, 66, 0.09);
+}
+
+html[data-theme="day"] .team-tracking-article a {
+  color: #0a2f34;
+}
+
+html[data-theme="day"] .team-tracking-article a:hover {
+  color: #075f66;
+}
+
+html[data-theme="day"] .team-tracking-published {
+  color: #536a6b;
+}
+
 html[data-theme="day"] .profile-link.muted,
 html[data-theme="day"] .bid-limit-badge.muted,
 html[data-theme="day"] .data-badge.manual {

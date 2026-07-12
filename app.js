@@ -3889,7 +3889,7 @@ const refreshFavoriteNews = async ({ force = false, silent = false } = {}) => {
     renderFavorites();
     if (!silent) {
       const newsCount = state.favoriteNews.reduce((sum, entry) => sum + (Array.isArray(entry.articles) ? entry.articles.length : 0), 0);
-      setFavoritesStatus(`Favoritos actualizados: ${newsCount} enlaces y noticias para ${favorites.length} jugador${favorites.length === 1 ? "" : "es"}.`, "ready");
+      setFavoritesStatus(`Favoritos actualizados: ${newsCount} titulares directos para ${favorites.length} jugador${favorites.length === 1 ? "" : "es"}.`, "ready");
     }
     return true;
   } catch (error) {

@@ -918,8 +918,9 @@ if ($route === '/team-tracking/save' && $requestMethod === 'POST') {
 
 if ($route === '/team-tracking/feed' && $requestMethod === 'GET') {
     $forceRefresh = ($_GET['force'] ?? '') === '1';
+    $competition = ($_GET['competition'] ?? '') === 'worldcup' ? 'worldcup' : 'club';
     try {
-        $payload = team_tracking_refresh_feed($teamTrackingDb, $teamTrackingDbPath, $forceRefresh, $sourceTimeoutSeconds, $sourceHeaders, $strictTls);
+        $payload = team_tracking_refresh_feed($teamTrackingDb, $teamTrackingDbPath, $forceRefresh, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $competition);
         send_json(200, $payload);
     } catch (Throwable $error) {
         send_json(502, ['error' => $error->getMessage() ?: 'No se pudieron refrescar las noticias de equipos']);
@@ -2447,12 +2448,20 @@ function team_tracking_feed_url(string $teamName): string
     return 'https://news.google.com/rss/search?q=' . rawurlencode($query) . '&hl=es&gl=ES&ceid=ES:es';
 }
 
-function team_tracking_futbolfantasy_urls(string $teamName): array
+function team_tracking_futbolfantasy_urls(string $teamName, string $competition = 'club'): array
 {
     $urls = [];
-    foreach (array_slice(favorite_news_team_slug_candidates($teamName), 0, 3) as $teamSlug) {
-        $urls[] = 'https://www.futbolfantasy.com/laliga/equipos/' . $teamSlug;
-        $urls[] = 'https://www.futbolfantasy.com/laliga/equipos/' . $teamSlug . '/noticias/1';
+    $slugs = $competition === 'worldcup'
+        ? favorite_news_selection_slug_candidates($teamName)
+        : favorite_news_team_slug_candidates($teamName);
+    foreach (array_slice($slugs, 0, 3) as $teamSlug) {
+        if ($competition === 'worldcup') {
+            $urls[] = 'https://www.futbolfantasy.com/world-cup/equipos/' . $teamSlug;
+            $urls[] = 'https://www.futbolfantasy.com/world-cup/equipos/' . $teamSlug . '/noticias/1';
+        } else {
+            $urls[] = 'https://www.futbolfantasy.com/laliga/equipos/' . $teamSlug;
+            $urls[] = 'https://www.futbolfantasy.com/laliga/equipos/' . $teamSlug . '/noticias/1';
+        }
     }
     return array_values(array_unique(array_filter($urls)));
 }
@@ -2546,14 +2555,17 @@ function team_tracking_parse_rss_items(string $xml, string $teamName): array
     return $articles;
 }
 
-function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh, int $timeoutSeconds, array $headers, bool $strictTls): array
+function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh, int $timeoutSeconds, array $headers, bool $strictTls, string $competition = 'club'): array
 {
     $teams = array_values(array_filter(array_map(static function ($team) {
         return sanitize_tracked_team_name($team);
     }, (array)($db['teams'] ?? []))));
     $refreshCooldownSeconds = 15 * 60;
     $lastRefreshTs = (int)($db['refreshedAtTs'] ?? 0);
-    if (!$forceRefresh && $lastRefreshTs > 0 && (time() - $lastRefreshTs) < $refreshCooldownSeconds) {
+    $hasPreferredSource = (bool)array_filter((array)($db['articles'] ?? []), static function ($article) {
+        return is_array($article) && strpos(normalize_text((string)($article['source'] ?? '')), 'futbolfantasy') !== false;
+    });
+    if (!$forceRefresh && $hasPreferredSource && $lastRefreshTs > 0 && (time() - $lastRefreshTs) < $refreshCooldownSeconds) {
         return team_tracking_payload($db);
     }
     if (!$teams) {
@@ -2568,7 +2580,7 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
     }
     $directUrls = [];
     foreach ($teams as $team) {
-        foreach (team_tracking_futbolfantasy_urls($team) as $directUrl) {
+        foreach (team_tracking_futbolfantasy_urls($team, $competition) as $directUrl) {
             $directUrls[$directUrl][] = $team;
         }
     }
@@ -2789,22 +2801,115 @@ function favorite_news_team_slug_candidates(string $team): array
     return array_values(array_unique(array_filter($slugs)));
 }
 
+function favorite_news_selection_slug_candidates(string $team): array
+{
+    global $nationalTeamSlugOverrides, $nationalTeamAlpha2;
+    $team = trim($team);
+    if ($team === '') return [];
+    $normalized = normalize_text($team);
+    $slugs = [];
+    if (isset($nationalTeamSlugOverrides[$normalized])) $slugs[] = $nationalTeamSlugOverrides[$normalized];
+    if (isset($nationalTeamAlpha2[$normalized])) $slugs[] = slugify($team);
+    $selectionAliases = [
+        'alemania' => 'alemania',
+        'argentina' => 'argentina',
+        'brasil' => 'brasil',
+        'brazil' => 'brasil',
+        'espana' => 'espana',
+        'spain' => 'espana',
+        'francia' => 'francia',
+        'france' => 'francia',
+        'inglaterra' => 'inglaterra',
+        'england' => 'inglaterra',
+        'paises bajos' => 'paises-bajos',
+        'netherlands' => 'paises-bajos',
+        'portugal' => 'portugal',
+        'uruguay' => 'uruguay'
+    ];
+    if (isset($selectionAliases[$normalized])) $slugs[] = $selectionAliases[$normalized];
+    $slugs[] = slugify($team);
+    return array_values(array_unique(array_filter($slugs)));
+}
+
+function favorite_news_worldcup_team_for_player(array $player): string
+{
+    global $nationalTeamSlugOverrides, $nationalTeamAlpha2;
+    $selectionAliases = [
+        'alemania' => true,
+        'argentina' => true,
+        'brasil' => true,
+        'brazil' => true,
+        'espana' => true,
+        'spain' => true,
+        'francia' => true,
+        'france' => true,
+        'inglaterra' => true,
+        'england' => true,
+        'paises bajos' => true,
+        'netherlands' => true,
+        'portugal' => true,
+        'uruguay' => true
+    ];
+    foreach (['nationalTeam', 'selectionTeam', 'team'] as $key) {
+        $team = trim((string)($player[$key] ?? ''));
+        if ($team === '') continue;
+        $normalized = normalize_text($team);
+        if (isset($nationalTeamAlpha2[$normalized]) || isset($nationalTeamSlugOverrides[$normalized]) || isset($selectionAliases[$normalized])) {
+            return $team;
+        }
+    }
+    $name = normalize_text((string)($player['name'] ?? ''));
+    $known = [
+        'kylian mbappe' => 'Francia',
+        'mbappe' => 'Francia',
+        'jude bellingham' => 'Inglaterra',
+        'bellingham' => 'Inglaterra',
+        'vinicius junior' => 'Brasil',
+        'vinicius' => 'Brasil',
+        'lamine yamal' => 'España',
+        'yamal' => 'España',
+        'erling haaland' => 'Noruega',
+        'haaland' => 'Noruega'
+    ];
+    return $known[$name] ?? '';
+}
+
+function favorite_news_futbolfantasy_profile_url(string $url, string $competition): string
+{
+    $url = trim($url);
+    if ($url === '' || strpos($url, 'google.') !== false || preg_match('/search|buscar|buscador/i', $url)) return '';
+    if (strpos($url, '/jugadores/') === false) {
+        return $competition === 'worldcup' && strpos($url, '/world-cup/') === false ? '' : $url;
+    }
+    if ($competition === 'worldcup') {
+        $url = preg_replace('~/world-cup-2026/?$~', '', rtrim($url, '/')) ?? rtrim($url, '/');
+        return $url . '/world-cup-2026';
+    }
+    return preg_replace('~/world-cup-2026/?$~', '', rtrim($url, '/')) ?? rtrim($url, '/');
+}
+
 function favorite_news_futbolfantasy_urls(array $player, string $competition): array
 {
     $sourceLinks = is_array($player['sourceLinks'] ?? null) ? $player['sourceLinks'] : [];
     $urls = [];
-    $profileUrl = trim((string)($sourceLinks['futbolFantasy'] ?? ''));
-    if ($profileUrl !== '' && strpos($profileUrl, 'google.') === false && strpos($profileUrl, 'search') === false) {
+    $profileUrl = favorite_news_futbolfantasy_profile_url((string)($sourceLinks['futbolFantasy'] ?? ''), $competition);
+    if ($profileUrl !== '') {
         $urls[] = $profileUrl;
     }
     $name = trim((string)($player['name'] ?? ''));
     if ($name !== '') {
         $slug = slugify($name);
         if ($slug !== '') {
-            $urls[] = 'https://www.futbolfantasy.com/jugadores/' . $slug;
+            $urls[] = 'https://www.futbolfantasy.com/jugadores/' . $slug . ($competition === 'worldcup' ? '/world-cup-2026' : '');
         }
     }
-    foreach (favorite_news_team_slug_candidates((string)($player['team'] ?? '')) as $teamSlug) {
+    $contextTeam = $competition === 'worldcup'
+        ? favorite_news_worldcup_team_for_player($player)
+        : (string)($player['team'] ?? '');
+    $teamSlugs = $competition === 'worldcup'
+        ? favorite_news_selection_slug_candidates($contextTeam)
+        : favorite_news_team_slug_candidates($contextTeam);
+    foreach ($teamSlugs as $teamSlug) {
         if ($competition === 'worldcup') {
             $urls[] = 'https://www.futbolfantasy.com/world-cup/equipos/' . $teamSlug;
             $urls[] = 'https://www.futbolfantasy.com/world-cup/equipos/' . $teamSlug . '/noticias/1';
@@ -2974,6 +3079,8 @@ function favorite_news_payload(array $players, int $timeoutSeconds, array $heade
             'key' => $key,
             'name' => $name,
             'team' => sanitize_tracked_team_name($player['team'] ?? ''),
+            'clubTeam' => sanitize_tracked_team_name($player['clubTeam'] ?? ''),
+            'nationalTeam' => sanitize_tracked_team_name($player['nationalTeam'] ?? ''),
             'position' => trim((string)($player['position'] ?? '')),
             'biwengerPlayerId' => (int)($player['biwengerPlayerId'] ?? 0),
             'sourceLinks' => is_array($player['sourceLinks'] ?? null) ? $player['sourceLinks'] : []

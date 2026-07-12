@@ -3875,6 +3875,8 @@ const refreshFavoriteNews = async ({ force = false, silent = false } = {}) => {
             key: favoritePlayerKey(player),
             name: player.name,
             team: player.team,
+            clubTeam: player.clubTeam || player.baseTeam || "",
+            nationalTeam: player.nationalTeam || "",
             position: player.position,
             biwengerPlayerId: player.biwengerPlayerId,
             sourceLinks: player.sourceLinks || {}
@@ -4138,9 +4140,12 @@ const refreshTrackedTeamFeed = async ({ force = false } = {}) => {
   }
   if (state.trackedTeamFeedLoading) return false;
   state.trackedTeamFeedLoading = true;
-  setTeamTrackingStatus("Consultando las últimas noticias de AS y MARCA...", "busy");
+  setTeamTrackingStatus("Consultando FutbolFantasy, AS y MARCA...", "busy");
   try {
-    const query = force ? "?force=1" : "";
+    const params = new URLSearchParams();
+    if (force) params.set("force", "1");
+    params.set("competition", state.competition === "worldcup" ? "worldcup" : "club");
+    const query = params.toString() ? `?${params.toString()}` : "";
     let payload = null;
     if (canUseApi()) {
       const response = await apiFetch(`/api/team-tracking/feed${query}`);

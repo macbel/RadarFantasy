@@ -2468,32 +2468,74 @@ function team_tracking_futbolfantasy_urls(string $teamName, string $competition 
 
 function team_tracking_parse_futbolfantasy_date(string $block): ?string
 {
-    if (!preg_match('~<span\b[^>]*class=["\'][^"\']*\bday\b[^"\']*["\'][^>]*>\s*([0-9]{1,2})/([0-9]{1,2})\s*</span>[\s\S]{0,180}?<span\b[^>]*class=["\'][^"\']*\btime\b[^"\']*["\'][^>]*>\s*([0-9]{1,2}):([0-9]{2})\s*</span>~i', $block, $match)) {
+    $hour = 12;
+    $minute = 0;
+    if (preg_match_all('~<span\b[^>]*class=["\'][^"\']*\bday\b[^"\']*["\'][^>]*>\s*([0-9]{1,2})/([0-9]{1,2})\s*</span>[\s\S]{0,180}?<span\b[^>]*class=["\'][^"\']*\btime\b[^"\']*["\'][^>]*>\s*([0-9]{1,2}):([0-9]{2})\s*</span>~i', $block, $matches, PREG_SET_ORDER)) {
+        $match = $matches[count($matches) - 1];
+        $hour = (int)$match[3];
+        $minute = (int)$match[4];
+    } elseif (!preg_match_all('~<(?:div|span)\b[^>]*class=["\'][^"\']*\bdate\b[^"\']*["\'][^>]*>\s*([0-9]{1,2})/([0-9]{1,2})(?:\s+([0-9]{1,2}):([0-9]{2}))?\s*</(?:div|span)>~i', $block, $matches, PREG_SET_ORDER)) {
         return null;
+    } else {
+        $match = $matches[count($matches) - 1];
+        if (isset($match[3]) && $match[3] !== '') {
+            $hour = (int)$match[3];
+            $minute = (int)$match[4];
+        }
     }
     $year = (int)gmdate('Y');
-    $timestamp = strtotime(sprintf('%04d-%02d-%02d %02d:%02d:00', $year, (int)$match[2], (int)$match[1], (int)$match[3], (int)$match[4]));
+    $timestamp = strtotime(sprintf('%04d-%02d-%02d %02d:%02d:00', $year, (int)$match[2], (int)$match[1], $hour, $minute));
     if ($timestamp === false) return null;
     if ($timestamp > time() + 86400) {
-        $timestamp = strtotime(sprintf('%04d-%02d-%02d %02d:%02d:00', $year - 1, (int)$match[2], (int)$match[1], (int)$match[3], (int)$match[4]));
+        $timestamp = strtotime(sprintf('%04d-%02d-%02d %02d:%02d:00', $year - 1, (int)$match[2], (int)$match[1], $hour, $minute));
     }
     return $timestamp !== false ? gmdate('c', $timestamp) : null;
+}
+
+function futbolfantasy_news_items_from_html(string $html): array
+{
+    $scope = $html;
+    if (preg_match('~<div\b[^>]*class=["\'][^"\']*\blist_noticias_wrapper\b[^"\']*["\'][^>]*>~i', $html, $listMatch, PREG_OFFSET_CAPTURE)) {
+        $scopeStart = (int)$listMatch[0][1];
+        $scopeEnd = strlen($html);
+        if (preg_match('~<[^>]+class=["\'][^"\']*pagination[^"\']*["\'][^>]*>~i', $html, $paginationMatch, PREG_OFFSET_CAPTURE, $scopeStart)) {
+            $scopeEnd = (int)$paginationMatch[0][1];
+        } else {
+            $sectionEnd = stripos($html, '</section>', $scopeStart);
+            if ($sectionEnd !== false) $scopeEnd = $sectionEnd;
+        }
+        $scope = substr($html, $scopeStart, max(0, $scopeEnd - $scopeStart));
+    }
+    if (!preg_match_all(
+        '~<a\b[^>]*href=["\']([^"\']*/(?:laliga|world-cup)/noticias/[^"\']+)["\'][^>]*>([\s\S]*?)</a>~i',
+        $scope,
+        $matches,
+        PREG_SET_ORDER | PREG_OFFSET_CAPTURE
+    )) {
+        return [];
+    }
+    $items = [];
+    foreach ($matches as $match) {
+        $link = absolute_source_url((string)$match[1][0], 'https://www.futbolfantasy.com');
+        $title = trim(strip_html_text((string)$match[2][0]));
+        $article = favorite_news_make_article('FutbolFantasy', $title, $link);
+        if (!$article) continue;
+        $anchorOffset = (int)$match[0][1];
+        $contextStart = max(0, $anchorOffset - 500);
+        $dateContext = substr($scope, $contextStart, $anchorOffset - $contextStart + strlen((string)$match[0][0]));
+        $article['publishedAt'] = team_tracking_parse_futbolfantasy_date($dateContext);
+        $signature = strtolower($link);
+        if (!isset($items[$signature])) $items[$signature] = $article;
+    }
+    return array_values($items);
 }
 
 function team_tracking_parse_futbolfantasy_items(string $html, string $teamName): array
 {
     $articles = [];
-    if (preg_match_all('~<a\b[^>]*href=["\']([^"\']*/(?:laliga|world-cup)/noticias/[^"\']+)["\'][^>]*class=["\'][^"\']*\bnoticia\b[^"\']*["\'][^>]*>([\s\S]*?)</a>~i', $html, $matches, PREG_SET_ORDER)) {
-        foreach ($matches as $match) {
-            $link = absolute_source_url((string)$match[1], 'https://www.futbolfantasy.com');
-            $block = (string)$match[2];
-            preg_match('~<h[1-4]\b[^>]*class=["\'][^"\']*\btitular\b[^"\']*["\'][^>]*>([\s\S]*?)</h[1-4]>~i', $block, $heading);
-            $title = trim(strip_html_text($heading[1] ?? ''));
-            $article = favorite_news_make_article('FutbolFantasy', $title, $link, team_tracking_parse_futbolfantasy_date($block));
-            if (!$article) continue;
-            $article['teams'] = [$teamName];
-            $articles[] = $article;
-        }
+    foreach (futbolfantasy_news_items_from_html($html) as $article) {
+        $article['teams'] = [$teamName];
+        $articles[] = $article;
     }
     return $articles;
 }
@@ -2986,28 +3028,8 @@ function favorite_news_relevance_score(array $article, array $player, bool $allo
 function favorite_news_parse_ff_html(string $html, string $url, array $player): array
 {
     $articles = [];
-    if (preg_match_all('~<a\b[^>]*href=["\']([^"\']*/(?:laliga|world-cup)/noticias/[^"\']+)["\'][^>]*class=["\'][^"\']*\bnoticia\b[^"\']*["\'][^>]*>([\s\S]*?)</a>~i', $html, $matches, PREG_SET_ORDER)) {
-        foreach ($matches as $match) {
-            $link = absolute_source_url((string)$match[1], 'https://www.futbolfantasy.com');
-            $block = (string)$match[2];
-            preg_match('~<h[1-4]\b[^>]*class=["\'][^"\']*\btitular\b[^"\']*["\'][^>]*>([\s\S]*?)</h[1-4]>~i', $block, $heading);
-            $title = trim(strip_html_text($heading[1] ?? ''));
-            $article = favorite_news_make_article('FutbolFantasy', $title, $link);
-            if ($article && favorite_news_relevance_score($article, $player, true) >= 30) $articles[] = $article;
-        }
-    }
-    if (preg_match_all('~<a\b[^>]*href=["\']([^"\']*/(?:laliga|world-cup)/noticias/[^"\']+)["\'][^>]*>([\s\S]*?)</a>~i', $html, $matches, PREG_SET_ORDER)) {
-        foreach ($matches as $match) {
-            $link = absolute_source_url((string)$match[1], 'https://www.futbolfantasy.com');
-            $title = trim(strip_html_text((string)$match[2]));
-            $fallbackTitle = favorite_news_title_from_url($link);
-            $nameKey = normalize_text((string)($player['name'] ?? ''));
-            if ($fallbackTitle !== '' && $nameKey !== '' && strpos(normalize_text($title), $nameKey) === false && strpos(normalize_text($fallbackTitle), $nameKey) !== false) {
-                $title = $fallbackTitle;
-            }
-            $article = favorite_news_make_article('FutbolFantasy', $title, $link);
-            if ($article && favorite_news_relevance_score($article, $player, false) >= 30) $articles[] = $article;
-        }
+    foreach (futbolfantasy_news_items_from_html($html) as $article) {
+        if (favorite_news_relevance_score($article, $player, true) >= 30) $articles[] = $article;
     }
     return $articles;
 }

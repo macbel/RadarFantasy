@@ -137,6 +137,10 @@ if (!js.includes("TEAM_TRACKING_KEY") || !js.includes("refreshTrackedTeamFeed") 
   throw new Error("Team tracking must persist locally, allow team filtering, and refresh a cached backend feed");
 }
 
+if (!php.includes("futbolfantasy_news_items_from_html") || !php.includes("list_noticias_wrapper") || !php.includes("team_tracking_parse_futbolfantasy_date($dateContext)")) {
+  throw new Error("Favorite and team feeds must parse Futbol Fantasy's current news-list markup through the shared extractor");
+}
+
 if (!js.includes("renderFavoriteButton") || !js.includes("processFavoriteWatchTransitions") || !php.includes("/biwenger/watchlist")) {
   throw new Error("Favorites must be actionable from player lists and backed by real market/clause status checks");
 }

@@ -2662,7 +2662,7 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
     }
     $fallbackPages = [];
     foreach (array_keys($directUrls) as $directUrl) {
-        if (!empty($directPages[$directUrl]) || !preg_match('~/noticias/1/?$~', $directUrl)) continue;
+        if (!preg_match('~/noticias/1/?$~', $directUrl) || count($fallbackPages) >= 10) continue;
         $fallbackUrl = 'https://r.jina.ai/http://' . preg_replace('~^https?://~', '', $directUrl);
         try {
             $fallbackPages[$directUrl] = http_get_text($fallbackUrl, max($timeoutSeconds, 15), $headers, $strictTls);
@@ -2672,7 +2672,7 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
     }
     $merged = [];
     foreach ($directUrls as $url => $urlTeams) {
-        $html = (string)($directPages[$url] ?? $fallbackPages[$url] ?? '');
+        $html = (string)($fallbackPages[$url] ?? $directPages[$url] ?? '');
         if ($html === '') continue;
         foreach ((array)$urlTeams as $team) {
             foreach (team_tracking_parse_futbolfantasy_items($html, $team) as $article) {

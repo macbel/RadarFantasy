@@ -1,4 +1,4 @@
-# Version 3.8.13
+# Version 3.8.14
 
 Fecha de publicación: 2026-07-14
 
@@ -8,6 +8,7 @@ Fecha de publicación: 2026-07-14
 - Consulta directa de FutbolFantasy con sus cabeceras específicas en el feed de equipos.
 - Reintento secuencial para páginas de FutbolFantasy bloqueadas durante consultas simultáneas.
 - Respaldo de lectura de texto para titulares de FutbolFantasy bloqueados por la IP del hosting.
+- El respaldo se prioriza sobre respuestas de bloqueo que aparentan ser páginas válidas.
 - Modo día corregido para las tarjetas de escenarios y lectura de rivales del Plan de hoy.
 - Noticias de favoritos reforzadas: FutbolFantasy se consulta directamente y se prioriza sobre los resultados de prensa generalista.
 - La competición se sincroniza desde Biwenger para cada liga conectada; la puntuación sigue siendo configurable de forma independiente.

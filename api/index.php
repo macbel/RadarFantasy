@@ -29,8 +29,9 @@ $sourceCriteriaVersion = 11;
 $sourceTimeoutSeconds = 7;
 $strictTls = env_bool('FMS_STRICT_TLS', false);
 $sourceHeaders = [
-    'User-Agent: Mozilla/5.0 FantasyMarketScoutPHP/1.0',
-    'Accept: application/json,text/html;q=0.9,*/*;q=0.8',
+    // Several news providers reject the old application-specific user agent.
+    'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+    'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language: es-ES,es;q=0.9,en;q=0.8'
 ];
 $biwengerHtmlHeaders = [
@@ -2507,7 +2508,8 @@ function futbolfantasy_news_items_from_html(string $html): array
         $scope = substr($html, $scopeStart, max(0, $scopeEnd - $scopeStart));
     }
     if (!preg_match_all(
-        '~<a\b[^>]*href=["\']([^"\']*/(?:laliga|world-cup)/noticias/[^"\']+)["\'][^>]*>([\s\S]*?)</a>~i',
+        // FutbolFantasy has used both /laliga/noticias/... and /noticias/... URLs.
+        '~<a\b[^>]*href=["\']([^"\']*/(?:laliga|world-cup)/)?noticias/[^"\']+)["\'][^>]*>([\s\S]*?)</a>~i',
         $scope,
         $matches,
         PREG_SET_ORDER | PREG_OFFSET_CAPTURE

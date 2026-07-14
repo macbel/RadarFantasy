@@ -190,7 +190,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.8.8";
+const APP_VERSION = "3.8.9";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -600,6 +600,29 @@ const leagueFantasyProvider = (league = activeLeague()) => {
     && normalize(league?.name || "")
     && normalize(league?.name || "") === normalize(state.biwenger.leagueName || "");
   return sameConnectedLeague ? "biwenger" : explicit;
+};
+
+const competitionIsManagedByLeague = (league = activeLeague()) => leagueFantasyProvider(league) === "biwenger";
+
+const syncCompetitionControl = () => {
+  const select = qs("#competition-select");
+  if (!select) return;
+  const managed = competitionIsManagedByLeague();
+  select.disabled = managed;
+  select.title = managed
+    ? "La competición se sincroniza automáticamente desde la liga de Biwenger."
+    : "Selecciona el tipo de competición de esta liga.";
+  let help = qs("#competition-help");
+  if (!help) {
+    help = document.createElement("small");
+    help.id = "competition-help";
+    help.className = "settings-help competition-help";
+    select.insertAdjacentElement("afterend", help);
+  }
+  select.setAttribute("aria-describedby", help.id);
+  help.textContent = managed
+    ? "Sincronizada desde Biwenger para esta liga. El sistema de puntuación sigue siendo independiente."
+    : "Configurable por liga. El sistema de puntuación es independiente.";
 };
 
 const ensureLocalLeagueDb = () => {
@@ -2014,6 +2037,30 @@ const assistantBidRows = (players = assistantMarketPlayers()) => {
   return selected;
 };
 
+const currentRoundInProgress = (fixtures = state.leagueFixtures) => {
+  const timestamps = (fixtures?.events || [])
+    .map((event) => Number(event.timestamp || 0))
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp > 0)
+    .sort((left, right) => left - right);
+  if (!timestamps.length) return false;
+  const now = Date.now() / 1000;
+  // Fixtures are fetched for the current matchday. Protect the squad from its
+  // first kick-off until the final game has had time to finish.
+  return timestamps[0] <= now && now <= timestamps[timestamps.length - 1] + (6 * 60 * 60);
+};
+
+const saleWouldBreakCurrentRoundLineup = (player) => {
+  const fieldPlayers = state.teamPlayers.filter((candidate) => candidate.position !== "ENT");
+  if (fieldPlayers.length <= 11) return true;
+  const remaining = fieldPlayers.filter((candidate) => String(candidate.id) !== String(player.id));
+  const byPosition = remaining.reduce((counts, candidate) => {
+    counts[candidate.position] = (counts[candidate.position] || 0) + 1;
+    return counts;
+  }, {});
+  return !FORMATIONS.some((formation) => Object.entries(formation.slots)
+    .every(([position, needed]) => (byPosition[position] || 0) >= needed));
+};
+
 const saleUrgencyForPlayer = (player, context = {}) => {
   const counts = teamPositionCounts();
   const target = SQUAD_TARGETS[player.position] || 3;
@@ -2043,6 +2090,7 @@ const saleUrgencyForPlayer = (player, context = {}) => {
   const roundCoversDebt = Number.isFinite(baseBalance) && baseBalance < 0 && Number.isFinite(balance) && balance >= 0 && rewardAmount > 0;
   const roundAlmostCoversDebt = rewardRelief >= 0.55 && rewardAmount > 0;
   const immediateRisk = noNextMatch || player.health?.status === "suspended" || player.health?.status === "injured";
+  const lineupProtected = currentRoundInProgress() && saleWouldBreakCurrentRoundLineup(player);
   const protectHotStreak = recent.hot && !immediateRisk;
   let score = 18 + negativePressure + learnedDecisionAdjustment(player, "sale");
   score += surplus * 14;
@@ -2061,6 +2109,7 @@ const saleUrgencyForPlayer = (player, context = {}) => {
   if (roundAlmostCoversDebt && protectHotStreak) score -= 10;
   if (debtAfter > 0 && value > debtAfter * 2.2 && quality >= 70 && !immediateRisk) score -= 14;
   if (protectHotStreak) score = Math.min(score - 28, 46);
+  if (lineupProtected) score = Math.min(score, 0);
   if (eliminated) score = Math.max(score, 94);
   else if (unavailableStatus && !topPlayer) score = Math.max(score, 78);
   const multiplier = score >= 74
@@ -2076,9 +2125,10 @@ const saleUrgencyForPlayer = (player, context = {}) => {
     surplus,
     quality,
     recent,
-    action: eliminated ? "Vender hoy" : score >= 70 ? "Vender hoy" : score >= 54 ? "Poner caro" : "Mantener",
+    action: lineupProtected ? "Mantener" : eliminated ? "Vender hoy" : score >= 70 ? "Vender hoy" : score >= 54 ? "Poner caro" : "Mantener",
     reason: [
       eliminated ? "eliminado: no volverá a jugar" : null,
+      lineupProtected ? "jornada en curso: es necesario para completar el once y evitar penalización" : null,
       unavailableStatus && !topPlayer ? `${player.health?.status === "suspended" ? "sancionado" : "lesionado"} y no es una pieza top` : null,
       unavailableStatus && topPlayer ? "baja temporal, pero pieza top" : null,
       surplus > 0 ? `sobran ${surplus} en ${player.position}` : null,
@@ -6056,6 +6106,7 @@ const applyLeague = (league) => {
   applyVisibilityPreferences();
 
   qs("#competition-select").value = state.competition;
+  syncCompetitionControl();
   qs("#scoring-system").value = state.scoring;
   syncSettingsControls();
   qs("#market-text").value = state.players.map((player) =>

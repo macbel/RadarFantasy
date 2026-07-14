@@ -35,8 +35,8 @@ const types = {
 };
 
 const sourceHeaders = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FantasyMarketScout/1.0",
-  "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"
 };
 
@@ -1317,6 +1317,47 @@ const parseFavoriteNewsItems = (xml, player) => {
   }).filter(Boolean);
 };
 
+const favoriteTeamSlugCandidates = (team) => {
+  const normalized = normalizeText(team);
+  const aliases = new Map([
+    ["fc barcelona", "barcelona"], ["barca", "barcelona"], ["real betis", "betis"],
+    ["atletico madrid", "atletico"], ["athletic club", "athletic"], ["athletic bilbao", "athletic"],
+    ["real sociedad", "real-sociedad"], ["real madrid", "real-madrid"], ["celta vigo", "celta"],
+    ["deportivo alaves", "alaves"], ["rcd espanyol", "espanyol"]
+  ]);
+  return [...new Set([aliases.get(normalized), slugify(team)].filter(Boolean))];
+};
+
+const favoriteFutbolFantasyUrls = (player) => {
+  const links = player.sourceLinks && typeof player.sourceLinks === "object" ? player.sourceLinks : {};
+  const profile = links.futbolFantasy || footballFantasyUrlFor(player.name);
+  const teamUrls = favoriteTeamSlugCandidates(player.team)
+    .map((slug) => `https://www.futbolfantasy.com/laliga/equipos/${slug}/noticias/1`);
+  return [...new Set([profile, ...teamUrls].filter(Boolean))].slice(0, 3);
+};
+
+const favoriteNewsRelevance = (article, player) => {
+  const text = normalizeText(`${article.title || ""} ${article.link || ""}`);
+  const name = normalizeText(player.name);
+  const team = normalizeText(player.team);
+  if (!text || !name) return false;
+  if (text.includes(name)) return true;
+  const nameTokens = name.split(" ").filter((token) => token.length >= 4);
+  return nameTokens.some((token) => text.includes(token)) || Boolean(team && text.includes(team));
+};
+
+const parseFutbolFantasyNewsItems = (html, player) => {
+  const matches = String(html || "").matchAll(/<a\b[^>]*href=["']((?:[^"']*\/(?:laliga|world-cup)\/)?noticias\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi);
+  const articles = new Map();
+  for (const match of matches) {
+    const link = /^https?:\/\//i.test(match[1]) ? match[1] : new URL(match[1], "https://www.futbolfantasy.com").href;
+    const title = stripHtml(match[2]);
+    const article = { title, link, source: "FutbolFantasy", publishedAt: null };
+    if (title.length >= 12 && favoriteNewsRelevance(article, player)) articles.set(link, article);
+  }
+  return [...articles.values()];
+};
+
 const favoriteDirectLinks = (player) => {
   const links = player.sourceLinks && typeof player.sourceLinks === "object" ? player.sourceLinks : {};
   return [
@@ -1366,7 +1407,13 @@ const handleFavoriteNews = async (req, res) => {
       } catch {
         articles = [];
       }
-      const merged = new Map([...articles, ...favoriteDirectLinks(player)].map((article) => [
+      const futbolFantasyArticles = (await Promise.all(favoriteFutbolFantasyUrls(player).map(async (url) => {
+        try { return parseFutbolFantasyNewsItems(await sourceGetText(url), player); } catch { return []; }
+      }))).flat();
+      const fallbackLinks = futbolFantasyArticles.length
+        ? favoriteDirectLinks(player).filter((article) => article.source !== "FutbolFantasy")
+        : favoriteDirectLinks(player);
+      const merged = new Map([...futbolFantasyArticles, ...articles, ...fallbackLinks].map((article) => [
         `${article.source}|${article.title}|${article.link}`.toLowerCase(),
         article
       ]));

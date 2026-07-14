@@ -2476,14 +2476,16 @@ function team_tracking_parse_futbolfantasy_date(string $block): ?string
         $match = $matches[count($matches) - 1];
         $hour = (int)$match[3];
         $minute = (int)$match[4];
-    } elseif (!preg_match_all('~<(?:div|span)\b[^>]*class=["\'][^"\']*\bdate\b[^"\']*["\'][^>]*>\s*([0-9]{1,2})/([0-9]{1,2})(?:\s+([0-9]{1,2}):([0-9]{2}))?\s*</(?:div|span)>~i', $block, $matches, PREG_SET_ORDER)) {
-        return null;
-    } else {
+    } elseif (preg_match_all('~<(?:div|span)\b[^>]*class=["\'][^"\']*\bdate\b[^"\']*["\'][^>]*>\s*([0-9]{1,2})/([0-9]{1,2})(?:\s+([0-9]{1,2}):([0-9]{2}))?\s*</(?:div|span)>~i', $block, $matches, PREG_SET_ORDER)) {
         $match = $matches[count($matches) - 1];
         if (isset($match[3]) && $match[3] !== '') {
             $hour = (int)$match[3];
             $minute = (int)$match[4];
         }
+    } elseif (preg_match('/(?:^|\s)([0-9]{1,2})\/([0-9]{1,2})(?:\s|$)/', $block, $match)) {
+        // Text-only fallbacks expose dates as a simple 14/07 heading.
+    } else {
+        return null;
     }
     $year = (int)gmdate('Y');
     $timestamp = strtotime(sprintf('%04d-%02d-%02d %02d:%02d:00', $year, (int)$match[2], (int)$match[1], $hour, $minute));
@@ -2515,7 +2517,18 @@ function futbolfantasy_news_items_from_html(string $html): array
         $matches,
         PREG_SET_ORDER | PREG_OFFSET_CAPTURE
     )) {
-        return [];
+        // Jina's text reader is used only when a hosting IP is blocked by
+        // FutbolFantasy; it preserves the same article URLs as Markdown links.
+        preg_match_all(
+            '~\[([^\]]+)\]\((https?://www\.futbolfantasy\.com/(?:laliga|world-cup)/noticias/[^)]+)\)~i',
+            $scope,
+            $markdownMatches,
+            PREG_SET_ORDER | PREG_OFFSET_CAPTURE
+        );
+        if (!$markdownMatches) return [];
+        $matches = array_map(static function ($match) {
+            return [$match[0], $match[2], $match[1]];
+        }, $markdownMatches);
     }
     $items = [];
     foreach ($matches as $match) {
@@ -2647,9 +2660,19 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
             $directPages[$directUrl] = null;
         }
     }
+    $fallbackPages = [];
+    foreach (array_keys($directUrls) as $directUrl) {
+        if (!empty($directPages[$directUrl]) || !preg_match('~/noticias/1/?$~', $directUrl)) continue;
+        $fallbackUrl = 'https://r.jina.ai/http://' . preg_replace('~^https?://~', '', $directUrl);
+        try {
+            $fallbackPages[$directUrl] = http_get_text($fallbackUrl, max($timeoutSeconds, 15), $headers, $strictTls);
+        } catch (Throwable $error) {
+            $fallbackPages[$directUrl] = null;
+        }
+    }
     $merged = [];
     foreach ($directUrls as $url => $urlTeams) {
-        $html = (string)($directPages[$url] ?? '');
+        $html = (string)($directPages[$url] ?? $fallbackPages[$url] ?? '');
         if ($html === '') continue;
         foreach ((array)$urlTeams as $team) {
             foreach (team_tracking_parse_futbolfantasy_items($html, $team) as $article) {

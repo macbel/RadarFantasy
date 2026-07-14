@@ -2637,6 +2637,16 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
     // FutbolFantasy applies stricter bot checks than the RSS providers.
     // Its dedicated browser headers are required for the direct team pages.
     $directPages = $directUrls ? http_get_text_many(array_keys($directUrls), max($timeoutSeconds, 8), $futbolFantasyHeaders, $strictTls) : [];
+    // Their edge can also reject simultaneous requests from the same server.
+    // Retry only failed pages sequentially before falling back to press RSS.
+    foreach (array_keys($directUrls) as $directUrl) {
+        if (!empty($directPages[$directUrl])) continue;
+        try {
+            $directPages[$directUrl] = http_get_text($directUrl, max($timeoutSeconds, 12), $futbolFantasyHeaders, $strictTls);
+        } catch (Throwable $error) {
+            $directPages[$directUrl] = null;
+        }
+    }
     $merged = [];
     foreach ($directUrls as $url => $urlTeams) {
         $html = (string)($directPages[$url] ?? '');

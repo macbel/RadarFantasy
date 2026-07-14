@@ -922,7 +922,7 @@ if ($route === '/team-tracking/feed' && $requestMethod === 'GET') {
     $forceRefresh = ($_GET['force'] ?? '') === '1';
     $competition = ($_GET['competition'] ?? '') === 'worldcup' ? 'worldcup' : 'club';
     try {
-        $payload = team_tracking_refresh_feed($teamTrackingDb, $teamTrackingDbPath, $forceRefresh, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $competition);
+        $payload = team_tracking_refresh_feed($teamTrackingDb, $teamTrackingDbPath, $forceRefresh, $sourceTimeoutSeconds, $sourceHeaders, $futbolFantasyHeaders, $strictTls, $competition);
         send_json(200, $payload);
     } catch (Throwable $error) {
         send_json(502, ['error' => $error->getMessage() ?: 'No se pudieron refrescar las noticias de equipos']);
@@ -2604,7 +2604,7 @@ function team_tracking_parse_rss_items(string $xml, string $teamName): array
     return $articles;
 }
 
-function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh, int $timeoutSeconds, array $headers, bool $strictTls, string $competition = 'club'): array
+function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh, int $timeoutSeconds, array $headers, array $futbolFantasyHeaders, bool $strictTls, string $competition = 'club'): array
 {
     $teams = array_values(array_filter(array_map(static function ($team) {
         return sanitize_tracked_team_name($team);
@@ -2634,7 +2634,9 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
         }
     }
     $pages = http_get_text_many(array_values($urls), max($timeoutSeconds, 8), $headers, $strictTls);
-    $directPages = $directUrls ? http_get_text_many(array_keys($directUrls), max($timeoutSeconds, 8), $headers, $strictTls) : [];
+    // FutbolFantasy applies stricter bot checks than the RSS providers.
+    // Its dedicated browser headers are required for the direct team pages.
+    $directPages = $directUrls ? http_get_text_many(array_keys($directUrls), max($timeoutSeconds, 8), $futbolFantasyHeaders, $strictTls) : [];
     $merged = [];
     foreach ($directUrls as $url => $urlTeams) {
         $html = (string)($directPages[$url] ?? '');

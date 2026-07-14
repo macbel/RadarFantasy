@@ -72,6 +72,7 @@
   trackedTeams: [],
   trackedTeamArticles: [],
   trackedTeamFilter: [],
+  trackedTeamSourceFilter: [],
   trackedTeamsUpdatedAt: null,
   trackedTeamFeedLoading: false,
   dailyPlanMode: "balanced",
@@ -190,7 +191,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.8.9";
+const APP_VERSION = "3.8.10";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -4057,12 +4058,16 @@ const applyTeamTrackingPayload = (payload = {}) => {
       .map((team) => sanitizeTrackedTeamName(team))
       .filter((team) => allowedKeys.has(trackedTeamKey(team)))
     : [];
+  state.trackedTeamSourceFilter = Array.isArray(payload.sourceFilter)
+    ? payload.sourceFilter.map((source) => String(source || "").trim()).filter(Boolean)
+    : state.trackedTeamSourceFilter;
   state.trackedTeamsUpdatedAt = payload.updatedAt || null;
   writeTeamTrackingStorage({
     teams: state.trackedTeams,
     articles: state.trackedTeamArticles,
     updatedAt: state.trackedTeamsUpdatedAt,
-    filter: state.trackedTeamFilter
+    filter: state.trackedTeamFilter,
+    sourceFilter: state.trackedTeamSourceFilter
   });
 };
 
@@ -4088,9 +4093,13 @@ const renderTrackedTeamChips = () => {
 };
 
 const visibleTrackedTeamArticles = () => {
-  if (!state.trackedTeamFilter.length) return state.trackedTeamArticles;
-  const selected = new Set(state.trackedTeamFilter.map((team) => trackedTeamKey(team)));
-  return state.trackedTeamArticles.filter((article) => (article.teams || []).some((team) => selected.has(trackedTeamKey(team))));
+  const selectedTeams = new Set(state.trackedTeamFilter.map((team) => trackedTeamKey(team)));
+  const selectedSources = new Set(state.trackedTeamSourceFilter.map((source) => normalize(source)));
+  return state.trackedTeamArticles.filter((article) => {
+    const teamMatches = !selectedTeams.size || (article.teams || []).some((team) => selectedTeams.has(trackedTeamKey(team)));
+    const sourceMatches = !selectedSources.size || selectedSources.has(normalize(article.source || ""));
+    return teamMatches && sourceMatches;
+  });
 };
 
 const renderTrackedTeamFilter = () => {
@@ -4140,6 +4149,7 @@ const renderTeamTracking = () => {
   if (shouldSkipComponentRender("team-tracking", "team-tracking")) return;
   renderTrackedTeamChips();
   renderTrackedTeamFilter();
+  renderTrackedTeamSourceFilter();
   renderTrackedTeamFeed();
 };
 
@@ -4167,7 +4177,8 @@ const saveTrackedTeams = async () => {
     teams: state.trackedTeams,
     articles: state.trackedTeamArticles,
     updatedAt: state.trackedTeamsUpdatedAt,
-    filter: state.trackedTeamFilter
+    filter: state.trackedTeamFilter,
+    sourceFilter: state.trackedTeamSourceFilter
   });
   if (!canUseApi()) return;
   try {
@@ -4264,7 +4275,8 @@ const toggleTrackedTeamFilter = (teamName) => {
     teams: state.trackedTeams,
     articles: state.trackedTeamArticles,
     updatedAt: state.trackedTeamsUpdatedAt,
-    filter: state.trackedTeamFilter
+    filter: state.trackedTeamFilter,
+    sourceFilter: state.trackedTeamSourceFilter
   });
   renderTeamTracking();
   setTeamTrackingStatus(
@@ -4273,6 +4285,26 @@ const toggleTrackedTeamFilter = (teamName) => {
       : "Filtro desactivado: vuelves a ver noticias de todos los equipos seguidos.",
     "ready"
   );
+};
+
+const toggleTrackedTeamSourceFilter = (source) => {
+  const normalized = String(source || "").trim();
+  if (!normalized) return;
+  const current = state.trackedTeamSourceFilter.length ? state.trackedTeamSourceFilter : [...TEAM_TRACKING_SOURCES];
+  const key = normalize(normalized);
+  const selected = current.some((item) => normalize(item) === key);
+  const next = selected
+    ? current.filter((item) => normalize(item) !== key)
+    : [...current, normalized];
+  state.trackedTeamSourceFilter = next.length === TEAM_TRACKING_SOURCES.length ? [] : next;
+  writeTeamTrackingStorage({
+    teams: state.trackedTeams,
+    articles: state.trackedTeamArticles,
+    updatedAt: state.trackedTeamsUpdatedAt,
+    filter: state.trackedTeamFilter,
+    sourceFilter: state.trackedTeamSourceFilter
+  });
+  renderTeamTracking();
 };
 
 const healthMeta = (player) => {
@@ -4928,6 +4960,18 @@ const currentMaximumBid = () => {
   if (value === null || value === undefined || value === "") return null;
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+};
+
+const TEAM_TRACKING_SOURCES = ["FutbolFantasy", "MARCA", "Diario AS"];
+
+const renderTrackedTeamSourceFilter = () => {
+  const target = qs("#team-tracking-source-filter");
+  if (!target) return;
+  const selected = new Set(state.trackedTeamSourceFilter.map((source) => normalize(source)));
+  target.innerHTML = `<span class="muted-label">Fuentes</span>${TEAM_TRACKING_SOURCES.map((source) => {
+    const active = !selected.size || selected.has(normalize(source));
+    return `<button class="ghost-button team-tracking-filter-chip ${active ? "active" : ""}" type="button" data-team-tracking-source="${escapeHtml(source)}" aria-pressed="${active ? "true" : "false"}">${escapeHtml(source)}</button>`;
+  }).join("")}`;
 };
 
 const playerExceedsMaximumBid = (player) => {
@@ -12183,6 +12227,13 @@ const initEvents = () => {
     event.preventDefault();
     event.stopPropagation();
     toggleTrackedTeamFilter(button.dataset.teamTrackingFilter || "");
+  }, true);
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.("[data-team-tracking-source]");
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    toggleTrackedTeamSourceFilter(button.dataset.teamTrackingSource || "");
   }, true);
   document.addEventListener("mouseover", handleRecentDotHover, true);
   document.addEventListener("keydown", (event) => {

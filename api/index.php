@@ -32,7 +32,8 @@ $sourceHeaders = [
     // Several news providers reject the old application-specific user agent.
     'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
     'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language: es-ES,es;q=0.9,en;q=0.8'
+    'Accept-Language: es-ES,es;q=0.9,en;q=0.8',
+    'Referer: https://www.futbolfantasy.com/'
 ];
 $biwengerHtmlHeaders = [
     'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
@@ -2588,6 +2589,10 @@ function team_tracking_parse_rss_items(string $xml, string $teamName): array
                 $publishedAt = gmdate('c', $timestamp);
             }
         }
+        $sourceNormalized = normalize_text($source);
+        if (strpos($sourceNormalized, 'futbolfantasy') !== false) $source = 'FutbolFantasy';
+        elseif (strpos($sourceNormalized, 'marca') !== false) $source = 'MARCA';
+        elseif (preg_match('/(^|\\s)(as|diario as)(\\s|$)/', $sourceNormalized)) $source = 'Diario AS';
         $articles[] = [
             'title' => $title,
             'link' => $link,
@@ -2696,16 +2701,23 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
             if (strpos($source, 'as') !== false) return 2;
             return 3;
         };
-        $priorityDiff = $sourcePriority($left) <=> $sourcePriority($right);
-        if ($priorityDiff !== 0) return $priorityDiff;
         $leftTs = !empty($left['publishedAt']) ? strtotime((string)$left['publishedAt']) : 0;
         $rightTs = !empty($right['publishedAt']) ? strtotime((string)$right['publishedAt']) : 0;
-        if ($leftTs === $rightTs) {
-            return strcasecmp((string)($left['title'] ?? ''), (string)($right['title'] ?? ''));
-        }
-        return $rightTs <=> $leftTs;
+        if ($leftTs !== $rightTs) return $rightTs <=> $leftTs;
+        $priorityDiff = $sourcePriority($left) <=> $sourcePriority($right);
+        return $priorityDiff !== 0
+            ? $priorityDiff
+            : strcasecmp((string)($left['title'] ?? ''), (string)($right['title'] ?? ''));
     });
-    $db['articles'] = array_slice($articles, 0, 60);
+    $sourceCounts = [];
+    $limitedArticles = [];
+    foreach ($articles as $article) {
+        $sourceKey = normalize_text((string)($article['source'] ?? 'Fuente'));
+        if (($sourceCounts[$sourceKey] ?? 0) >= 5) continue;
+        $sourceCounts[$sourceKey] = ($sourceCounts[$sourceKey] ?? 0) + 1;
+        $limitedArticles[] = $article;
+    }
+    $db['articles'] = array_slice($limitedArticles, 0, 25);
     $db['refreshedAtTs'] = time();
     write_json_file($path, $db);
     return team_tracking_payload($db);

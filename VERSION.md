@@ -1,9 +1,11 @@
-# Version 3.8.9
+# Version 3.8.10
 
 Fecha de publicación: 2026-07-14
 
 ## Notas de versión
 
+- Noticias de equipos con selector persistente por fuente y máximo de cinco titulares por fuente, ordenados por actualidad.
+- Modo día corregido para las tarjetas de escenarios y lectura de rivales del Plan de hoy.
 - Noticias de favoritos reforzadas: FutbolFantasy se consulta directamente y se prioriza sobre los resultados de prensa generalista.
 - La competición se sincroniza desde Biwenger para cada liga conectada; la puntuación sigue siendo configurable de forma independiente.
 - Modo día mejorado: botonera, liga activa, tarjetas de Plan de hoy y editor de alineación con más contraste.

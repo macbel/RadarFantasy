@@ -1061,15 +1061,35 @@ html[data-theme="day"] .active-league-identity strong {
 }
 
 html[data-theme="day"] .daily-plan-metric,
-html[data-theme="day"] .daily-plan-action {
+html[data-theme="day"] .daily-plan-action,
+html[data-theme="day"] .daily-scenario,
+html[data-theme="day"] .daily-rival-insight {
   border-color: #9dbbb6;
   background: #fbfdfb;
   box-shadow: inset 0 0 0 1px rgba(19, 39, 43, 0.025);
 }
 
 html[data-theme="day"] .daily-plan-metric strong,
-html[data-theme="day"] .daily-plan-action-copy strong {
+html[data-theme="day"] .daily-plan-action-copy strong,
+html[data-theme="day"] .daily-scenario,
+html[data-theme="day"] .daily-scenario header strong,
+html[data-theme="day"] .daily-rival-insight strong {
   color: #13272b;
+}
+
+html[data-theme="day"] .daily-scenario span,
+html[data-theme="day"] .daily-scenario small,
+html[data-theme="day"] .daily-rival-insight span {
+  color: #415d61;
+}
+
+html[data-theme="day"] .daily-rival-intel::before {
+  color: #8a5b00;
+}
+
+html[data-theme="day"] .daily-scenario.active {
+  border-color: #b57612;
+  background: linear-gradient(180deg, #fff7df, #f7fbf8);
 }
 
 html[data-theme="day"] .team-lineup-frame {
@@ -2488,6 +2508,13 @@ input[type="range"] {
   border-radius: 13px;
   background: rgba(10, 38, 46, 0.72);
   padding: 0.7rem;
+}
+
+.team-tracking-source-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin: 0.8rem 0 0.15rem;
 }
 
 .favorite-player-row {

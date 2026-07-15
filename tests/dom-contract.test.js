@@ -219,7 +219,7 @@ if (!html.includes('id="active-league-provider"') || !js.includes("leagueFantasy
   throw new Error("Every saved league must expose and persist its fantasy platform identity");
 }
 
-if (!html.includes('id="laliga-create-import-league"') || !html.includes('id="laliga-open-manual-import"') || !js.includes("createLaLigaImportLeague") || !js.includes('createLocalLeague(name, "laliga")')) {
+if (!html.includes('id="laliga-import-league-name"') || !html.includes('id="laliga-create-import-league"') || !html.includes('id="laliga-open-manual-import"') || !js.includes("createLaLigaImportLeague") || !js.includes('createLocalLeague(name, "laliga")')) {
   throw new Error("LaLiga Fantasy must provide a credential-free manual import flow");
 }
 

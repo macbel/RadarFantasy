@@ -6393,17 +6393,19 @@ const createLeagueFromInput = async () => {
 const createLaLigaImportLeague = async () => {
   const button = qs("#laliga-create-import-league");
   const status = qs("#laliga-import-status");
+  const nameInput = qs("#laliga-import-league-name");
   const existingNames = new Set(state.leagues.map((league) => normalize(league.name)));
   const baseName = "LaLiga Fantasy";
-  let name = baseName;
+  let name = nameInput?.value.trim() || baseName;
   let index = 2;
   while (existingNames.has(normalize(name))) {
-    name = `${baseName} ${index}`;
+    name = `${nameInput?.value.trim() || baseName} ${index}`;
     index += 1;
   }
 
   const localPayload = createLocalLeague(name, "laliga");
   applyLeaguePayload(localPayload);
+  if (nameInput) nameInput.value = "";
   state.preferences.showImageUpload = true;
   saveLocalLeagueSnapshot();
   syncSettingsControls();
@@ -12117,6 +12119,11 @@ const initEvents = () => {
 
   qs("#create-league").addEventListener("click", createLeagueFromInput);
   qs("#laliga-create-import-league")?.addEventListener("click", () => void createLaLigaImportLeague());
+  qs("#laliga-import-league-name")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void createLaLigaImportLeague();
+  });
   qs("#laliga-open-manual-import")?.addEventListener("click", () => {
     if (leagueFantasyProvider(activeLeague()) !== "laliga") {
       setLeagueStatus("Crea primero una liga de importación de LaLiga Fantasy.");

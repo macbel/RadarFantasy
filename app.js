@@ -697,7 +697,7 @@ const saveLocalLeagueSnapshot = () => {
   return buildLocalLeaguePayload(db);
 };
 
-const createLocalLeague = (name) => {
+const createLocalLeague = (name, fantasyProvider = "local") => {
   const db = ensureLocalLeagueDb();
   const now = new Date().toISOString();
   const leagueId = createClientLeagueId();
@@ -707,7 +707,7 @@ const createLocalLeague = (name) => {
     createdAt: now,
     updatedAt: now,
     competition: state.competition,
-    fantasyProvider: "local",
+    fantasyProvider: normalizedFantasyProvider(fantasyProvider),
     scoring: state.scoring,
     marketPlayers: [],
     teamPlayers: [],
@@ -5818,10 +5818,15 @@ const setTeamBusy = (busy, label = "Guardar equipo") => {
 };
 
 const refreshOcrAvailability = () => {
+  const isLaLigaImport = leagueFantasyProvider(activeLeague()) === "laliga";
   if (window.Tesseract) {
-    setOcrStatus("OCR local disponible como respaldo. La via principal es Biwenger directo.", "ready");
+    setOcrStatus(isLaLigaImport
+      ? "OCR local disponible. Carga una captura de LaLiga Fantasy o pega el texto del mercado."
+      : "OCR local disponible como respaldo. La via principal es Biwenger directo.", "ready");
   } else {
-    setOcrStatus("OCR no cargado. No pasa nada si entras por Biwenger directo.", "error");
+    setOcrStatus(isLaLigaImport
+      ? "OCR no cargado. Puedes pegar manualmente los jugadores y sus importes."
+      : "OCR no cargado. No pasa nada si entras por Biwenger directo.", "error");
   }
 };
 
@@ -6380,6 +6385,59 @@ const createLeagueFromInput = async () => {
     setLeagueStatus(`Liga creada y sincronizada: ${name}.`);
   } catch (error) {
     setLeagueStatus(`Liga creada localmente. No se pudo sincronizar: ${error.message || "API no disponible"}.`);
+  } finally {
+    if (button) button.disabled = false;
+  }
+};
+
+const createLaLigaImportLeague = async () => {
+  const button = qs("#laliga-create-import-league");
+  const status = qs("#laliga-import-status");
+  const existingNames = new Set(state.leagues.map((league) => normalize(league.name)));
+  const baseName = "LaLiga Fantasy";
+  let name = baseName;
+  let index = 2;
+  while (existingNames.has(normalize(name))) {
+    name = `${baseName} ${index}`;
+    index += 1;
+  }
+
+  const localPayload = createLocalLeague(name, "laliga");
+  applyLeaguePayload(localPayload);
+  state.preferences.showImageUpload = true;
+  saveLocalLeagueSnapshot();
+  syncSettingsControls();
+  setLeagueStatus(`Liga de importación creada: ${name}.`);
+  if (status) status.querySelector("span:last-child").textContent = "Liga creada. Ve a Mercado o Mi equipo para cargar una captura de LaLiga Fantasy.";
+
+  if (!canUseApi()) return;
+
+  if (button) button.disabled = true;
+  try {
+    const response = await apiFetch("/api/leagues", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, competition: state.competition, scoring: state.scoring, fantasyProvider: "laliga" })
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `API no disponible para crear ligas (${response.status}).`);
+    }
+    const payload = await response.json();
+    const localLeagueId = state.activeLeagueId;
+    const mergedPayload = mergeLeaguePayloads(buildLocalLeaguePayload(ensureLocalLeagueDb()), payload);
+    if (payload.activeLeagueId && payload.activeLeagueId !== localLeagueId) {
+      mergedPayload.leagues = (mergedPayload.leagues || []).filter((league) => league.id !== localLeagueId);
+    }
+    mergedPayload.activeLeagueId = payload.activeLeagueId || localLeagueId || mergedPayload.activeLeagueId;
+    applyLeaguePayload(mergedPayload);
+    state.preferences.showImageUpload = true;
+    saveLocalLeagueSnapshot();
+    syncSettingsControls();
+    void saveActiveLeague();
+    if (status) status.querySelector("span:last-child").textContent = "Liga creada y sincronizada. Ya puedes importar el mercado o tu plantilla.";
+  } catch (error) {
+    if (status) status.querySelector("span:last-child").textContent = `Liga creada localmente. No se pudo sincronizar: ${error.message || "API no disponible"}.`;
   } finally {
     if (button) button.disabled = false;
   }
@@ -9848,19 +9906,45 @@ const syncSettingsControls = () => {
   if (riskAverse) riskAverse.checked = Boolean(state.preferences.riskAverse);
   const investmentMode = qs("#investment-mode");
   if (investmentMode) investmentMode.checked = Boolean(state.preferences.investmentMode);
-  const showImageUpload = Boolean(state.preferences.showImageUpload);
+  const isLaLigaImport = leagueFantasyProvider(activeLeague()) === "laliga";
+  const showImageUpload = Boolean(state.preferences.showImageUpload) || isLaLigaImport;
   const showImageUploadInput = qs("#show-image-upload");
-  if (showImageUploadInput) showImageUploadInput.checked = showImageUpload;
+  if (showImageUploadInput) showImageUploadInput.checked = Boolean(state.preferences.showImageUpload);
   [qs("#market-manual-entry"), qs("#team-manual-entry")].filter(Boolean).forEach((entry) => {
     entry.hidden = !showImageUpload;
   });
   qs("#market-view .input-band")?.classList.toggle("manual-entry-hidden", !showImageUpload);
+  const manualCopy = isLaLigaImport
+    ? {
+      marketKicker: "LaLiga Fantasy", marketTitle: "Importar mercado", marketLabel: "Importación manual",
+      marketImageTitle: "Captura del mercado de LaLiga Fantasy", marketImageCopy: "Sube una captura de la app oficial o pega los jugadores y sus importes.",
+      teamKicker: "LaLiga Fantasy", teamTitle: "Importar tu plantilla",
+      teamImageTitle: "Captura de tu plantilla de LaLiga Fantasy", teamImageCopy: "Sube una captura de la app oficial o pega los jugadores de tu plantilla."
+    }
+    : {
+      marketKicker: "Entrada", marketTitle: "Mercado y respaldo manual", marketLabel: "Respaldo manual",
+      marketImageTitle: "Captura del mercado", marketImageCopy: "Plan B manual. Si Biwenger directo no esta disponible, prueba aqui.",
+      teamKicker: "Plantilla", teamTitle: "Tu plantilla actual",
+      teamImageTitle: "Captura de tu equipo", teamImageCopy: "Solo como respaldo manual si no puedes importar la plantilla."
+    };
+  const copyTargets = {
+    "#market-manual-kicker": manualCopy.marketKicker, "#market-manual-title": manualCopy.marketTitle,
+    "#market-manual-label": manualCopy.marketLabel, "#market-image-title": manualCopy.marketImageTitle,
+    "#market-image-copy": manualCopy.marketImageCopy, "#team-manual-kicker": manualCopy.teamKicker,
+    "#team-manual-title": manualCopy.teamTitle, "#team-image-title": manualCopy.teamImageTitle,
+    "#team-image-copy": manualCopy.teamImageCopy
+  };
+  Object.entries(copyTargets).forEach(([selector, text]) => {
+    const target = qs(selector);
+    if (target) target.textContent = text;
+  });
   if (!showImageUpload) {
     const marketPreview = qs("#image-preview");
     const teamPreview = qs("#team-image-preview");
     if (marketPreview) marketPreview.hidden = true;
     if (teamPreview) teamPreview.hidden = true;
   }
+  refreshOcrAvailability();
   const showMarketAnalysis = qs("#show-market-analysis");
   if (showMarketAnalysis) showMarketAnalysis.checked = Boolean(state.preferences.showMarketAnalysis);
   const showSportDirector = qs("#show-sport-director");
@@ -12032,6 +12116,15 @@ const initEvents = () => {
   });
 
   qs("#create-league").addEventListener("click", createLeagueFromInput);
+  qs("#laliga-create-import-league")?.addEventListener("click", () => void createLaLigaImportLeague());
+  qs("#laliga-open-manual-import")?.addEventListener("click", () => {
+    if (leagueFantasyProvider(activeLeague()) !== "laliga") {
+      setLeagueStatus("Crea primero una liga de importación de LaLiga Fantasy.");
+      return;
+    }
+    openView("market");
+    qs("#market-manual-entry textarea")?.focus();
+  });
   qs("#league-name").addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();

@@ -197,8 +197,8 @@
             <div class="market-input optional-manual-entry" id="market-manual-entry" hidden>
               <div class="section-heading">
                 <div>
-                  <p class="eyebrow">Entrada</p>
-                  <h3>Mercado y respaldo manual</h3>
+                  <p class="eyebrow" id="market-manual-kicker">Entrada</p>
+                  <h3 id="market-manual-title">Mercado y respaldo manual</h3>
                 </div>
                 <div class="section-heading-actions">
                   <button class="icon-button" type="button" id="clear-input" aria-label="Limpiar entrada" title="Limpiar entrada">
@@ -207,7 +207,7 @@
                 </div>
               </div>
               <div class="manual-entry-header">
-                <span class="muted-label">Respaldo manual</span>
+                <span class="muted-label" id="market-manual-label">Respaldo manual</span>
               </div>
               <textarea id="market-text" spellcheck="false" placeholder="Ejemplo:
 Oihan Sancet - Athletic - MC - 12.300.000
@@ -227,8 +227,8 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                   <span class="icon icon-image"></span>
                 </div>
                 <div>
-                  <strong>Captura del mercado</strong>
-                  <p>Plan B manual. Si Biwenger directo no esta disponible, prueba aqui.</p>
+                  <strong id="market-image-title">Captura del mercado</strong>
+                  <p id="market-image-copy">Plan B manual. Si Biwenger directo no esta disponible, prueba aqui.</p>
                 </div>
               </div>
               <img id="image-preview" class="image-preview" alt="Vista previa de captura del mercado" hidden />
@@ -468,8 +468,8 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
             <div class="market-input optional-manual-entry" id="team-manual-entry" hidden>
               <div class="section-heading">
                 <div>
-                  <p class="eyebrow">Plantilla</p>
-                  <h3>Tu plantilla actual</h3>
+                  <p class="eyebrow" id="team-manual-kicker">Plantilla</p>
+                  <h3 id="team-manual-title">Tu plantilla actual</h3>
                 </div>
                 <button class="icon-button" type="button" id="clear-team" aria-label="Vaciar equipo" title="Vaciar equipo">
                   <span class="icon icon-clear" aria-hidden="true"></span>
@@ -486,8 +486,8 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                   <span class="icon icon-image"></span>
                 </div>
                 <div>
-                  <strong>Captura de tu equipo</strong>
-                  <p>Solo como respaldo manual si no puedes importar la plantilla.</p>
+                  <strong id="team-image-title">Captura de tu equipo</strong>
+                  <p id="team-image-copy">Solo como respaldo manual si no puedes importar la plantilla.</p>
                 </div>
               </div>
               <img id="team-image-preview" class="image-preview" alt="Vista previa de captura del equipo" hidden />
@@ -955,7 +955,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     <strong>Biwenger</strong><span>Disponible</span>
                   </button>
                   <button class="fantasy-platform-tab" type="button" role="tab" aria-selected="false" data-fantasy-settings-tab="laliga">
-                    <strong>LaLiga Fantasy</strong><span>Preparando</span>
+                    <strong>LaLiga Fantasy</strong><span>Importaci&oacute;n manual</span>
                   </button>
                   <button class="fantasy-platform-tab" type="button" role="tab" aria-selected="false" data-fantasy-settings-tab="mister">
                     <strong>Mister Fantasy</strong><span>Planificada</span>
@@ -1005,10 +1005,15 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
               </div>
                 </section>
                 <section class="fantasy-platform-panel" role="tabpanel" data-fantasy-settings-panel="laliga" hidden>
-                  <div class="integration-card fantasy-provider-card coming-soon">
-                    <div class="provider-card-heading"><div><p class="eyebrow">LaLiga Fantasy</p><h3>Pr&oacute;xima integraci&oacute;n</h3></div><span class="provider-status planning">Preparando</span></div>
-                    <p>La conexi&oacute;n se implementar&aacute; por fases: primero plantilla, mercado, saldo y clasificaci&oacute;n; despu&eacute;s pujas, ventas, cl&aacute;usulas y alineaciones.</p>
-                    <div class="provider-capabilities"><span>Plantilla</span><span>Mercado</span><span>Clasificaci&oacute;n</span><span>Pujas</span></div>
+                  <div class="integration-card fantasy-provider-card">
+                    <div class="provider-card-heading"><div><p class="eyebrow">LaLiga Fantasy</p><h3>Importa tus datos desde la app oficial</h3></div><span class="provider-status available">Disponible</span></div>
+                    <p>Crea una liga de importaci&oacute;n y carga una captura o pega el texto de tu mercado y plantilla. Los datos se quedan en Radar Fantasy: no pedimos ni guardamos tus credenciales de LaLiga.</p>
+                    <div class="provider-capabilities"><span>Mercado</span><span>Plantilla</span><span>Capturas</span><span>Datos manuales</span></div>
+                    <div class="biwenger-actions">
+                      <button class="primary-button" type="button" id="laliga-create-import-league"><span class="icon icon-team" aria-hidden="true"></span>Crear liga de importaci&oacute;n</button>
+                      <button class="ghost-button" type="button" id="laliga-open-manual-import"><span class="icon icon-image" aria-hidden="true"></span>Importar mercado</button>
+                    </div>
+                    <div class="ocr-status" id="laliga-import-status" role="status" aria-live="polite"><span class="status-dot" aria-hidden="true"></span><span>Empieza creando una liga de importaci&oacute;n de LaLiga Fantasy.</span></div>
                   </div>
                 </section>
                 <section class="fantasy-platform-panel" role="tabpanel" data-fantasy-settings-panel="mister" hidden>

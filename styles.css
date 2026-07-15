@@ -3177,6 +3177,21 @@ input[type="range"] {
   white-space: nowrap;
 }
 
+/* Los importes financieros deben priorizar la cifra completa frente a una línea
+   única: en pantallas anchas las nueve tarjetas comparten la misma fila. */
+.finance-metric {
+  padding: 12px;
+}
+
+.finance-metric strong {
+  overflow: visible;
+  font-size: clamp(15px, 1.15vw, 18px);
+  line-height: 1.2;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .results-layout {
   grid-template-columns: minmax(0, 1fr) minmax(330px, 0.42fr);
   margin-top: 16px;

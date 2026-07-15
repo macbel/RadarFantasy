@@ -3193,7 +3193,7 @@ input[type="range"] {
 }
 
 .results-layout {
-  grid-template-columns: minmax(0, 1fr) minmax(330px, 0.42fr);
+  grid-template-columns: minmax(0, 1fr);
   margin-top: 16px;
   align-items: start;
   min-width: 0;
@@ -5153,6 +5153,7 @@ body.sheet-open {
 }
 
 .detail-stat {
+  min-width: 0;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -5170,6 +5171,7 @@ body.sheet-open {
   display: block;
   margin-top: 5px;
   font-size: 17px;
+  overflow-wrap: anywhere;
 }
 
 .detail-stat.danger {
@@ -5217,11 +5219,12 @@ body.sheet-open {
 
 .decision-detail-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
 }
 
 .decision-detail-grid > div {
+  min-width: 0;
   display: grid;
   gap: 5px;
   padding: 10px;
@@ -5235,6 +5238,10 @@ body.sheet-open {
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
+}
+
+.decision-detail-grid strong {
+  overflow-wrap: anywhere;
 }
 
 .smart-bid-detail {
@@ -5253,7 +5260,7 @@ body.sheet-open {
 
 .smart-bid-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
 }
 
@@ -5277,6 +5284,7 @@ body.sheet-open {
   display: block;
   margin-top: 4px;
   color: #fff2c8;
+  overflow-wrap: anywhere;
 }
 
 .smart-bid-grid .positive {
@@ -8452,8 +8460,7 @@ tr.has-rival-bids.has-rival-sale {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .decision-detail > header,
-  .decision-detail-grid {
+  .decision-detail > header {
     grid-template-columns: 1fr;
   }
 

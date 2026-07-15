@@ -1291,7 +1291,7 @@ const renderTopFiveRecommendations = (players) => {
   target.querySelectorAll("[data-player-id]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedPlayerId = button.dataset.playerId;
-      state.pendingMobileDetailOpen = isCompactMarketLayout();
+      state.pendingMobileDetailOpen = true;
       renderTable();
     });
   });
@@ -1333,7 +1333,7 @@ const renderMarketDecisionCenter = (players) => {
   target.querySelectorAll("[data-player-id]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedPlayerId = button.dataset.playerId;
-      state.pendingMobileDetailOpen = isCompactMarketLayout();
+      state.pendingMobileDetailOpen = true;
       renderTable();
     });
   });
@@ -1491,7 +1491,7 @@ const bindStrategyPlayerLinks = (root) => {
   root.querySelectorAll("[data-strategy-player]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedPlayerId = button.dataset.strategyPlayer;
-      state.pendingMobileDetailOpen = isCompactMarketLayout();
+      state.pendingMobileDetailOpen = true;
       renderTable();
     });
   });
@@ -10310,7 +10310,7 @@ const renderTable = ({ includeStrategic = true } = {}) => {
     container.querySelectorAll("[data-player-id]").forEach((node) => {
       node.addEventListener("click", () => {
         state.selectedPlayerId = node.dataset.playerId;
-        state.pendingMobileDetailOpen = isCompactMarketLayout();
+        state.pendingMobileDetailOpen = true;
         renderTable();
       });
     });
@@ -10523,12 +10523,7 @@ const openTeamDetail = () => {
 };
 
 const renderEmptyDetail = (title, description) => {
-  const detail = qs("#player-detail");
   const mobileDetail = qs("#mobile-player-detail");
-  if (detail) {
-    detail.className = "detail-empty";
-    detail.innerHTML = detailEmptyMarkup(title, description);
-  }
   if (mobileDetail) {
     mobileDetail.className = "detail-empty";
     mobileDetail.innerHTML = detailEmptyMarkup(title, description);
@@ -10543,13 +10538,8 @@ const renderDetail = (player, options = {}) => {
   }
 
   const markup = buildDetailMarkup(player);
-  const detail = qs("#player-detail");
   const mobileDetail = qs("#mobile-player-detail");
   const title = qs("#market-detail-title");
-  if (detail) {
-    detail.className = "";
-    detail.innerHTML = markup;
-  }
   if (mobileDetail) {
     mobileDetail.className = "";
     mobileDetail.innerHTML = markup;
@@ -10562,7 +10552,7 @@ const renderDetail = (player, options = {}) => {
       placeBiwengerBid(form);
     });
   });
-  if (options.openSheet && isCompactMarketLayout()) {
+  if (options.openSheet) {
     openMobileDetail();
   }
 };
@@ -12249,7 +12239,6 @@ const initEvents = () => {
   });
   window.addEventListener("resize", () => {
     if (!isMobileNavigationLayout()) closeMobileSidebar();
-    if (!isCompactMarketLayout()) closeMobileDetail();
     if (!isCompactTeamLayout()) closeTeamDetail();
     closeRecentFormPopover();
   });

@@ -255,8 +255,8 @@ if (js.includes('class="ghost-button query-bid-count"')) {
   throw new Error("The old rival-bid query button must not remain in the player detail");
 }
 
-if (!js.includes('(max-width: 1360px)') || !css.includes('@media (max-width: 1360px)') || !css.includes('.results-layout .detail-panel') || !css.includes('.table-panel {\n  min-width: 0;')) {
-  throw new Error("Tablet and narrow desktop market layouts must open player detail as a modal without reserving a side column");
+if (!html.includes('id="market-detail-sheet"') || html.includes('<aside class="detail-panel"') || !js.includes('if (options.openSheet) {') || !css.includes('.results-layout {\n  grid-template-columns: minmax(0, 1fr);')) {
+  throw new Error("Market player details must open in a modal without reserving a side column");
 }
 
 if (!js.includes("isBiwengerAuthenticationError") || !js.includes("isBiwengerStaleEntityError") || !php.includes("$readAttempts = strtoupper($method) === 'GET' ? 2 : 1")) {

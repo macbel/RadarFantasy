@@ -6275,6 +6275,55 @@ html[data-theme="day"] .data-sync-cancel:focus-visible {
   white-space: nowrap;
 }
 
+/* La ventana de alertas es independiente del panel de plantilla y necesita
+   una superficie propia en modo diurno para no heredar el fondo nocturno. */
+html[data-theme="day"] .team-alerts-backdrop {
+  background: rgba(27, 49, 50, 0.46);
+  backdrop-filter: blur(6px);
+}
+
+html[data-theme="day"] .team-alerts-dialog {
+  border-color: #8fb0ab;
+  background: #f5faf7;
+  color: #13272b;
+  box-shadow: 0 24px 70px rgba(31, 61, 66, 0.3);
+}
+
+html[data-theme="day"] .team-alerts-header {
+  border-bottom-color: #c6d8d3;
+  background: #f5faf7;
+}
+
+html[data-theme="day"] .team-alerts-header h3 {
+  color: #13272b;
+}
+
+html[data-theme="day"] .team-alerts-header .eyebrow {
+  color: #536a6b;
+}
+
+html[data-theme="day"] .team-alerts-summary {
+  border-bottom-color: #b9d0ca;
+  background: #e4f4f0;
+}
+
+html[data-theme="day"] .team-alerts-summary strong {
+  color: #0a3940;
+}
+
+html[data-theme="day"] .team-alerts-summary span,
+html[data-theme="day"] .team-alert-copy p {
+  color: #415d61;
+}
+
+html[data-theme="day"] .team-alert-copy > span {
+  color: #6e4c0a;
+}
+
+html[data-theme="day"] .team-alert-row.lineup {
+  background: #fff1f1;
+}
+
 .attention-target {
   animation: attention-target 1.8s ease;
 }

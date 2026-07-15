@@ -4987,6 +4987,90 @@ button.query-player-bid-count:disabled {
   background: rgba(14, 28, 33, 0.98);
 }
 
+/* El detalle se abre como modal también en escritorio: en modo diurno necesita
+   su propia superficie clara, no la paleta oscura del panel original. */
+html[data-theme="day"] .detail-sheet-dialog {
+  border-color: #8fb0ab;
+  background: #f5faf7;
+  color: #13272b;
+  box-shadow: 0 24px 54px rgba(31, 61, 66, 0.28);
+}
+
+html[data-theme="day"] .detail-sheet-header {
+  background: #f5faf7;
+  border-bottom: 1px solid #c6d8d3;
+}
+
+html[data-theme="day"] .detail-sheet-header .eyebrow,
+html[data-theme="day"] .detail-header p,
+html[data-theme="day"] .detail-stat span,
+html[data-theme="day"] .smart-bid-grid span {
+  color: #536a6b;
+}
+
+html[data-theme="day"] .detail-header h3,
+html[data-theme="day"] .detail-stat strong,
+html[data-theme="day"] .decision-detail strong,
+html[data-theme="day"] .decision-detail small,
+html[data-theme="day"] .smart-bid-detail h3 {
+  color: #13272b;
+}
+
+html[data-theme="day"] .score-ring {
+  background: conic-gradient(#087f87 calc(var(--score) * 1%), #d9e9e3 0);
+  box-shadow: inset 0 0 0 1px rgba(8, 127, 135, 0.25);
+}
+
+html[data-theme="day"] .score-ring span {
+  background: #f7fbf8;
+  color: #0a3940;
+  box-shadow: inset 0 0 0 1px #c1d6d0;
+}
+
+html[data-theme="day"] .decision-detail {
+  border-color: #9dbbb6;
+  background: #eef6f3;
+}
+
+html[data-theme="day"] .decision-detail.buy { border-color: #54a979; }
+html[data-theme="day"] .decision-detail.limited { border-color: #c8922d; }
+html[data-theme="day"] .decision-detail.watch { border-color: #4b94c8; }
+html[data-theme="day"] .decision-detail.avoid { border-color: #c65b62; }
+
+html[data-theme="day"] .decision-detail-grid > div {
+  border-color: #b9d0ca;
+  background: #fbfdfc;
+}
+
+html[data-theme="day"] .decision-detail-grid span {
+  color: #29464a;
+}
+
+html[data-theme="day"] .smart-bid-detail {
+  border-color: #76b8b2;
+  background: linear-gradient(135deg, #e4f4f0, #f4f8e9);
+}
+
+html[data-theme="day"] .smart-bid-warning {
+  color: #31565a;
+}
+
+html[data-theme="day"] .recommendation-box {
+  border-color: #d3a64a;
+  background: #fff6dc;
+  color: #5d4308;
+}
+
+html[data-theme="day"] .bid-form {
+  border-color: #79bbb5;
+  background: #e7f5f2;
+}
+
+html[data-theme="day"] .bid-form label,
+html[data-theme="day"] .bid-form small {
+  color: #415d61;
+}
+
 body.sheet-open {
   overflow: hidden;
 }

@@ -1097,6 +1097,68 @@ const fixtureEaseForPlayer = (player) => {
   };
 };
 
+// The player's fixture is not enough to decide whether spending makes sense.
+// This reads the shared calendar snapshot, which normally contains the recent
+// round and the next 45 days, and keeps market advice aligned with the point in
+// the competition rather than treating every day of the season equally.
+const competitionMarketContext = (fixtures = state.leagueFixtures) => {
+  const events = Array.isArray(fixtures?.events) ? fixtures.events : [];
+  const now = Date.now() / 1000;
+  const futureEvents = events.filter((event) => Number(event.timestamp || 0) > now + (3 * 60 * 60));
+  const roundNumbers = futureEvents
+    .map((event) => Number(String(event.round || "").match(/\d+/)?.[0] || 0))
+    .filter((round) => round > 0);
+  const distinctFutureRounds = [...new Set(roundNumbers)];
+  const firstFutureAt = futureEvents.reduce((first, event) => Math.min(first, Number(event.timestamp || Infinity)), Infinity);
+  const currentRound = distinctFutureRounds.length ? Math.min(...distinctFutureRounds) : 0;
+  const finalRound = futureEvents.length >= 3
+    && distinctFutureRounds.length === 1
+    && firstFutureAt <= now + (14 * 86400);
+  const noUpcomingMatches = events.length > 0 && futureEvents.length === 0;
+  const earlySeason = currentRound > 0 && currentRound <= 4;
+  const phase = noUpcomingMatches ? "finished" : finalRound ? "final" : earlySeason ? "early" : "regular";
+  const message = noUpcomingMatches
+    ? "El calendario cargado no tiene más partidos: no comprometas saldo en pujas."
+    : finalRound
+      ? "Última jornada detectada: no abras nuevas pujas."
+      : earlySeason
+        ? `Inicio de temporada (jornada ${currentRound}): protege liquidez y evita concentrar presupuesto.`
+        : "Calendario y presupuesto en fase regular.";
+  return {
+    known: events.length > 0,
+    futureEvents: futureEvents.length,
+    currentRound,
+    earlySeason,
+    finalRound,
+    noUpcomingMatches,
+    biddingClosed: noUpcomingMatches || finalRound,
+    phase,
+    message
+  };
+};
+
+const earlySeasonBudgetGuard = (player, score = 0, context = competitionMarketContext()) => {
+  const price = Number(player?.price || player?.biwengerValue || 0);
+  const balance = Number(state.finance?.balance);
+  const maximumBid = currentMaximumBid();
+  const teamValue = Number(state.finance?.teamValue || 0);
+  const liquidBudget = Number.isFinite(maximumBid) && maximumBid > 0
+    ? maximumBid
+    : Number.isFinite(balance) && balance > 0 ? balance : 0;
+  const totalBudget = Math.max(liquidBudget, (Number.isFinite(balance) ? Math.max(0, balance) : 0) + Math.max(0, teamValue));
+  const budgetShare = totalBudget > 0 && price > 0 ? price / totalBudget : 0;
+  const premium = score >= 74 || Number(player?.recommendation || 0) >= 74;
+  return {
+    budgetShare,
+    premium,
+    blocksBid: context.earlySeason && premium && budgetShare >= 0.20,
+    limitsBid: context.earlySeason && budgetShare >= 0.14,
+    message: context.earlySeason && budgetShare >= 0.14
+      ? `${Math.round(budgetShare * 100)}% de tu presupuesto al inicio de temporada.`
+      : null
+  };
+};
+
 const marketIntelligenceForPlayer = (player, system, price, fit) => {
   const calendar = fixtureEaseForPlayer(player);
   const starterFactor = clamp(Number(player.starter || 0)) / 100;
@@ -1261,7 +1323,8 @@ const renderTopFiveRecommendations = (players) => {
   if (!target) return;
   const top = marketTopCandidates(players);
   if (!top.length) {
-    target.innerHTML = `<p class="muted-empty compact">Ahora mismo no hay fichajes recomendables. Los perfiles sin minutos recientes o con decisión Evitar quedan fuera del Top 5.</p>`;
+    const context = competitionMarketContext();
+    target.innerHTML = `<p class="muted-empty compact">${escapeHtml(context.biddingClosed ? context.message : "Ahora mismo no hay fichajes recomendables. Los perfiles sin minutos recientes o con decisión Evitar quedan fuera del Top 5.")}</p>`;
     return;
   }
   target.innerHTML = top.map((player, index) => {
@@ -1304,13 +1367,14 @@ const renderMarketDecisionCenter = (players) => {
     target.innerHTML = `<p class="muted-empty compact">Carga o actualiza el mercado para ver acciones recomendadas.</p>`;
     return;
   }
+  const competitionContext = competitionMarketContext();
   const lanes = [
     ["buy", "Fichar", "Prioridad real"],
     ["limited", "Pujar con límite", "Interesantes sin calentarse"],
     ["watch", "Vigilar", "Esperar precio o datos"],
     ["avoid", "Evitar", "Riesgo o no pujables"]
   ];
-  target.innerHTML = lanes.map(([type, title, subtitle]) => {
+  target.innerHTML = `${competitionContext.known ? `<p class="muted-empty compact">${escapeHtml(competitionContext.message)}</p>` : ""}` + lanes.map(([type, title, subtitle]) => {
     const lanePlayers = players.filter((player) => player.marketDecision?.type === type).slice(0, 4);
     return `
       <article class="decision-lane ${type}">
@@ -5052,12 +5116,14 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
   const hasMaximumBid = maximumBid !== null && maximumBid >= 0;
   const ownBid = playerHasOwnBid(player);
   const recent = player.recentForm || null;
+  const competitionContext = competitionMarketContext();
+  const budgetGuard = earlySeasonBudgetGuard(player, score, competitionContext);
   const unavailableBlocked = player.health?.status === "suspended"
     || player.health?.status === "injured"
     || intelligence.noNextMatch;
   const recentBlocked = Boolean(recent?.noRecentMinutes);
   const maximumBidBlocked = !ownBid && hasMaximumBid && price > maximumBid;
-  const hardBlocked = unavailableBlocked || recentBlocked || maximumBidBlocked;
+  const hardBlocked = unavailableBlocked || recentBlocked || maximumBidBlocked || competitionContext.biddingClosed || budgetGuard.blocksBid;
   let type = "watch";
   const reasons = [];
 
@@ -5076,15 +5142,20 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
   }
   if (recent?.cold && type === "buy") type = "limited";
   if (recent?.cold && type === "limited" && player.starter < 64) type = "watch";
+  if (budgetGuard.limitsBid && type === "buy") type = "limited";
+  if (budgetGuard.limitsBid && type === "limited" && budgetGuard.budgetShare >= 0.18) type = "watch";
   if (recent?.hot && type === "watch" && score >= 60 && player.starter >= 58 && intelligence.contextualRisk < 45) {
     type = "limited";
   }
 
-  if (ownBid) {
+  if (ownBid && !competitionContext.biddingClosed && !budgetGuard.blocksBid) {
     const canRecoverOwnBid = !unavailableBlocked && !recentBlocked && !relative?.cheapTrap && score >= 45;
     type = type === "avoid" && canRecoverOwnBid ? "limited" : type;
     reasons.push(`Ya tienes puja activa por ${formatFinanceMoney(playerOwnBidAmount(player))}.`);
   }
+  if (competitionContext.biddingClosed) reasons.push(competitionContext.message);
+  else if (budgetGuard.blocksBid) reasons.push(`Operación top bloqueada: compromete ${Math.round(budgetGuard.budgetShare * 100)}% del presupuesto en las primeras jornadas.`);
+  else if (budgetGuard.limitsBid) reasons.push(`Puja limitada: ${budgetGuard.message} Conviene reservar liquidez.`);
   if (!ownBid && hasMaximumBid && price > maximumBid) reasons.push(`No entra en tu puja máxima actual (${formatFinanceMoney(maximumBid)}).`);
   if (player.health?.status === "suspended") reasons.push("Sancionado: no debe ser prioritario.");
   if (player.health?.status === "injured") reasons.push("Lesionado: riesgo alto inmediato.");
@@ -5108,7 +5179,9 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
     const demandBoost = Math.min(0.05, Number(player.bidCount || player.rivalBidCount || 0) * 0.012);
     const qualityBoost = clamp((score - 62) / 500, -0.035, 0.07);
     const scarcityBoost = relative?.scarceFit ? 0.025 : 0;
-    const riskDiscount = intelligence.contextualRisk / 1400 + (player.health?.status === "doubtful" ? 0.035 : 0);
+    const riskDiscount = intelligence.contextualRisk / 1400
+      + (player.health?.status === "doubtful" ? 0.035 : 0)
+      + (budgetGuard.limitsBid ? 0.05 : 0);
     const baseMultiplier = type === "buy" ? 1.06 : type === "limited" ? 1.015 : 1;
     recommendedBid = roundBidAmount(price * (baseMultiplier + demandBoost + qualityBoost + scarcityBoost - riskDiscount));
     recommendedBid = Math.max(price, recommendedBid);
@@ -5134,7 +5207,8 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
     `Precio ${formatFinanceMoney(price)}`,
     type === "avoid" ? "No pujar ahora" : `Puja recomendada ${formatFinanceMoney(recommendedBid)}`,
     reasonableLimit ? `Tope ${formatFinanceMoney(reasonableLimit)}` : null,
-    hasMaximumBid ? `Tu máximo ${formatFinanceMoney(maximumBid)}` : null
+    hasMaximumBid ? `Tu máximo ${formatFinanceMoney(maximumBid)}` : null,
+    budgetGuard.message || null
   ].filter(Boolean);
   const fit = [
     `${squadFitLabel(player.squadFitScore)} (${player.squadFitScore}/100)`,
@@ -5154,6 +5228,8 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
     type,
     recommendedBid,
     reasonableLimit,
+    competitionContext,
+    budgetGuard,
     reasons: reasons.slice(0, 4),
     summary: reasons[0] || decisionLabels[type].label,
     sporting,

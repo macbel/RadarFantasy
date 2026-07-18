@@ -194,6 +194,7 @@ if (decisionOrdered[0].id !== "limited-low") {
 
 const previousFixtureCompetition = state.competition;
 const previousLeagueFixtures = state.leagueFixtures;
+const previousFinanceForCalendar = { ...state.finance };
 
 if (!isBiwengerStaleEntityError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 404): Entity not found"))
   || isBiwengerAuthenticationError(new Error("Biwenger no ha aceptado la peticion privada (HTTP 404): Entity not found"))
@@ -235,6 +236,45 @@ if (worldCupAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(
 if (!fixtureDataNeedsRefresh({ schemaVersion: 4, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
   || fixtureDataNeedsRefresh({ schemaVersion: 5, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
   throw new Error("Fixture cache freshness must invalidate old schemas without refetching a current complete snapshot");
+}
+
+const premiumDecisionInput = {
+  id: "calendar-premium",
+  name: "Premium calendario",
+  position: "DL",
+  price: 25000000,
+  starter: 90,
+  health: { status: "available" },
+  recentForm: { score: 80, hot: false }
+};
+const decisionIntel = { noNextMatch: false, role: "Titular inmediato", contextualRisk: 10, expectedPoints: 7, calendar: { label: "calendario favorable", score: 70 }, revaluationScore: 60 };
+state.finance.balance = 100000000;
+state.finance.teamValue = 0;
+state.finance.maximumBid = 100000000;
+state.biwengerOperations = { offers: [] };
+state.leagueFixtures = {
+  events: Array.from({ length: 5 }, (_, index) => ({
+    id: "final-round-" + index,
+    timestamp: futureTimestamp + index * 3600,
+    round: "Jornada 38",
+    home: { name: "Equipo " + index }, away: { name: "Rival " + index }
+  }))
+};
+const finalRoundDecision = marketDecisionForPlayer(premiumDecisionInput, 88, decisionIntel, {}, 30000000);
+if (!competitionMarketContext().biddingClosed || finalRoundDecision.type !== "avoid" || finalRoundDecision.recommendedBid !== 0) {
+  throw new Error("Final matchday must close new bid recommendations: " + JSON.stringify(finalRoundDecision));
+}
+state.leagueFixtures = {
+  events: [2, 3, 4].flatMap((round) => Array.from({ length: 4 }, (_, index) => ({
+    id: "early-" + round + "-" + index,
+    timestamp: futureTimestamp + (round - 2) * 7 * 86400 + index * 3600,
+    round: "Jornada " + round,
+    home: { name: "Equipo " + index }, away: { name: "Rival " + index }
+  })))
+};
+const earlySeasonDecision = marketDecisionForPlayer(premiumDecisionInput, 88, decisionIntel, {}, 30000000);
+if (!competitionMarketContext().earlySeason || earlySeasonDecision.type !== "avoid" || earlySeasonDecision.recommendedBid !== 0) {
+  throw new Error("Early season must protect budget from premium 20% bids: " + JSON.stringify(earlySeasonDecision));
 }
 
 state.leagueFixtures.eliminatedTeams = ["Japón"];
@@ -322,6 +362,7 @@ if (strongUnmatched.marketIntelligence.noNextMatch || !strongUnmatched.marketInt
 }
 state.competition = previousFixtureCompetition;
 state.leagueFixtures = previousLeagueFixtures;
+state.finance = { ...state.finance, ...previousFinanceForCalendar };
 
 const ocrSample = [
   "Mercado",

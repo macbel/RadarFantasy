@@ -69,16 +69,16 @@ if (rewardInputBlock.includes("renderBidSaleAssistant") || rewardInputBlock.incl
 }
 
 const initBlock = js.slice(js.indexOf("const init = () =>"), js.indexOf("init();"));
-if (initBlock.includes("setInterval") || initBlock.includes("refreshStartupDataInBackground(") || initBlock.includes("syncTeamTrackingFromServer()")) {
-  throw new Error("Startup must not trigger automatic remote refreshes");
+if (initBlock.includes("setInterval") || !initBlock.includes("refreshStartupDataInBackground(") || initBlock.includes("syncTeamTrackingFromServer()")) {
+  throw new Error("Startup must refresh the active league once while avoiding periodic polling and unrelated remote work");
 }
 
 if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none") || !css.includes(".data-sync-cancel") || !css.includes("pointer-events: auto")) {
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=112') || !sw.includes('radar-fantasy-shell-v63')) {
-  throw new Error("The manual-refresh build must invalidate the previous cached application shell");
+if (!html.includes('app.js?v=113') || !sw.includes('radar-fantasy-shell-v64')) {
+  throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
 if (!html.includes('id="interaction-wait-popup"') || !js.includes("beginInteractionWait") || !css.includes(".interaction-wait-popup")) {

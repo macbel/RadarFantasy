@@ -3347,6 +3347,8 @@ function sanitize_league_payload(array $payload): array
         'cover' => sanitize_media_url($payload['cover'] ?? null),
         'biwengerLeagueId' => isset($payload['biwengerLeagueId']) ? (int)$payload['biwengerLeagueId'] : null,
         'editableLineup' => sanitize_editable_lineup($payload['editableLineup'] ?? null),
+        'leagueOverview' => is_array($payload['leagueOverview'] ?? null) ? $payload['leagueOverview'] : null,
+        'leagueFixtures' => is_array($payload['leagueFixtures'] ?? null) ? $payload['leagueFixtures'] : null,
         'favorites' => $sanitizePlayers(array_slice((array)($payload['favorites'] ?? []), 0, 100)),
         'favoritesUpdatedAt' => (($favoritesUpdatedAt = strtotime((string)($payload['favoritesUpdatedAt'] ?? ''))) !== false)
             ? gmdate('c', $favoritesUpdatedAt)

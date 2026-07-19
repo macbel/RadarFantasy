@@ -1,8 +1,12 @@
-# Version 3.8.14
+# Version 3.8.15
 
-Fecha de publicación: 2026-07-14
+Fecha de publicación: 2026-07-19
 
 ## Notas de versión
+
+- Al abrir, la app muestra la última copia disponible y actualiza automáticamente equipo, mercado, calendario y centro de liga cuando Biwenger está conectado.
+- "Actualizar todo" valida cada paso y conserva los últimos datos correctos si una operación falla.
+- Clasificación y calendario se guardan por liga, tanto en el dispositivo como en la API, para poder abrir el centro de liga sin conexión.
 
 - Noticias de equipos con selector persistente por fuente y máximo de cinco titulares por fuente, ordenados por actualidad.
 - Consulta directa de FutbolFantasy con sus cabeceras específicas en el feed de equipos.

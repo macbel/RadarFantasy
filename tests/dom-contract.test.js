@@ -4,6 +4,7 @@ const normalizeEol = (value) => value.replace(/\r\n/g, "\n");
 const html = normalizeEol(fs.readFileSync("index.html", "utf8"));
 const js = normalizeEol(fs.readFileSync("app.js", "utf8"));
 const php = normalizeEol(fs.readFileSync("api/index.php", "utf8"));
+const authPhp = normalizeEol(fs.readFileSync("api/auth.php", "utf8"));
 const css = normalizeEol(fs.readFileSync("styles.css", "utf8"));
 const sw = normalizeEol(fs.readFileSync("sw.js", "utf8"));
 const androidUpdater = fs.readFileSync("android/app/src/main/java/com/fantasymarketscout/app/AppUpdaterPlugin.java", "utf8");
@@ -69,7 +70,7 @@ if (rewardInputBlock.includes("renderBidSaleAssistant") || rewardInputBlock.incl
 }
 
 const initBlock = js.slice(js.indexOf("const init = () =>"), js.indexOf("init();"));
-if (initBlock.includes("setInterval") || !initBlock.includes("refreshStartupDataInBackground(") || initBlock.includes("syncTeamTrackingFromServer()")) {
+if (initBlock.includes("setInterval") || !js.includes("refreshStartupDataInBackground(") || initBlock.includes("syncTeamTrackingFromServer()")) {
   throw new Error("Startup must refresh the active league once while avoiding periodic polling and unrelated remote work");
 }
 
@@ -77,7 +78,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=113') || !sw.includes('radar-fantasy-shell-v64')) {
+if (!html.includes('app.js?v=119') || !sw.includes('radar-fantasy-shell-v70')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -189,6 +190,24 @@ if (!html.includes('id="refresh-all-settings"') || !html.includes('id="refresh-l
   throw new Error("Settings must expose manual refresh controls for league data");
 }
 
+const refreshAllBlock = js.slice(js.indexOf("const refreshAllSettingsManually"), js.indexOf("const handleNavigationButtonClick"));
+if (!refreshAllBlock.includes("syncSelectedLeagueWithBiwenger")
+  || !refreshAllBlock.includes("requestedBiwengerLeagueId")
+  || !refreshAllBlock.includes("refreshTeamNews({ force: true })")
+  || !refreshAllBlock.includes("refreshFavoritesAll({ force: true })")
+  || !refreshAllBlock.includes("refreshTrackedTeamFeed({ force: true })")
+  || !refreshAllBlock.includes("refreshLeagueCenterSettingsManually")
+  || !refreshAllBlock.includes("refreshDailyPlanSettingsManually")) {
+  throw new Error("Actualizar todo must refresh every league-backed section and news feed");
+}
+
+if (!js.includes("const startupLeagueSelectionReady")
+  || !js.includes("state.auth.authenticated")
+  || !js.includes("Number(activeLeague()?.biwengerLeagueId || 0) > 0")
+  || !js.includes('refreshAllSettingsManually({ reason: "startup" })')) {
+  throw new Error("Startup full refresh must wait for platform login and a selected Biwenger league");
+}
+
 const navigationHandlerBlock = js.slice(js.indexOf("const handleNavigationButtonClick"), js.indexOf("const initNavigation"));
 if (navigationHandlerBlock.includes("loadFavoriteCatalog({ force: true })") || navigationHandlerBlock.includes("loadLeagueOverview()") || navigationHandlerBlock.includes("refreshTrackedTeamFeed({ force: false })")) {
   throw new Error("Navigating between views must not trigger new data refreshes");
@@ -207,8 +226,8 @@ if (html.indexOf('id="market-refresh-inline"') > html.indexOf('id="market-manual
   throw new Error("Refresh and team action buttons must stay outside the optional manual-entry frames");
 }
 
-if (!html.includes('data-fantasy-settings-tab="biwenger"') || !html.includes('data-fantasy-settings-tab="laliga"') || !html.includes('data-fantasy-settings-tab="mister"')) {
-  throw new Error("Settings must separate each fantasy platform into its own section");
+if (!html.includes('data-fantasy-settings-tab="biwenger"') || !html.includes('data-fantasy-settings-tab="mister"') || html.includes('data-fantasy-settings-tab="laliga"')) {
+  throw new Error("Settings must keep Biwenger and remove the LaLiga Fantasy integration");
 }
 
 if (!js.includes("activateFantasySettingsTab") || !js.includes("FANTASY_SETTINGS_TAB_KEY")) {
@@ -219,8 +238,28 @@ if (!html.includes('id="active-league-provider"') || !js.includes("leagueFantasy
   throw new Error("Every saved league must expose and persist its fantasy platform identity");
 }
 
-if (!html.includes('id="laliga-import-league-name"') || !html.includes('id="laliga-create-import-league"') || !html.includes('id="laliga-open-manual-import"') || !js.includes("createLaLigaImportLeague") || !js.includes('createLocalLeague(name, "laliga")')) {
-  throw new Error("LaLiga Fantasy must provide a credential-free manual import flow");
+if (html.includes('id="laliga-import-league-name"') || js.includes("createLaLigaImportLeague") || js.includes('createLocalLeague(name, "laliga")')) {
+  throw new Error("LaLiga Fantasy integration must stay removed");
+}
+
+if (!html.includes('id="auth-gate"') || !html.includes('id="admin-view"') || !js.includes("refreshPlatformAuth") || !authPhp.includes("password_hash") || !authPhp.includes("auth_handle_admin_routes")) {
+  throw new Error("Platform login and user administration must remain available");
+}
+
+if (!authPhp.includes("auth_bootstrap_from_environment") || !authPhp.includes("auth_bootstrap_allowed") || !authPhp.includes("FMS_ALLOW_ADMIN_BOOTSTRAP")) {
+  throw new Error("Administrator bootstrap must be server-controlled and unavailable to arbitrary APK clients");
+}
+
+if (!js.includes("syncBiwengerLeagueCatalog") || !js.includes('response = await apiFetch("/api/leagues")') || !js.includes("connectedLeague?.id") || !php.includes("/leagues/import-biwenger")) {
+  throw new Error("Biwenger leagues must be imported automatically into the league selector");
+}
+
+if (!html.includes('id="live-view-nav-label"') || !html.includes('id="league-live-panel"') || !html.includes('id="worldcup-live-panel"') || !js.includes("isWorldCupLeague") || !js.includes('endpoint = "/api/biwenger/fixtures"')) {
+  throw new Error("The live view must adapt its title and fixtures to the selected Biwenger competition");
+}
+
+if (!html.includes('id="team-news-list"') || !html.includes('id="refresh-team-news"') || !js.includes("refreshTeamNews") || !php.includes("/team-news")) {
+  throw new Error("My Team must expose player-specific Fantasy news with direct source links");
 }
 
 if (!html.includes('id="market-analysis-center"') || !html.includes('data-analysis-tab="plan"') || !html.includes('data-analysis-panel="history"')) {

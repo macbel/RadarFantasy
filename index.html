@@ -10,10 +10,47 @@
     <meta name="theme-color" content="#081317" />
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=68" />
+    <link rel="stylesheet" href="styles.css?v=69" />
   </head>
   <body>
-    <div class="app-shell">
+    <main class="auth-gate" id="auth-gate" aria-label="Acceso a Radar Fantasy">
+      <section class="auth-card">
+        <img class="auth-logo" src="assets/app-icon.png?v=5" alt="" />
+        <p class="eyebrow">Radar Fantasy</p>
+        <h1 id="auth-title">Iniciar sesi&oacute;n</h1>
+        <p class="auth-copy" id="auth-copy">Accede con tu cuenta de la plataforma.</p>
+
+        <form id="login-form" class="auth-form">
+          <label>Correo electr&oacute;nico<input id="login-email" type="email" autocomplete="username" required /></label>
+          <label>Contrase&ntilde;a<input id="login-password" type="password" autocomplete="current-password" required /></label>
+          <button class="primary-button" type="submit">Entrar</button>
+          <button class="auth-link" type="button" id="show-forgot-password">He olvidado mi contrase&ntilde;a</button>
+        </form>
+
+        <form id="bootstrap-form" class="auth-form" hidden>
+          <p class="auth-notice">Crea la primera cuenta. Ser&aacute; la cuenta administradora principal.</p>
+          <label>Nombre<input id="bootstrap-name" type="text" autocomplete="name" required /></label>
+          <label>Correo electr&oacute;nico<input id="bootstrap-email" type="email" autocomplete="email" required /></label>
+          <label>Contrase&ntilde;a<input id="bootstrap-password" type="password" autocomplete="new-password" minlength="10" required /></label>
+          <button class="primary-button" type="submit">Crear cuenta administradora</button>
+        </form>
+
+        <form id="forgot-form" class="auth-form" hidden>
+          <label>Correo electr&oacute;nico<input id="forgot-email" type="email" autocomplete="email" required /></label>
+          <button class="primary-button" type="submit">Enviar enlace</button>
+          <button class="auth-link" type="button" id="back-to-login">Volver al acceso</button>
+        </form>
+
+        <form id="reset-form" class="auth-form" hidden>
+          <label>Nueva contrase&ntilde;a<input id="reset-password" type="password" autocomplete="new-password" minlength="10" required /></label>
+          <label>Repetir contrase&ntilde;a<input id="reset-password-confirm" type="password" autocomplete="new-password" minlength="10" required /></label>
+          <button class="primary-button" type="submit">Guardar nueva contrase&ntilde;a</button>
+        </form>
+        <div class="ocr-status auth-status" id="auth-status" role="status" aria-live="polite"><span class="status-dot"></span><span>Comprobando sesi&oacute;n...</span></div>
+      </section>
+    </main>
+
+    <div class="app-shell" id="app-shell" hidden>
       <aside class="sidebar" aria-label="Navegacion principal">
         <div class="mobile-sidebar-header">
           <div>
@@ -62,13 +99,23 @@
           </button>
           <button class="nav-item nav-secondary" type="button" data-view="videos">
             <span class="icon icon-video" aria-hidden="true"></span>
-            Mundial en vivo
+            <span id="live-view-nav-label">La liga en vivo</span>
           </button>
           <button class="nav-item nav-secondary" type="button" data-view="settings">
             <span class="icon icon-settings" aria-hidden="true"></span>
             Ajustes
           </button>
+          <button class="nav-item nav-secondary" type="button" data-view="admin">
+            <span class="icon icon-team" aria-hidden="true"></span>
+            Usuarios
+          </button>
         </nav>
+
+        <div class="sidebar-block account-summary">
+          <strong id="account-name">Usuario</strong>
+          <span id="account-role">Cuenta</span>
+          <button class="ghost-button" type="button" id="platform-logout">Cerrar sesi&oacute;n</button>
+        </div>
 
         <div class="sidebar-block">
           <label for="league-select">Liga activa</label>
@@ -85,15 +132,8 @@
               <option value="">Cargando ligas...</option>
             </select>
           </div>
-          <div class="league-create">
-            <input id="league-name" type="text" maxlength="60" placeholder="Nombre de liga" />
-            <button class="icon-button" type="button" id="create-league" aria-label="Crear liga" title="Crear liga">+</button>
-          </div>
-          <button class="ghost-button sidebar-action-button" type="button" id="delete-league">
-            <span class="icon icon-clear" aria-hidden="true"></span>
-            Eliminar liga
-          </button>
-          <span class="mini-status" id="league-status">Guardado local activo.</span>
+          <div hidden aria-hidden="true"><input id="league-name" /><button id="create-league" type="button"></button><button id="delete-league" type="button"></button></div>
+          <span class="mini-status" id="league-status">Las ligas aparecer&aacute;n al conectar Biwenger.</span>
         </div>
 
         <div class="sidebar-block">
@@ -551,6 +591,26 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
               </div>
             </div>
           </section>
+          <section class="favorite-current-panel team-news-panel" aria-labelledby="team-news-title">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Actualidad Fantasy de tu plantilla</p>
+                <h3 id="team-news-title">Noticias</h3>
+                <p>Lesiones, sanciones, dudas y cambios de titularidad relacionados con los jugadores de tu equipo.</p>
+              </div>
+              <button class="ghost-button" type="button" id="refresh-team-news">
+                <span class="icon icon-refresh" aria-hidden="true"></span>
+                Actualizar noticias
+              </button>
+            </div>
+            <div class="ocr-status" id="team-news-status" role="status" aria-live="polite">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>Carga tu equipo para buscar noticias relevantes.</span>
+            </div>
+            <div id="team-news-list" class="favorite-player-grid">
+              <p class="muted-empty">No hay jugadores en la plantilla activa.</p>
+            </div>
+          </section>
           <div id="team-detail-sheet" class="detail-sheet" hidden>
             <button class="detail-sheet-backdrop" type="button" id="close-team-detail-backdrop" aria-label="Cerrar detalle"></button>
             <div class="detail-sheet-dialog" id="team-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="team-detail-title">
@@ -871,9 +931,22 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
           </section>
         </section>
 
-        <section class="view" id="videos-view" aria-label="Mundial en vivo">
+        <section class="view" id="videos-view" aria-label="La liga en vivo">
           <section class="video-highlights-layout">
-            <div class="video-highlights-panel">
+            <div class="video-highlights-panel" id="league-live-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Competición Biwenger</p>
+                  <h3 id="league-live-title">La liga en vivo</h3>
+                </div>
+                <button class="ghost-button" id="refresh-live-league" type="button">Actualizar partidos</button>
+              </div>
+              <p class="video-embed-note" id="league-live-note">Partidos actuales y próximos de la competición asociada a la liga Biwenger seleccionada.</p>
+              <div id="live-league-fixtures" class="operations-list">
+                <p class="muted-empty">Selecciona una liga Biwenger para cargar sus partidos.</p>
+              </div>
+            </div>
+            <div class="video-highlights-panel" id="worldcup-live-panel" hidden>
               <div class="section-heading">
                 <div>
                   <p class="eyebrow">ScoreBat</p>
@@ -900,6 +973,29 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
           </section>
         </section>
 
+        <section class="view" id="admin-view" aria-label="Administraci&oacute;n de usuarios">
+          <section class="settings-layout admin-layout">
+            <div class="settings-panel">
+              <div class="section-heading"><div><p class="eyebrow">Administraci&oacute;n</p><h3>Usuarios de la plataforma</h3></div><button class="primary-button" id="new-platform-user" type="button">Nuevo usuario</button></div>
+              <div class="ocr-status" id="admin-users-status" role="status" aria-live="polite"><span class="status-dot"></span><span>Gestiona altas, bloqueos y permisos.</span></div>
+              <div class="admin-users-list" id="admin-users-list"></div>
+            </div>
+            <div class="settings-panel">
+              <div class="section-heading"><div><p class="eyebrow">Cuenta</p><h3 id="admin-user-form-title">Nuevo usuario</h3></div></div>
+              <form id="admin-user-form" class="admin-user-form">
+                <input id="admin-user-id" type="hidden" />
+                <label>Nombre<input id="admin-user-name" type="text" required /></label>
+                <label>Correo electr&oacute;nico<input id="admin-user-email" type="email" required /></label>
+                <label>Contrase&ntilde;a <small>(obligatoria al crear; vac&iacute;a conserva la actual)</small><input id="admin-user-password" type="password" minlength="10" autocomplete="new-password" /></label>
+                <label>Tipo de cuenta<select id="admin-user-role"><option value="user">Usuario</option><option value="admin">Administrador</option></select></label>
+                <label class="toggle-row"><input id="admin-user-blocked" type="checkbox" /><span>Cuenta bloqueada</span></label>
+                <fieldset class="permission-grid" id="admin-user-permissions"><legend>Secciones permitidas</legend></fieldset>
+                <div class="biwenger-actions"><button class="primary-button" type="submit">Guardar usuario</button><button class="ghost-button" type="button" id="cancel-platform-user">Cancelar</button></div>
+              </form>
+            </div>
+          </section>
+        </section>
+
         <section class="view" id="settings-view" aria-label="Ajustes y hoja de ruta">
           <section class="settings-layout">
             <div class="roadmap-panel">
@@ -915,12 +1011,8 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                   <p>Disponible: cuenta, mercado, plantilla, pujas, ventas, saldo y alineaci&oacute;n.</p>
                 </div>
                 <div>
-                  <strong>LaLiga Fantasy</strong>
-                  <p>Siguiente integraci&oacute;n: comenzaremos por lectura de plantilla, mercado y clasificaci&oacute;n.</p>
-                </div>
-                <div>
                   <strong>Mister Fantasy</strong>
-                  <p>Planificada sobre la nueva capa com&uacute;n de proveedores fantasy.</p>
+                  <p>Integraci&oacute;n planificada para una fase posterior.</p>
                 </div>
               </div>
             </div>
@@ -953,9 +1045,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <div class="fantasy-platform-tabs" role="tablist" aria-label="Plataformas fantasy">
                   <button class="fantasy-platform-tab active" type="button" role="tab" aria-selected="true" data-fantasy-settings-tab="biwenger">
                     <strong>Biwenger</strong><span>Disponible</span>
-                  </button>
-                  <button class="fantasy-platform-tab" type="button" role="tab" aria-selected="false" data-fantasy-settings-tab="laliga">
-                    <strong>LaLiga Fantasy</strong><span>Importaci&oacute;n manual</span>
                   </button>
                   <button class="fantasy-platform-tab" type="button" role="tab" aria-selected="false" data-fantasy-settings-tab="mister">
                     <strong>Mister Fantasy</strong><span>Planificada</span>
@@ -1004,27 +1093,10 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <p class="settings-help">Al conectar correctamente se recuerdan la cuenta y la sesi&oacute;n en este dispositivo. La contrase&ntilde;a no se guarda.</p>
               </div>
                 </section>
-                <section class="fantasy-platform-panel" role="tabpanel" data-fantasy-settings-panel="laliga" hidden>
-                  <div class="integration-card fantasy-provider-card">
-                    <div class="provider-card-heading"><div><p class="eyebrow">LaLiga Fantasy</p><h3>Importa tus datos desde la app oficial</h3></div><span class="provider-status available">Disponible</span></div>
-                    <p>Crea una liga de importaci&oacute;n y carga una captura o pega el texto de tu mercado y plantilla. Los datos se quedan en Radar Fantasy: no pedimos ni guardamos tus credenciales de LaLiga.</p>
-                    <div class="provider-capabilities"><span>Mercado</span><span>Plantilla</span><span>Capturas</span><span>Datos manuales</span></div>
-                    <div class="biwenger-form">
-                      <label>Nombre de tu liga
-                        <input id="laliga-import-league-name" type="text" maxlength="80" autocomplete="off" placeholder="Ej.: Liga de amigos" />
-                      </label>
-                    </div>
-                    <div class="biwenger-actions">
-                      <button class="primary-button" type="button" id="laliga-create-import-league"><span class="icon icon-team" aria-hidden="true"></span>Crear liga de importaci&oacute;n</button>
-                      <button class="ghost-button" type="button" id="laliga-open-manual-import"><span class="icon icon-image" aria-hidden="true"></span>Importar mercado</button>
-                    </div>
-                    <div class="ocr-status" id="laliga-import-status" role="status" aria-live="polite"><span class="status-dot" aria-hidden="true"></span><span>Empieza creando una liga de importaci&oacute;n de LaLiga Fantasy.</span></div>
-                  </div>
-                </section>
                 <section class="fantasy-platform-panel" role="tabpanel" data-fantasy-settings-panel="mister" hidden>
                   <div class="integration-card fantasy-provider-card coming-soon">
                     <div class="provider-card-heading"><div><p class="eyebrow">Mister Fantasy</p><h3>Integraci&oacute;n planificada</h3></div><span class="provider-status planned">Planificada</span></div>
-                    <p>Se conectar&aacute; despu&eacute;s de validar la capa com&uacute;n con LaLiga Fantasy, reutilizando mercado, plantilla, cl&aacute;usulas y operaciones.</p>
+                    <p>Se estudiar&aacute; en una fase posterior, reutilizando mercado, plantilla, cl&aacute;usulas y operaciones.</p>
                     <div class="provider-capabilities"><span>Mercado</span><span>Plantilla</span><span>Cl&aacute;usulas</span><span>Alineaci&oacute;n</span></div>
                   </div>
                 </section>
@@ -1036,7 +1108,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     <p class="eyebrow">Aplicaci&oacute;n m&oacute;vil</p>
                     <h3>Actualizaciones</h3>
                   </div>
-                  <span class="app-version-badge" id="app-current-version">v3.8.15</span>
+                  <span class="app-version-badge" id="app-current-version">v3.9.2</span>
                 </div>
                 <p class="settings-help">La app comprueba autom&aacute;ticamente si existe una versi&oacute;n nueva. En Android te llevar&aacute; a instalar el APK; el sistema pedir&aacute; tu confirmaci&oacute;n.</p>
                 <div class="biwenger-actions">
@@ -1361,6 +1433,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="data.js?v=14"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=113"></script>
+    <script src="app.js?v=119"></script>
   </body>
 </html>

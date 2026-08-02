@@ -9,12 +9,18 @@ session_set_cookie_params([
 ]);
 session_start();
 
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'auth.php';
+
 $root = dirname(__DIR__);
 $dbDir = $root . DIRECTORY_SEPARATOR . '.fantasy-db';
 $assetsDir = __DIR__ . DIRECTORY_SEPARATOR . 'media-db';
+$usersDbPath = $dbDir . DIRECTORY_SEPARATOR . 'users.php.json';
+$passwordResetsPath = $dbDir . DIRECTORY_SEPARATOR . 'password-resets.php.json';
+$accountScope = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_SESSION['radarUserId'] ?? 'guest')) ?: 'guest';
+$accountDbDir = $dbDir . DIRECTORY_SEPARATOR . 'accounts' . DIRECTORY_SEPARATOR . $accountScope;
 $playerDbPath = $dbDir . DIRECTORY_SEPARATOR . 'players.php.json';
-$leaguesDbPath = $dbDir . DIRECTORY_SEPARATOR . 'leagues.php.json';
-$teamTrackingDbPath = $dbDir . DIRECTORY_SEPARATOR . 'team-tracking.json';
+$leaguesDbPath = $accountDbDir . DIRECTORY_SEPARATOR . 'leagues.php.json';
+$teamTrackingDbPath = $accountDbDir . DIRECTORY_SEPARATOR . 'team-tracking.json';
 $biwengerSessionsPath = $dbDir . DIRECTORY_SEPARATOR . 'biwenger-sessions.json';
 $futbolFantasySessionsPath = $dbDir . DIRECTORY_SEPARATOR . 'futbolfantasy-sessions.json';
 $futbolFantasyCooldownPath = $dbDir . DIRECTORY_SEPARATOR . 'futbolfantasy-login-cooldown.json';
@@ -185,6 +191,26 @@ if ($requestMethod === 'OPTIONS') {
 }
 
 $route = request_path();
+
+auth_bootstrap_from_environment($usersDbPath);
+auth_handle_public_routes($route, $requestMethod, $usersDbPath, $passwordResetsPath);
+if ($route === '/healthz' && $requestMethod === 'GET') {
+    send_json(200, [
+        'ok' => true,
+        'criteriaVersion' => $sourceCriteriaVersion,
+        'apiBase' => api_base_url(),
+        'apiFootballConfigured' => api_football_key() !== '',
+        'scorebatConfigured' => scorebat_token() !== ''
+    ]);
+}
+$currentPlatformUser = auth_require_user($usersDbPath);
+auth_handle_admin_routes($route, $requestMethod, $usersDbPath, $currentPlatformUser);
+if (strpos($route, '/team-tracking') === 0) auth_require_permission($currentPlatformUser, 'teamTracking');
+if ($route === '/favorite-news') auth_require_permission($currentPlatformUser, 'favorites');
+if ($route === '/team-news') auth_require_permission($currentPlatformUser, 'team');
+if (in_array($route, ['/fixtures', '/biwenger/league', '/biwenger/fixtures', '/biwenger/live-round', '/biwenger/live-round-debug', '/biwenger/rival-team'], true)) {
+    auth_require_permission($currentPlatformUser, 'league');
+}
 
 if ($route === '/source-status' && $requestMethod === 'GET') {
     $status = source_status_payload($playerDb, $playerCacheMs, $sourceCriteriaVersion);
@@ -791,6 +817,51 @@ if ($route === '/biwenger/rival-team' && $requestMethod === 'POST') {
     }
 }
 
+if ($route === '/leagues/import-biwenger' && $requestMethod === 'POST') {
+    $sessionState = require_biwenger_session();
+    $available = array_values((array)($sessionState['availableLeagues'] ?? []));
+    if (!$available) send_json(400, ['error' => 'Biwenger no ha devuelto ligas para esta cuenta']);
+    $now = gmdate('c');
+    foreach ($available as $remote) {
+        $remoteId = (int)($remote['id'] ?? 0);
+        if ($remoteId <= 0) continue;
+        $id = 'biwenger-' . $remoteId;
+        $existing = $leaguesDb['leagues'][$id] ?? null;
+        if (!$existing) {
+            foreach ($leaguesDb['leagues'] as $candidateId => $candidate) {
+                if ((int)($candidate['biwengerLeagueId'] ?? 0) === $remoteId) {
+                    $id = (string)$candidateId;
+                    $existing = $candidate;
+                    break;
+                }
+            }
+        }
+        $isCurrent = $remoteId === (int)($sessionState['leagueId'] ?? 0);
+        $leaguesDb['leagues'][$id] = array_merge([
+            'id' => $id, 'createdAt' => $now, 'competition' => 'club', 'scoring' => 'mixed',
+            'marketPlayers' => [], 'teamPlayers' => [], 'teamDepartures' => [], 'favorites' => [],
+            'finance' => sanitize_finance_payload([]), 'weights' => sanitize_weights_payload([]),
+            'filters' => sanitize_filters_payload([]), 'preferences' => sanitize_preferences_payload([])
+        ], is_array($existing) ? $existing : [], [
+            'name' => trim((string)($remote['name'] ?? '')) ?: ('Liga Biwenger ' . $remoteId),
+            'fantasyProvider' => 'biwenger', 'biwengerLeagueId' => $remoteId,
+            'icon' => sanitize_media_url($remote['icon'] ?? null),
+            'cover' => sanitize_media_url($remote['cover'] ?? null),
+            'competition' => $isCurrent ? biwenger_competition_to_local((string)($sessionState['competition'] ?? '')) : ($existing['competition'] ?? 'club'),
+            'updatedAt' => $now
+        ]);
+        if ($isCurrent) $leaguesDb['activeLeagueId'] = $id;
+    }
+    foreach ($leaguesDb['leagues'] as $id => $league) {
+        $isEmptyPlaceholder = ($league['fantasyProvider'] ?? 'local') === 'local'
+            && trim((string)($league['name'] ?? '')) === 'Mi liga'
+            && empty($league['marketPlayers']) && empty($league['teamPlayers']);
+        if ($isEmptyPlaceholder && count($leaguesDb['leagues']) > 1) unset($leaguesDb['leagues'][$id]);
+    }
+    write_json_file($leaguesDbPath, $leaguesDb);
+    send_json(200, league_list_payload($leaguesDb));
+}
+
 if ($route === '/leagues' && $requestMethod === 'GET') {
     send_json(200, league_list_payload($leaguesDb));
 }
@@ -929,7 +1000,7 @@ if ($route === '/team-tracking/feed' && $requestMethod === 'GET') {
     }
 }
 
-if ($route === '/favorite-news' && $requestMethod === 'POST') {
+if (in_array($route, ['/favorite-news', '/team-news'], true) && $requestMethod === 'POST') {
     $payload = read_json_body();
     $players = isset($payload['players']) && is_array($payload['players']) ? array_slice($payload['players'], 0, 40) : [];
     $competition = ($payload['competition'] ?? '') === 'worldcup' ? 'worldcup' : 'club';
@@ -939,7 +1010,7 @@ if ($route === '/favorite-news' && $requestMethod === 'POST') {
     try {
         send_json(200, favorite_news_payload($players, max($sourceTimeoutSeconds, 8), $sourceHeaders, $strictTls, $competition));
     } catch (Throwable $error) {
-        send_json(502, ['error' => $error->getMessage() ?: 'No se pudieron refrescar las noticias de favoritos']);
+        send_json(502, ['error' => $error->getMessage() ?: 'No se pudieron refrescar las noticias de jugadores']);
     }
 }
 
@@ -1124,7 +1195,8 @@ function apply_cors_headers(): void
 function biwenger_device_key(): string
 {
     $key = trim((string)($_SERVER['HTTP_X_FMS_DEVICE_KEY'] ?? ''));
-    return preg_match('/^[a-zA-Z0-9_-]{24,160}$/', $key) ? hash('sha256', $key) : '';
+    $userId = trim((string)($_SESSION['radarUserId'] ?? 'guest'));
+    return preg_match('/^[a-zA-Z0-9_-]{24,160}$/', $key) ? hash('sha256', $userId . '|' . $key) : '';
 }
 
 function restore_biwenger_device_session(array $db): void
@@ -3274,7 +3346,12 @@ function sanitize_scoring($value): string
 function sanitize_fantasy_provider($value): string
 {
     $provider = strtolower(trim((string)$value));
-    return in_array($provider, ['biwenger', 'laliga', 'mister', 'local'], true) ? $provider : 'local';
+    return in_array($provider, ['biwenger', 'mister', 'local'], true) ? $provider : 'local';
+}
+
+function biwenger_competition_to_local(string $competition): string
+{
+    return preg_match('/world|mundial|selecc|copa del mundo/i', $competition) ? 'worldcup' : 'club';
 }
 
 function sanitize_editable_lineup($value): ?array
@@ -5256,6 +5333,11 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
     $result = [
         'ok' => true,
         'competition' => $tournament['name'],
+        'tournamentId' => (int)$tournament['id'],
+        'seasonId' => $seasonId > 0 ? $seasonId : null,
+        'seasonName' => $seasonId > 0
+            ? (string)(($seasons[0]['name'] ?? $seasons[0]['year'] ?? '') ?: '')
+            : '',
         'round' => $round,
         'events' => $events,
         'fetchedAtTs' => time(),
@@ -5839,6 +5921,8 @@ function api_football_player_recent_details(array $player, array $session, int $
     $playerId = (int)($apiPlayer['id'] ?? 0);
     if ($teamId <= 0 || $playerId <= 0) throw new RuntimeException('API-Football no ha devuelto equipo/jugador valido');
 
+    $historyLeague = $league;
+    $historyCandidate = $candidate;
     $fixturesPayload = api_football_get_json('/fixtures', [
         'team' => $teamId,
         'league' => (int)$league['id'],
@@ -5847,13 +5931,46 @@ function api_football_player_recent_details(array $player, array $session, int $
         'timezone' => 'Europe/Madrid'
     ], $timeoutSeconds, $headers, $strictTls);
     $fixtures = array_values(array_filter((array)($fixturesPayload['response'] ?? []), 'is_array'));
+    if (!$fixtures && (int)$league['season'] > 0) {
+        $previousLeague = $league;
+        $previousLeague['season'] = (int)$league['season'] - 1;
+        $previousCandidate = api_football_find_player($player, $previousLeague, $timeoutSeconds, $headers, $strictTls);
+        if ($previousCandidate) {
+            $previousPlayer = (array)($previousCandidate['player'] ?? []);
+            $previousStatistics = array_values(array_filter((array)($previousCandidate['statistics'] ?? []), 'is_array'));
+            $previousStat = (array)($previousStatistics[0] ?? []);
+            $previousTeam = (array)($previousStat['team'] ?? []);
+            $previousTeamId = (int)($previousTeam['id'] ?? 0);
+            $previousPlayerId = (int)($previousPlayer['id'] ?? 0);
+            if ($previousTeamId > 0 && $previousPlayerId > 0) {
+                $historyLeague = $previousLeague;
+                $historyCandidate = $previousCandidate;
+                $teamId = $previousTeamId;
+                $playerId = $previousPlayerId;
+                $team = $previousTeam;
+                $apiPlayer = $previousPlayer;
+                $fixturesPayload = api_football_get_json('/fixtures', [
+                    'team' => $teamId,
+                    'league' => (int)$historyLeague['id'],
+                    'season' => (int)$historyLeague['season'],
+                    'last' => 8,
+                    'timezone' => 'Europe/Madrid'
+                ], $timeoutSeconds, $headers, $strictTls);
+                $fixtures = array_values(array_filter((array)($fixturesPayload['response'] ?? []), 'is_array'));
+            }
+        }
+    }
     usort($fixtures, static fn($a, $b) => (int)($a['fixture']['timestamp'] ?? 0) <=> (int)($b['fixture']['timestamp'] ?? 0));
     $fixtures = array_slice($fixtures, -5);
 
     $recentMatches = [];
     foreach ($fixtures as $fixtureRow) {
         $summary = api_football_recent_match_from_fixture($fixtureRow, $playerId, $teamId, $timeoutSeconds, $headers, $strictTls, $dbDir);
-        if ($summary) $recentMatches[] = $summary;
+        if ($summary) {
+            $summary['seasonName'] = (string)$historyLeague['season'];
+            $summary['historyScope'] = (int)$historyLeague['season'] === (int)$league['season'] ? 'current-season' : 'previous-season';
+            $recentMatches[] = $summary;
+        }
     }
     if (!$recentMatches) throw new RuntimeException('API-Football no devuelve partidos recientes con estadisticas del jugador');
 
@@ -5865,7 +5982,9 @@ function api_football_player_recent_details(array $player, array $session, int $
             'teamId' => $teamId,
             'leagueId' => (int)$league['id'],
             'season' => (int)$league['season'],
-            'matchScore' => (int)($candidate['matchScore'] ?? 0)
+            'historySeason' => (int)$historyLeague['season'],
+            'historyFallbackUsed' => (int)$historyLeague['season'] !== (int)$league['season'],
+            'matchScore' => (int)($historyCandidate['matchScore'] ?? 0)
         ],
         'media' => [
             'playerImage' => (string)($apiPlayer['photo'] ?? ''),
@@ -8094,6 +8213,9 @@ function recent_match_summary(array $row): array
     $playedTeam = is_array($row['playedTeam'] ?? null) ? $row['playedTeam'] : [];
     $home = is_array($event['homeTeam'] ?? null) ? $event['homeTeam'] : [];
     $away = is_array($event['awayTeam'] ?? null) ? $event['awayTeam'] : [];
+    $season = is_array($event['season'] ?? null) ? $event['season'] : [];
+    $tournament = is_array($event['tournament'] ?? null) ? $event['tournament'] : [];
+    $uniqueTournament = is_array($tournament['uniqueTournament'] ?? null) ? $tournament['uniqueTournament'] : [];
     $playedId = (int)($playedTeam['id'] ?? $row['playedForId'] ?? 0);
     $opponent = null;
     if ($playedId > 0) {
@@ -8113,6 +8235,10 @@ function recent_match_summary(array $row): array
     return [
         'eventId' => $event['id'] ?? null,
         'date' => !empty($event['startTimestamp']) ? gmdate('Y-m-d', (int)$event['startTimestamp']) : null,
+        'seasonId' => isset($season['id']) ? (int)$season['id'] : null,
+        'seasonName' => (string)($season['name'] ?? $season['year'] ?? ''),
+        'tournamentId' => isset($uniqueTournament['id']) ? (int)$uniqueTournament['id'] : (isset($tournament['id']) ? (int)$tournament['id'] : null),
+        'tournamentName' => (string)($uniqueTournament['name'] ?? $tournament['name'] ?? ''),
         'opponent' => $opponent,
         'minutes' => $minutes,
         'minuteIn' => $inMinute,

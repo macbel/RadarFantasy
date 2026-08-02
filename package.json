@@ -1,10 +1,11 @@
 {
   "name": "radar-fantasy",
-  "version": "3.8.15",
+  "version": "3.9.2",
   "private": true,
   "description": "Scout de fichajes fantasy para web, Android e iOS 16+",
   "scripts": {
     "start": "node dev-server.js",
+    "start:php": "php -c php-local.ini -S 127.0.0.1:5173 dev-router.php",
     "test": "node tests\\dom-contract.test.js && node tests\\engine-smoke.test.js",
     "build:web": "node scripts/prepare-mobile-web.cjs",
     "mobile:copy": "npm run build:web && npx cap copy",

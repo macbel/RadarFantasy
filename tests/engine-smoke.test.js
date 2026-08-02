@@ -277,6 +277,30 @@ if (!competitionMarketContext().earlySeason || earlySeasonDecision.type !== "avo
   throw new Error("Early season must protect budget from premium 20% bids: " + JSON.stringify(earlySeasonDecision));
 }
 
+state.leagueFixtures = {
+  seasonId: 2026,
+  events: Array.from({ length: 4 }, (_, index) => ({
+    id: "opening-round-" + index,
+    timestamp: futureTimestamp + index * 3600,
+    round: "Jornada 1",
+    home: { name: "Equipo " + index }, away: { name: "Rival " + index },
+    homeScore: null,
+    awayScore: null
+  }))
+};
+const openingHistory = recentFormProfile({
+  sourceSummary: {
+    recentMatches: [{ provider: "biwenger", points: { biwenger: 0, mixed: 0 } }],
+    sourceRecentMatches: [
+      { provider: "sofascore", seasonId: 2025, seasonName: "2025/26", minutes: 90, played: true, points: { mixed: 7 } },
+      { provider: "sofascore", seasonId: 2025, seasonName: "2025/26", minutes: 82, played: true, points: { mixed: 8 } }
+    ]
+  }
+});
+if (competitionMarketContext().biddingClosed || !openingHistory.usesPreviousSeason || openingHistory.seasonLabel !== "2025/26" || openingHistory.matches !== 2 || openingHistory.average !== 7.5) {
+  throw new Error("Opening matchday must use the last previous-season sample: " + JSON.stringify(openingHistory));
+}
+
 state.leagueFixtures.eliminatedTeams = ["Japón"];
 const eliminatedMaeda = marketIntelligenceForPlayer({
   name: "Maeda",

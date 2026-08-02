@@ -2,11 +2,71 @@
 
 App para analizar mercados fantasy, empezando por Biwenger, con ranking de fichajes y apoyo de fuentes como SofaScore, FutbolFantasy y API-Football.
 
+## Cuentas y administración
+
+La aplicación exige iniciar sesión antes de mostrar cualquier sección. La APK nunca permite crear la cuenta administradora desde el dispositivo. El administrador inicial se crea de forma privada en el servidor y el asistente visual solo está habilitado en `localhost` para desarrollo.
+
+Antes de publicar la API configura temporalmente:
+
+```text
+FMS_ADMIN_NAME=Manolo
+FMS_ADMIN_EMAIL=tu-correo@dominio.es
+FMS_ADMIN_PASSWORD=UNA_CLAVE_SEGURA_DE_AL_MENOS_10_CARACTERES
+FMS_ALLOW_ADMIN_BOOTSTRAP=0
+```
+
+En la primera petición, el backend crea la cuenta con `password_hash`. Después de comprobar que puedes iniciar sesión, elimina `FMS_ADMIN_PASSWORD` del entorno del servidor. Si no hay administrador configurado, la APK muestra únicamente el acceso y no ofrece registrar uno.
+
+El administrador puede entrar en `Usuarios` para:
+
+- crear cuentas;
+- cambiar nombre, correo y contraseña;
+- conceder acceso independiente a Equipo, Mercado, Centro de liga, Favoritos, Equipos, Comparador, Vídeos y Ajustes;
+- bloquear o desbloquear cuentas;
+- eliminar usuarios.
+
+La aplicación impide eliminar, bloquear o degradar al último administrador activo.
+
+### Recuperación de contraseña
+
+Configura en el backend PHP:
+
+```text
+FMS_APP_URL=https://alufi.es/fms
+FMS_MAIL_FROM=no-reply@alufi.es
+```
+
+`FMS_APP_URL` es la dirección del frontend que recibirá el enlace de recuperación. El servidor debe tener habilitado el envío de correo de PHP (`mail()`) o un transporte equivalente configurado por el hosting.
+
+Los enlaces caducan al cabo de 60 minutos y se guardan mediante SHA-256; las contraseñas se almacenan con `password_hash`.
+
+### Ligas de Biwenger
+
+Al conectar una cuenta Biwenger, todas sus ligas se incorporan automáticamente al desplegable de liga activa. No hay que crearlas manualmente. Cada usuario de Radar Fantasy conserva sus propias ligas y sesiones.
+
+La integración con LaLiga Fantasy queda retirada temporalmente.
+
 ## Modos de uso
 
 ### Web local
 
-Para usar OCR, enriquecimiento real, cache diaria y guardado en archivos locales:
+La opción recomendada para probar el mismo backend PHP usado en producción es:
+
+```powershell
+npm run start:php
+```
+
+La configuración local [php-local.ini](./php-local.ini) activa `curl`, `mbstring`, `openssl` y `fileinfo` sin modificar la configuración global de PHP en Windows.
+
+Luego abre:
+
+```text
+http://127.0.0.1:5173/index.html
+```
+
+En `localhost`, el primer arranque muestra el formulario para crear una cuenta administradora de desarrollo. Este formulario no aparece en la APK conectada a un servidor remoto.
+
+El servidor Node alternativo sigue disponible para OCR, enriquecimiento y desarrollo de fuentes:
 
 ```powershell
 node dev-server.js

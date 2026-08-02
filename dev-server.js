@@ -2,6 +2,7 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 5173);
@@ -16,10 +17,13 @@ const sourceCacheMs = 1000 * 60 * 20;
 const playerCacheMs = 1000 * 60 * 60 * 24;
 const sourceCriteriaVersion = 7;
 const sourceCache = new Map();
-const dbDir = path.join(root, ".fantasy-db");
+const dbDir = process.env.FMS_DB_DIR ? path.resolve(process.env.FMS_DB_DIR) : path.join(root, ".fantasy-db");
 const assetsDir = path.join(dbDir, "assets");
 const playerDbPath = path.join(dbDir, "players.json");
 const leaguesDbPath = path.join(dbDir, "leagues.json");
+const usersDbPath = path.join(dbDir, "users.node.json");
+const resetDbPath = path.join(dbDir, "password-resets.node.json");
+const platformSessions = new Map();
 let playerDb = { version: 1, players: {}, updatedAt: null };
 let leaguesDb = { version: 1, activeLeagueId: null, leagues: {} };
 
@@ -166,17 +170,161 @@ const buildCorsHeaders = (req, extra = {}) => {
   };
   if (origin) {
     headers["Access-Control-Allow-Origin"] = origin;
-    if (origin !== "*") headers.Vary = "Origin";
+    if (origin !== "*") {
+      headers.Vary = "Origin";
+      headers["Access-Control-Allow-Credentials"] = "true";
+    }
   }
   return { ...headers, ...extra };
 };
 
-const sendJson = (req, res, status, payload) => {
+const sendJson = (req, res, status, payload, extraHeaders = {}) => {
   res.writeHead(status, buildCorsHeaders(req, {
     "Content-Type": "application/json;charset=utf-8",
-    "Cache-Control": "no-store"
+    "Cache-Control": "no-store",
+    ...extraHeaders
   }));
   res.end(JSON.stringify(payload));
+};
+
+const platformPermissions = ["team", "market", "league", "favorites", "teamTracking", "compare", "videos", "settings"];
+const readNodeJson = (file, fallback) => {
+  try { return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : fallback; } catch { return fallback; }
+};
+const writeNodeJson = (file, value) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value, null, 2), "utf8");
+};
+const readUsersDb = () => {
+  const db = readNodeJson(usersDbPath, { version: 1, users: {} });
+  db.users = db.users && typeof db.users === "object" ? db.users : {};
+  return db;
+};
+const publicNodeUser = (user) => ({
+  id: user.id, name: user.name, email: user.email, role: user.role === "admin" ? "admin" : "user",
+  permissions: user.role === "admin" ? platformPermissions : (user.permissions || []).filter((item) => platformPermissions.includes(item)),
+  blocked: Boolean(user.blocked), createdAt: user.createdAt || null, updatedAt: user.updatedAt || null, lastLoginAt: user.lastLoginAt || null
+});
+const hashNodePassword = (password, salt = crypto.randomBytes(16).toString("hex")) => ({
+  salt, hash: crypto.scryptSync(password, salt, 64).toString("hex")
+});
+const verifyNodePassword = (password, user) => {
+  try {
+    const actual = Buffer.from(crypto.scryptSync(password, user.passwordSalt, 64).toString("hex"), "hex");
+    const expected = Buffer.from(user.passwordHash || "", "hex");
+    return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  } catch { return false; }
+};
+const nodeCookies = (req) => Object.fromEntries(String(req.headers.cookie || "").split(";").map((part) => part.trim().split(/=(.*)/s)).filter(([key]) => key));
+const currentNodeUser = (req) => {
+  const sessionId = nodeCookies(req).radar_session || "";
+  const session = platformSessions.get(sessionId);
+  if (!session || session.expiresAt < Date.now()) return null;
+  const user = readUsersDb().users[session.userId];
+  return user && !user.blocked ? user : null;
+};
+const createNodeSession = (userId) => {
+  const id = crypto.randomBytes(32).toString("hex");
+  platformSessions.set(id, { userId, expiresAt: Date.now() + 30 * 86400000 });
+  return id;
+};
+const nodeBootstrapAllowed = (req) => {
+  const address = String(req.socket?.remoteAddress || "").toLowerCase();
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(address) || /^(1|true|yes|on)$/i.test(String(process.env.FMS_ALLOW_ADMIN_BOOTSTRAP || ""));
+};
+const bootstrapNodeAdminFromEnv = () => {
+  const db = readUsersDb();
+  if (Object.keys(db.users).length) return;
+  const email = String(process.env.FMS_ADMIN_EMAIL || "").trim().toLowerCase();
+  const passwordText = String(process.env.FMS_ADMIN_PASSWORD || "");
+  if (!/^\S+@\S+\.\S+$/.test(email) || passwordText.length < 10) return;
+  const id = `user-${crypto.randomBytes(12).toString("hex")}`;
+  const password = hashNodePassword(passwordText);
+  db.users[id] = {
+    id, name: String(process.env.FMS_ADMIN_NAME || "Administrador").trim().slice(0, 80) || "Administrador",
+    email, role: "admin", permissions: platformPermissions, blocked: false,
+    passwordSalt: password.salt, passwordHash: password.hash, createdAt: new Date().toISOString()
+  };
+  writeNodeJson(usersDbPath, db);
+};
+const readJsonRequest = async (req) => {
+  const raw = await readRequestBody(req);
+  return raw ? JSON.parse(raw) : {};
+};
+const handleNodeAuth = async (req, res, requestUrl) => {
+  try {
+    const db = readUsersDb();
+    const route = requestUrl.pathname;
+    const current = currentNodeUser(req);
+    if (route === "/api/auth/status" && req.method === "GET") {
+      sendJson(req, res, 200, { authenticated: Boolean(current), bootstrapRequired: !Object.keys(db.users).length && nodeBootstrapAllowed(req), administratorConfigured: Boolean(Object.keys(db.users).length), user: current ? publicNodeUser(current) : null }); return;
+    }
+    if (route === "/api/auth/bootstrap" && req.method === "POST") {
+      if (!nodeBootstrapAllowed(req)) { sendJson(req, res, 403, { error: "La cuenta administradora solo puede crearse desde el servidor" }); return; }
+      if (Object.keys(db.users).length) { sendJson(req, res, 409, { error: "La cuenta administradora inicial ya existe" }); return; }
+      const body = await readJsonRequest(req);
+      if (!body.name || !/^\S+@\S+\.\S+$/.test(body.email || "") || String(body.password || "").length < 10) { sendJson(req, res, 400, { error: "Nombre, correo válido y contraseña de 10 caracteres requeridos" }); return; }
+      const id = `user-${crypto.randomBytes(12).toString("hex")}`;
+      const password = hashNodePassword(String(body.password));
+      const user = { id, name: String(body.name).trim().slice(0, 80), email: String(body.email).trim().toLowerCase(), role: "admin", permissions: platformPermissions, blocked: false, passwordSalt: password.salt, passwordHash: password.hash, createdAt: new Date().toISOString() };
+      db.users[id] = user; writeNodeJson(usersDbPath, db);
+      const sessionId = createNodeSession(id);
+      sendJson(req, res, 201, { authenticated: true, user: publicNodeUser(user) }, { "Set-Cookie": `radar_session=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000` }); return;
+    }
+    if (route === "/api/auth/login" && req.method === "POST") {
+      const body = await readJsonRequest(req);
+      const user = Object.values(db.users).find((candidate) => candidate.email === String(body.email || "").trim().toLowerCase());
+      if (!user || !verifyNodePassword(String(body.password || ""), user)) { sendJson(req, res, 401, { error: "Usuario o contraseña incorrectos" }); return; }
+      if (user.blocked) { sendJson(req, res, 403, { error: "Esta cuenta está bloqueada" }); return; }
+      user.lastLoginAt = new Date().toISOString(); writeNodeJson(usersDbPath, db);
+      const sessionId = createNodeSession(user.id);
+      sendJson(req, res, 200, { authenticated: true, user: publicNodeUser(user) }, { "Set-Cookie": `radar_session=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000` }); return;
+    }
+    if (route === "/api/auth/logout" && req.method === "POST") {
+      platformSessions.delete(nodeCookies(req).radar_session || "");
+      sendJson(req, res, 200, { ok: true }, { "Set-Cookie": "radar_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" }); return;
+    }
+    if (route === "/api/auth/forgot-password" && req.method === "POST") {
+      const body = await readJsonRequest(req);
+      const user = Object.values(db.users).find((candidate) => candidate.email === String(body.email || "").trim().toLowerCase());
+      if (user && !user.blocked) {
+        const token = crypto.randomBytes(32).toString("hex");
+        const resets = readNodeJson(resetDbPath, { tokens: {} });
+        resets.tokens[crypto.createHash("sha256").update(token).digest("hex")] = { userId: user.id, expiresAt: Date.now() + 3600000 };
+        writeNodeJson(resetDbPath, resets);
+        console.log(`Enlace local de recuperación: http://${host}:${port}/index.html?resetToken=${token}`);
+      }
+      sendJson(req, res, 200, { ok: true, message: "Si el correo existe, se ha generado un enlace de recuperación. En desarrollo aparece en la consola del servidor." }); return;
+    }
+    if (route === "/api/auth/reset-password" && req.method === "POST") {
+      const body = await readJsonRequest(req);
+      if (String(body.password || "").length < 10) { sendJson(req, res, 400, { error: "La contraseña debe tener al menos 10 caracteres" }); return; }
+      const resets = readNodeJson(resetDbPath, { tokens: {} });
+      const key = crypto.createHash("sha256").update(String(body.token || "")).digest("hex");
+      const reset = resets.tokens[key];
+      if (!reset || reset.expiresAt < Date.now() || !db.users[reset.userId]) { sendJson(req, res, 400, { error: "El enlace no es válido o ha caducado" }); return; }
+      const password = hashNodePassword(String(body.password));
+      db.users[reset.userId].passwordSalt = password.salt; db.users[reset.userId].passwordHash = password.hash;
+      delete resets.tokens[key]; writeNodeJson(usersDbPath, db); writeNodeJson(resetDbPath, resets);
+      sendJson(req, res, 200, { ok: true }); return;
+    }
+    if (!current || current.role !== "admin") { sendJson(req, res, current ? 403 : 401, { error: current ? "Acceso reservado al administrador" : "Debes iniciar sesión" }); return; }
+    if (route === "/api/admin/users" && req.method === "GET") { sendJson(req, res, 200, { users: Object.values(db.users).map(publicNodeUser), permissions: platformPermissions }); return; }
+    if (route === "/api/admin/users/save" && req.method === "POST") {
+      const body = await readJsonRequest(req); const existing = body.id ? db.users[body.id] : null;
+      if (!body.name || !/^\S+@\S+\.\S+$/.test(body.email || "") || (!existing && String(body.password || "").length < 10)) { sendJson(req, res, 400, { error: "Datos del usuario incompletos" }); return; }
+      const id = existing?.id || `user-${crypto.randomBytes(12).toString("hex")}`;
+      const user = { ...(existing || {}), id, name: String(body.name).trim().slice(0, 80), email: String(body.email).trim().toLowerCase(), role: body.role === "admin" ? "admin" : "user", permissions: (body.permissions || []).filter((item) => platformPermissions.includes(item)), blocked: Boolean(body.blocked), updatedAt: new Date().toISOString(), createdAt: existing?.createdAt || new Date().toISOString() };
+      if (body.password) { const password = hashNodePassword(String(body.password)); user.passwordSalt = password.salt; user.passwordHash = password.hash; }
+      if (id === current.id && (user.role !== "admin" || user.blocked)) { sendJson(req, res, 400, { error: "No puedes bloquear ni degradar tu cuenta" }); return; }
+      db.users[id] = user; writeNodeJson(usersDbPath, db); sendJson(req, res, existing ? 200 : 201, { user: publicNodeUser(user) }); return;
+    }
+    if (route === "/api/admin/users/delete" && req.method === "POST") {
+      const body = await readJsonRequest(req); if (body.id === current.id) { sendJson(req, res, 400, { error: "No puedes eliminar tu cuenta" }); return; }
+      delete db.users[body.id]; writeNodeJson(usersDbPath, db); sendJson(req, res, 200, { ok: true }); return;
+    }
+    sendJson(req, res, 404, { error: "Endpoint de acceso no encontrado" });
+  } catch (error) { sendJson(req, res, 500, { error: error.message || "Error de acceso" }); }
 };
 
 const createLeagueId = () => `league-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1437,6 +1585,8 @@ const handleFavoriteNews = async (req, res) => {
   }
 };
 
+bootstrapNodeAdminFromEnv();
+
 const server = http.createServer((req, res) => {
   const requestUrl = new URL(req.url, `http://${host}:${port}`);
 
@@ -1445,6 +1595,16 @@ const server = http.createServer((req, res) => {
       "Access-Control-Max-Age": "86400"
     }));
     res.end();
+    return;
+  }
+
+  if (requestUrl.pathname.startsWith("/api/auth/") || requestUrl.pathname.startsWith("/api/admin/")) {
+    void handleNodeAuth(req, res, requestUrl);
+    return;
+  }
+
+  if (requestUrl.pathname.startsWith("/api/") && !currentNodeUser(req)) {
+    sendJson(req, res, 401, { error: "Debes iniciar sesión" });
     return;
   }
 

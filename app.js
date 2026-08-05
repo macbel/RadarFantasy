@@ -115,6 +115,8 @@
     showMarketAnalysis: false,
     showSportDirector: true,
     showExperimentalLiveRound: false,
+    showFutbolFantasySettings: false,
+    showApiConfig: false,
     startupSync: true,
     autoSync: false,
     notifications: false,
@@ -143,6 +145,8 @@ const DEFAULT_LEAGUE_PREFERENCES = {
   showMarketAnalysis: false,
   showSportDirector: true,
   showExperimentalLiveRound: false,
+  showFutbolFantasySettings: false,
+  showApiConfig: false,
   startupSync: true,
   autoSync: false,
   notifications: false,
@@ -200,7 +204,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.9.2";
+const APP_VERSION = "3.10.0";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -5664,6 +5668,8 @@ const hydrateImportedPlayers = (players) => (players || []).map((player, index) 
   baseTeam: player.baseTeam || player.team || competitionMeta().teamFallback,
   position: player.biwengerPosition || player.position || "MC",
   biwengerPosition: player.biwengerPosition || player.position || null,
+  eligiblePositions: Array.isArray(player.eligiblePositions) && player.eligiblePositions.length ? player.eligiblePositions : [player.biwengerPosition || player.position || "MC"],
+  multiPosition: Boolean(player.multiPosition || (Array.isArray(player.eligiblePositions) && player.eligiblePositions.length > 1)),
   price: Number(player.price || 0),
   salePrice: Number(player.salePrice || player.price || 0),
   biwengerValue: Number(player.biwengerValue || player.price || 0),
@@ -5741,6 +5747,33 @@ const setBiwengerStatus = (message, mode = "") => {
   if (!status) return;
   status.className = `ocr-status ${mode}`.trim();
   status.querySelector("span:last-child").textContent = message;
+};
+
+const setBiwengerOnboardingStatus = (message, mode = "") => {
+  const status = qs("#biwenger-onboarding-status");
+  if (!status) return;
+  status.className = `ocr-status ${mode}`.trim();
+  const copy = status.querySelector("span:last-child");
+  if (copy) copy.textContent = message;
+};
+
+const showBiwengerOnboarding = () => {
+  if (!state.auth.authenticated || state.biwenger.authenticated) return;
+  const modal = qs("#biwenger-onboarding");
+  if (!modal) return;
+  const email = qs("#biwenger-onboarding-email");
+  if (email && !email.value) email.value = qs("#biwenger-email")?.value || "";
+  const refresh = qs("#biwenger-onboarding-refresh");
+  if (refresh) refresh.checked = state.preferences.startupSync !== false;
+  modal.hidden = false;
+  window.setTimeout(() => (email?.value ? qs("#biwenger-onboarding-password") : email)?.focus(), 0);
+};
+
+const hideBiwengerOnboarding = () => {
+  const modal = qs("#biwenger-onboarding");
+  if (modal) modal.hidden = true;
+  const password = qs("#biwenger-onboarding-password");
+  if (password) password.value = "";
 };
 
 const setBiwengerBusy = (busy, label = "Conectar") => {
@@ -6341,9 +6374,10 @@ const refreshBiwengerStatus = async (preferredMessage = "", options = {}) => {
         await loadLeagueFixtures(false);
       }
     } else {
-      const message = preferredMessage || "Biwenger no conectado. Entra en Ajustes para iniciar sesion y traer mercado/equipo.";
+      const message = preferredMessage || "Biwenger no conectado. Introduce tus datos para cargar liga, mercado, equipo y próximos partidos.";
       setBiwengerStatus(message, "");
       if (!state.players.length) setOcrStatus(message, "error");
+      showBiwengerOnboarding();
     }
   } catch (error) {
     setBiwengerStatus(error.message || "No se pudo leer la sesion de Biwenger.", "error");
@@ -7149,15 +7183,16 @@ const enrichCurrentMarket = async (forceRefresh = false) => {
   }
 };
 
-const biwengerLogin = async () => {
-  const email = qs("#biwenger-email")?.value.trim();
-  const password = qs("#biwenger-password")?.value || "";
+const connectBiwenger = async ({ email, password, refreshAll = state.preferences.startupSync !== false, onboarding = false } = {}) => {
   if (!email || !password) {
-    setBiwengerStatus("Necesito email y contrasena para conectar con Biwenger.", "error");
-    return;
+    const message = "Necesito email y contrasena para conectar con Biwenger.";
+    setBiwengerStatus(message, "error");
+    if (onboarding) setBiwengerOnboardingStatus(message, "error");
+    return false;
   }
   setBiwengerBusy(true, "Conectando");
   setBiwengerStatus("Abriendo sesion con Biwenger...", "busy");
+  if (onboarding) setBiwengerOnboardingStatus("Abriendo sesión con Biwenger...", "busy");
   try {
     const response = await apiFetch("/api/biwenger/login", {
       method: "POST",
@@ -7182,15 +7217,31 @@ const biwengerLogin = async () => {
     if (passwordInput) passwordInput.value = "";
     await saveActiveLeague();
     setBiwengerStatus(`Sesion conectada y guardada: ${payload.userName || "usuario"} en ${payload.leagueName || "tu liga"}.`, "ready");
-    if (startupSyncWaitingForLeagueSelection && !startupSyncCompletedForSession) {
-      await runStartupFullRefreshIfReady();
+    hideBiwengerOnboarding();
+    if (refreshAll) {
+      startupSyncWaitingForLeagueSelection = true;
+      startupSyncCompletedForSession = false;
+      const refreshed = await runStartupFullRefreshIfReady();
+      if (!refreshed) throw new Error("Biwenger se ha conectado, pero no se pudieron actualizar todos los datos.");
     }
+    return true;
   } catch (error) {
     setBiwengerStatus(error.message || "No se pudo iniciar sesion en Biwenger.", "error");
+    if (onboarding) {
+      showBiwengerOnboarding();
+      setBiwengerOnboardingStatus(error.message || "No se pudo iniciar sesión en Biwenger.", "error");
+    }
+    return false;
   } finally {
     setBiwengerBusy(false);
   }
 };
+
+const biwengerLogin = () => connectBiwenger({
+  email: qs("#biwenger-email")?.value.trim(),
+  password: qs("#biwenger-password")?.value || "",
+  refreshAll: state.preferences.startupSync !== false
+});
 
 const refreshFutbolFantasyStatus = async () => {
   if (!canUseApi()) {
@@ -7396,6 +7447,8 @@ const importFromBiwenger = async (kind, options = {}) => {
           team: player.team,
           position: player.position,
           biwengerPosition: player.biwengerPosition,
+          eligiblePositions: player.eligiblePositions,
+          multiPosition: player.multiPosition,
           price: player.price,
           competitionPoints: player.competitionPoints,
           media: player.media,
@@ -8967,8 +9020,14 @@ const loadLeagueFixtures = async (showFeedback = true) => {
       endpoint = "/api/biwenger/fixtures";
     }
     const response = await apiFetch(endpoint);
-    const payload = await response.json().catch(() => ({}));
+    let payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "No se pudo cargar la jornada actual");
+    if (state.biwenger.authenticated && !hasUpcomingFixtureEvents(payload)) {
+      const competition = String(state.biwenger.competition || payload.competition || activeLeagueName() || "la-liga");
+      const fallbackResponse = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(competition)}`);
+      const fallbackPayload = await fallbackResponse.json().catch(() => ({}));
+      if (fallbackResponse.ok && hasUpcomingFixtureEvents(fallbackPayload)) payload = fallbackPayload;
+    }
     state.leagueFixtures = payload;
     saveLocalLeagueSnapshot();
     renderLeagueFixtures();
@@ -10312,6 +10371,12 @@ const syncSettingsControls = () => {
   if (showSportDirector) showSportDirector.checked = state.preferences.showSportDirector !== false;
   const showExperimentalLiveRound = qs("#show-live-round");
   if (showExperimentalLiveRound) showExperimentalLiveRound.checked = Boolean(state.preferences.showExperimentalLiveRound);
+  const showFutbolFantasySettings = qs("#show-futbolfantasy-settings");
+  if (showFutbolFantasySettings) showFutbolFantasySettings.checked = Boolean(state.preferences.showFutbolFantasySettings);
+  const showApiConfig = qs("#show-api-config");
+  if (showApiConfig) showApiConfig.checked = Boolean(state.preferences.showApiConfig);
+  qs("#futbolfantasy-settings-card")?.toggleAttribute("hidden", !state.preferences.showFutbolFantasySettings);
+  qs("#api-config-card")?.toggleAttribute("hidden", !state.preferences.showApiConfig);
   const appearanceMode = qs("#appearance-mode");
   if (appearanceMode && appearanceMode.value !== appThemeMode) appearanceMode.value = appThemeMode;
   const autoSync = qs("#auto-sync-enabled");
@@ -11170,7 +11235,7 @@ const renderTeam = () => {
         ${renderPlayerMedia(player, "sm")}
             <div>
               <div class="player-name-line"><strong>${escapeHtml(player.name)}</strong>${renderRecentFormDots(player)}</div>
-              <span>${renderPositionIcon(player.position, compactPoints(playerAccumulatedPoints(player)), { title: `${playerAccumulatedPoints(player).toLocaleString("es-ES")} puntos Biwenger` })} ${renderScoringBadge(player)} ${escapeHtml(player.team)} · ${player.starter}% titular${hasOffer ? ` · <button class="team-offer-chip" type="button" data-open-offer-player="${player.biwengerPlayerId}">Ver oferta ${formatFinanceMoney(incomingOffer.amount)}</button>` : ""}</span>
+              <span>${renderPositionIcon(player.position, compactPoints(playerAccumulatedPoints(player)), { title: `${playerAccumulatedPoints(player).toLocaleString("es-ES")} puntos Biwenger` })} ${playerEligiblePositions(player).length > 1 ? `<b class="multi-position-label">${playerEligiblePositions(player).join("/")}</b>` : ""} ${renderScoringBadge(player)} ${escapeHtml(player.team)} · ${player.starter}% titular${hasOffer ? ` · <button class="team-offer-chip" type="button" data-open-offer-player="${player.biwengerPlayerId}">Ver oferta ${formatFinanceMoney(incomingOffer.amount)}</button>` : ""}</span>
             </div>
             <div class="mini-player-actions">
               ${renderFavoriteButton(player, true)}
@@ -11289,12 +11354,26 @@ const editableLineupFromRecommendation = (recommendation = calculateBestLineup()
       .filter((player) => String(player.id) !== String(captain?.id || ""))
       .sort((a, b) => b.lineupScore - a.lineupScore)[0]
     || null;
+  const selectedIds = new Set(recommendation.selected.map((player) => String(player.id)));
+  const substituteIds = Object.fromEntries(["POR", "DF", "MC", "DL"].map((position) => {
+    const candidate = teamPlayersWithLineupScore()
+      .filter((player) => !selectedIds.has(String(player.id)) && playerEligiblePositions(player).includes(position))
+      .sort((a, b) => Number(b.lineupEligible) - Number(a.lineupEligible) || b.lineupScore - a.lineupScore)[0];
+    return [position, candidate?.id || null];
+  }));
   return {
     formationName: recommendation.formation.name,
     playerIds: recommendation.selected.map((player) => player.id),
     captainId: captain?.id || null,
-    strikerId: striker?.id || null
+    strikerId: striker?.id || null,
+    substituteIds,
+    lineupPositions: Object.fromEntries(recommendation.selected.map((player) => [String(player.id), player.position]))
   };
+};
+
+const playerEligiblePositions = (player) => {
+  const positions = Array.isArray(player?.eligiblePositions) ? player.eligiblePositions : [player?.position];
+  return [...new Set(positions.filter((position) => ["POR", "DF", "MC", "DL"].includes(position)))];
 };
 
 const editableLineupFromBiwengerPayload = (lineup = null, players = state.teamPlayers) => {
@@ -11302,17 +11381,26 @@ const editableLineupFromBiwengerPayload = (lineup = null, players = state.teamPl
   const byBiwengerId = new Map((players || [])
     .filter((player) => Number(player.biwengerPlayerId || 0) > 0)
     .map((player) => [Number(player.biwengerPlayerId), player]));
+  const byLocalId = new Map((players || []).map((player) => [String(player.id), player]));
   const playerIds = [...(lineup.playersID || lineup.playersId || lineup.playersIDs || [])]
     .map((id) => byBiwengerId.get(Number(id || 0))?.id)
     .filter(Boolean);
   if (!playerIds.length) return null;
   const captainId = byBiwengerId.get(Number(lineup.captain || 0))?.id || null;
   const strikerId = byBiwengerId.get(Number(lineup.striker || 0))?.id || null;
+  const rawSubstitutes = lineup.substitutesID || lineup.substitutesId || lineup.substitutePlayersID || [];
+  const substitutePlayers = [...rawSubstitutes].map((id) => byBiwengerId.get(Number(id || 0))).filter(Boolean);
+  const substituteIds = Object.fromEntries(["POR", "DF", "MC", "DL"].map((position) => [
+    position,
+    substitutePlayers.find((player) => playerEligiblePositions(player).includes(position))?.id || null
+  ]));
   return {
     formationName: FORMATIONS.some((formation) => formation.name === lineup.type) ? lineup.type : (lineup.type || "4-4-2"),
     playerIds,
     captainId: captainId && playerIds.includes(captainId) ? captainId : null,
-    strikerId: strikerId && playerIds.includes(strikerId) ? strikerId : null
+    strikerId: strikerId && playerIds.includes(strikerId) ? strikerId : null,
+    substituteIds,
+    lineupPositions: Object.fromEntries(playerIds.map((id) => [String(id), byLocalId.get(String(id))?.position || "MC"]))
   };
 };
 
@@ -11326,7 +11414,10 @@ const reconcileEditableLineup = (lineup = state.editableLineup, players = state.
     : "4-4-2";
   const captainId = playerIds.includes(String(lineup.captainId || "")) ? lineup.captainId : null;
   const strikerId = playerIds.includes(String(lineup.strikerId || "")) ? lineup.strikerId : null;
-  return { formationName, playerIds, captainId, strikerId };
+  const substituteIds = Object.fromEntries(Object.entries(lineup.substituteIds || {})
+    .filter(([position, id]) => ["POR", "DF", "MC", "DL"].includes(position) && validIds.has(String(id)) && !playerIds.includes(String(id))));
+  const lineupPositions = Object.fromEntries(playerIds.map((id) => [String(id), lineup.lineupPositions?.[String(id)] || (players || []).find((player) => String(player.id) === String(id))?.position || "MC"]));
+  return { formationName, playerIds, captainId, strikerId, substituteIds, lineupPositions };
 };
 
 const teamPlayersWithLineupScore = () => state.teamPlayers
@@ -11356,7 +11447,9 @@ const lineupForFormation = (formationName) => {
     formationName: formation.name,
     playerIds: selected.map((player) => player.id),
     captainId: captain?.id || null,
-    strikerId: striker?.id || null
+    strikerId: striker?.id || null,
+    substituteIds: editableLineupFromRecommendation({ formation, selected })?.substituteIds || {},
+    lineupPositions: Object.fromEntries(selected.map((player) => [String(player.id), player.position]))
   };
 };
 
@@ -11372,7 +11465,8 @@ const resolvedEditableLineup = () => {
     || [...selected].filter((player) => player.position === "DL" && String(player.id) !== String(captain?.id || "")).sort((a, b) => b.lineupScore - a.lineupScore)[0]
     || [...selected].filter((player) => String(player.id) !== String(captain?.id || "")).sort((a, b) => b.lineupScore - a.lineupScore)[0]
     || null;
-  return { formation, selected, players, captain, striker };
+  const substitutes = Object.fromEntries(Object.entries(state.editableLineup?.substituteIds || {}).map(([position, id]) => [position, byId.get(String(id)) || null]));
+  return { formation, selected, players, captain, striker, substitutes };
 };
 
 const selectIdealLineup = () => {
@@ -11439,7 +11533,7 @@ const renderLineupPitch = (groups, options = {}) => {
           ` : ""}
           ${renderPlayerMedia(player, "sm", { pointsValue: latestRoundPointsForPlayer(player, scoreKey), pointsTitle: "Puntos en la ultima jornada cerrada" })}
           <strong>${escapeHtml(player.name)}</strong>
-          <div class="pitch-player-meta">${renderPositionBadge(player.position)}</div>
+          <div class="pitch-player-meta">${renderPositionBadge(player.lineupPosition || player.position)}</div>
           ${renderRecentFormDots(player)}
         </div>
       `).join("")}
@@ -11578,9 +11672,10 @@ const renderLineup = () => {
   }
   const editable = resolvedEditableLineup();
   const groups = editable.selected.reduce((acc, player) => {
-    const position = player.position || "MC";
+    const requestedPosition = state.editableLineup?.lineupPositions?.[String(player.id)];
+    const position = playerEligiblePositions(player).includes(requestedPosition) ? requestedPosition : (player.position || "MC");
     acc[position] = acc[position] || [];
-    acc[position].push(player);
+    acc[position].push({ ...player, lineupPosition: position });
     return acc;
   }, {});
   const recommendedCoach = state.teamPlayers
@@ -11617,7 +11712,7 @@ const renderLineup = () => {
           ${editable.selected.filter((player) => String(player.id) !== String(editable.captain?.id || "")).map((player) => `<option value="${escapeHtml(player.id)}" ${String(player.id) === String(editable.striker?.id || "") ? "selected" : ""}>${escapeHtml(player.name)} · ${player.position}</option>`).join("")}
         </select>
       </label>
-      <span>Elige titulares, capitan y ariete antes de enviar.</span>
+      <span>${state.teamPlayers.some((player) => playerEligiblePositions(player).length > 1) ? "Multiposición detectada en esta competición: puedes cambiar la demarcación de los jugadores compatibles." : "Elige titulares, capitan y ariete antes de enviar."}</span>
     </div>
     <div class="lineup-summary">
       <div>
@@ -11644,6 +11739,17 @@ const renderLineup = () => {
       <span>${canSend ? "Once preparado con identificadores Biwenger." : "Importa la plantilla desde Biwenger para poder enviarlo."}</span>
     </div>
     ${renderLineupPitch(groups, { captainId: editable.captain?.id, strikerId: editable.striker?.id })}
+    <section class="lineup-substitutes" aria-label="Suplentes de la alineación">
+      <div class="lineup-substitutes-heading"><span class="eyebrow">Banquillo</span><strong>Un suplente por demarcación</strong></div>
+      <div class="lineup-substitutes-grid">
+        ${["POR", "DF", "MC", "DL"].map((position) => {
+          const substitute = editable.substitutes[position] || null;
+          const selectedIds = new Set(editable.selected.map((player) => String(player.id)));
+          const candidates = editable.players.filter((candidate) => !selectedIds.has(String(candidate.id)) && playerEligiblePositions(candidate).includes(position));
+          return `<label class="lineup-substitute-slot">${renderPositionBadge(position)}<select class="lineup-substitute-select" data-substitute-position="${position}" aria-label="Suplente ${position}"><option value="">Sin suplente</option>${candidates.sort((a, b) => b.lineupScore - a.lineupScore).map((candidate) => `<option value="${escapeHtml(candidate.id)}" ${String(candidate.id) === String(substitute?.id || "") ? "selected" : ""}>${escapeHtml(candidate.name)} · ${candidate.lineupScore}/100</option>`).join("")}</select>${substitute ? renderPlayerMedia(substitute, "sm") : ""}</label>`;
+        }).join("")}
+      </div>
+    </section>
     <div class="lineup-grid editable-lineup-grid">
       ${["POR", "DF", "MC", "DL"].map((position) => `
         <div class="lineup-line">
@@ -11653,10 +11759,11 @@ const renderLineup = () => {
               ${renderPlayerMedia(player, "sm")}
               <span class="lineup-slot-control">
                 <select class="lineup-slot-select" data-current-player-id="${escapeHtml(player.id)}" aria-label="Titular ${position}">
-                  ${editable.players.filter((candidate) => candidate.position === position).sort((a, b) => b.lineupScore - a.lineupScore).map((candidate) =>
-                    `<option value="${escapeHtml(candidate.id)}" ${candidate.id === player.id ? "selected" : ""}>${escapeHtml(candidate.name)} · ${candidate.lineupScore}/100</option>`
+                  ${editable.players.filter((candidate) => playerEligiblePositions(candidate).includes(position)).sort((a, b) => b.lineupScore - a.lineupScore).map((candidate) =>
+                    `<option value="${escapeHtml(candidate.id)}" ${candidate.id === player.id ? "selected" : ""}>${escapeHtml(candidate.name)} · ${playerEligiblePositions(candidate).join("/")} · ${candidate.lineupScore}/100</option>`
                   ).join("")}
                 </select>
+                ${playerEligiblePositions(player).length > 1 ? `<select class="lineup-position-select" data-lineup-player-id="${escapeHtml(player.id)}" aria-label="Demarcación de ${escapeHtml(player.name)}">${playerEligiblePositions(player).map((candidatePosition) => `<option value="${candidatePosition}" ${candidatePosition === position ? "selected" : ""}>${candidatePosition}</option>`).join("")}</select>` : ""}
                 ${renderPlayerPerformanceMeta(player, { compact: true })}
               </span>
             </label>
@@ -11690,10 +11797,25 @@ const renderLineup = () => {
     if (currentIndex >= 0) ids[currentIndex] = nextId;
     if (duplicateIndex >= 0 && duplicateIndex !== currentIndex) ids[duplicateIndex] = currentId;
     state.editableLineup.playerIds = ids;
+    state.editableLineup.lineupPositions ||= {};
+    state.editableLineup.lineupPositions[nextId] = state.editableLineup.lineupPositions[currentId] || select.closest(".lineup-line")?.querySelector(".position-badge")?.textContent?.trim() || "MC";
+    delete state.editableLineup.lineupPositions[currentId];
     if (String(state.editableLineup.captainId || "") === currentId) state.editableLineup.captainId = nextId;
     else if (String(state.editableLineup.captainId || "") === nextId && duplicateIndex >= 0) state.editableLineup.captainId = currentId;
     if (String(state.editableLineup.strikerId || "") === currentId) state.editableLineup.strikerId = nextId;
     else if (String(state.editableLineup.strikerId || "") === nextId && duplicateIndex >= 0) state.editableLineup.strikerId = currentId;
+    renderLineup();
+    saveActiveLeague();
+  }));
+  output.querySelectorAll(".lineup-position-select").forEach((select) => select.addEventListener("change", () => {
+    state.editableLineup.lineupPositions ||= {};
+    state.editableLineup.lineupPositions[String(select.dataset.lineupPlayerId)] = select.value;
+    renderLineup();
+    saveActiveLeague();
+  }));
+  output.querySelectorAll(".lineup-substitute-select").forEach((select) => select.addEventListener("change", () => {
+    state.editableLineup.substituteIds ||= {};
+    state.editableLineup.substituteIds[select.dataset.substitutePosition] = select.value || null;
     renderLineup();
     saveActiveLeague();
   }));
@@ -11714,7 +11836,8 @@ const sendEditableLineup = async () => {
         type: editable.formation.name,
         playersID: editable.selected.map((player) => Number(player.biwengerPlayerId || 0)).filter(Boolean),
         captain: Number(editable.captain?.biwengerPlayerId || 0),
-        striker: Number(editable.striker?.biwengerPlayerId || 0)
+        striker: Number(editable.striker?.biwengerPlayerId || 0),
+        substitutesID: Object.values(editable.substitutes || {}).map((player) => Number(player?.biwengerPlayerId || 0)).filter(Boolean)
       })
     });
     const payload = await response.json().catch(() => ({}));
@@ -12074,12 +12197,22 @@ const refreshLeagueCenterSettingsManually = async () => {
 };
 
 const runSettingsRefreshAction = async (button, action, label) => {
-  if (state.autoSync.running) return;
+  if (state.autoSync.running) {
+    updateDataSync(`Esperando a que termine la sincronización en curso para ejecutar ${label}...`, "busy");
+    const deadline = Date.now() + 45 * 1000;
+    while (state.autoSync.running && Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+    }
+    if (state.autoSync.running) {
+      updateDataSync(`No se pudo iniciar ${label}: la sincronización anterior sigue activa.`, "error");
+      return false;
+    }
+  }
   const controls = qsa(".settings-refresh-grid button");
   controls.forEach((control) => { control.disabled = true; });
   const waitToken = beginInteractionWait(`Ejecutando ${label}...`, { delay: 80 });
   try {
-    await action();
+    return await action();
   } finally {
     endInteractionWait(waitToken);
     controls.forEach((control) => { control.disabled = false; });
@@ -12112,15 +12245,12 @@ const refreshAllSettingsManually = async ({ reason = "manual" } = {}) => {
       setBiwengerStatus("Conecta Biwenger para que Actualizar todo pueda traer plantilla, mercado, calendario y director deportivo.", "error");
       return false;
     }
-    updateDataSync("Actualizando plantilla y mercado de la liga seleccionada...");
-    const leagueSync = await syncSelectedLeagueWithBiwenger({
-      teamFirst: true,
-      fullSync: true,
-      incremental: false,
-      skipOperations: true,
-      skipEnrichment: true
-    });
-    if (!leagueSync?.success) throw new Error("No se pudieron actualizar la plantilla y el mercado de la liga seleccionada.");
+    updateDataSync("Actualizando plantilla de la liga seleccionada...");
+    if (!await refreshTeamSettingsManually()) throw new Error("No se pudo actualizar la plantilla de la liga seleccionada.");
+    throwIfDataSyncCancelled();
+    updateDataSync("Actualizando mercado y pujas de la liga seleccionada...");
+    if (!await refreshMarketSettingsManually()) throw new Error("No se pudo actualizar el mercado de la liga seleccionada.");
+    await loadBiwengerOperations(false);
     throwIfDataSyncCancelled();
     updateDataSync("Actualizando fuentes deportivas...");
     await refreshSourcesSettingsManually();
@@ -12649,6 +12779,16 @@ const initEvents = () => {
     }
     persistLeagueSettings();
   });
+  qs("#show-futbolfantasy-settings")?.addEventListener("change", (event) => {
+    state.preferences.showFutbolFantasySettings = event.target.checked;
+    syncSettingsControls();
+    persistLeagueSettings();
+  });
+  qs("#show-api-config")?.addEventListener("change", (event) => {
+    state.preferences.showApiConfig = event.target.checked;
+    syncSettingsControls();
+    persistLeagueSettings();
+  });
   qs("#appearance-mode")?.addEventListener("change", (event) => {
     void setAppThemeMode(event.target.value);
   });
@@ -12996,6 +13136,17 @@ const loadPlatformUsers = async () => {
 };
 
 const bindPlatformAuthEvents = () => {
+  qs("#biwenger-onboarding-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const refreshAll = qs("#biwenger-onboarding-refresh")?.checked !== false;
+    state.preferences.startupSync = refreshAll;
+    await connectBiwenger({
+      email: qs("#biwenger-onboarding-email")?.value.trim(),
+      password: qs("#biwenger-onboarding-password")?.value || "",
+      refreshAll,
+      onboarding: true
+    });
+  });
   qs("#show-forgot-password")?.addEventListener("click", () => { showAuthPanel("forgot"); setAuthStatus("Indica el correo de tu cuenta."); });
   qs("#back-to-login")?.addEventListener("click", () => { showAuthPanel("login"); setAuthStatus("Introduce tus credenciales."); });
   qs("#login-form")?.addEventListener("submit", async (event) => {

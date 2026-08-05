@@ -1,8 +1,22 @@
-# Version 3.9.2
+# Version 3.10.0
 
-Fecha de publicación: 2026-08-02
+Fecha de publicación: 2026-08-05
 
 ## Notas de versión
+
+- Datos, favoritos, preferencias y cachés separados por usuario y liga.
+- "Actualizar todo" espera las cargas en curso y ejecuta equipo, mercado, pujas, fuentes, noticias, calendario y centro de liga.
+- El editor de alineación incorpora cuatro suplentes, uno por demarcación, y permite elegir cualquiera de las posiciones admitidas por Biwenger.
+- Ajustes simplificados: Futbol Fantasy y la configuración de API quedan ocultos salvo que se activen expresamente.
+- Ampliada la detección de contadores de pujas y descartadas noticias de jugadores con más de 180 días.
+
+## Historial 3.9.3
+
+- Tras acceder a Radar Fantasy, si Biwenger no está conectado aparece directamente el formulario de conexión.
+- La opción de actualizar al conectar ejecuta ahora una actualización completa y comprueba su resultado.
+- El mercado recupera los próximos partidos mediante una ruta alternativa cuando el primer calendario no contiene encuentros futuros.
+
+## Historial 3.9.2
 
 - En la primera jornada, cuando todavía no hay historial de la temporada actual, las recomendaciones de mercado usan los últimos partidos disponibles de la temporada anterior.
 - La app identifica la temporada de cada muestra y explica en el detalle del jugador cuándo está aplicando este respaldo.

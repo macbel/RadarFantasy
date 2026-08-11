@@ -86,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=121') || !sw.includes('radar-fantasy-shell-v72')) {
+if (!html.includes('app.js?v=122') || !sw.includes('radar-fantasy-shell-v73')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -106,7 +106,7 @@ if (!js.includes('checkTeamWhenMarketUnchanged: reason === "startup"')) {
   throw new Error("Startup synchronization must still check the current Biwenger lineup after an unchanged market");
 }
 
-if (!js.includes("playerEligibleForNextLineup") || !js.includes("unavailable * 120") || !js.includes("Number(b.lineupEligible) - Number(a.lineupEligible)")) {
+if (!js.includes("playerEligibleForNextLineup") || !js.includes("player.lineupEligible === false ? 240") || !js.includes("Number(b.lineupEligible) - Number(a.lineupEligible)")) {
   throw new Error("The ideal lineup must prefer available players while still filling formations when alternatives do not exist");
 }
 
@@ -221,11 +221,16 @@ if (!html.includes('id="show-futbolfantasy-settings"') || !html.includes('id="sh
   throw new Error("Advanced source connections must be optional in Settings");
 }
 
-if (!js.includes("lineup-substitute-select") || !js.includes("playerEligiblePositions") || !php.includes("biwenger_player_positions") || !php.includes("substitutesID")) {
+if (!js.includes("lineup-substitute-select") || !js.includes("playerEligiblePositions") || !js.includes("assignPlayersToFormation")
+  || !js.includes("lineupPlayersInFormationOrder") || !js.includes("Biwenger puede cobrar monedas")
+  || !js.includes("Number(editable.substitutes?.[position]?.biwengerPlayerId || 0) || null")
+  || !php.includes("biwenger_player_positions") || !php.includes("return [null, null, null, null]") || !php.includes("reservesID")) {
   throw new Error("Lineup editor must support substitutes and Biwenger multi-position players");
 }
 
-if (!php.includes("favorite_news_is_recent") || !php.includes("$maxAgeDays = 180")) {
+if (!php.includes("favorite_news_is_recent") || !php.includes("$maxAgeDays = 7")
+  || !php.includes("favorite_news_html_datetime_near_offset") || !js.includes("recentPlayerNewsArticles")
+  || !php.includes("$host !== 'news.google.com'") || !js.includes("formatPlayerNewsDate")) {
   throw new Error("Player news must discard stale articles");
 }
 
@@ -314,8 +319,19 @@ if (!js.includes("fixtureUnresolved") || !js.includes("upcomingFixtureCoverage")
   throw new Error("An unresolved fixture link must be distinct from a confirmed missing next match");
 }
 
-if (!php.includes("$fixtures['schemaVersion'] = 5") || !php.includes("eliminatedTeams") || !js.includes("45 * 60 * 1000")) {
+if (!php.includes("$fixtures['schemaVersion'] = 6") || !php.includes("fixtures-v4-") || !php.includes("eliminatedTeams")
+  || !php.includes("$queries[] = 'La Liga'") || !js.includes("45 * 60 * 1000") || !js.includes("invalidateMarketAnalysisCache();\n    saveLocalLeagueSnapshot();")) {
   throw new Error("Old incomplete fixture snapshots must be invalidated after the calendar fix");
+}
+
+if (!php.includes("'bidCountFree' => $premiumBidCounts") || !php.includes("marketShowBids")
+  || !php.includes("'jsonValue' => $jsonValid ? $json : null") || !php.includes("bool $allowScalar = false")
+  || php.includes("if ($count === null) $count = 0") || !js.includes("await saveActiveLeague();")) {
+  throw new Error("Bid counts must honor league visibility, classic-market access, and never disguise provider errors as zero");
+}
+
+if (!css.includes('html[data-theme="day"] .lineup-substitutes') || !css.includes("background: #f3f8f5")) {
+  throw new Error("The day theme must keep substitute headings legible");
 }
 
 if (!js.includes("query-player-bid-count") || !js.includes("showBidCountPopup")) {

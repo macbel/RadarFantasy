@@ -650,6 +650,7 @@ window.TEAM_ALIASES = {
   "barcelona": "Barcelona",
   "barca": "Barcelona",
   "betis": "Betis",
+  "real betis": "Betis",
   "granada": "Granada",
   "espanyol": "Espanyol",
   "mallorca": "Mallorca",
@@ -662,11 +663,23 @@ window.TEAM_ALIASES = {
   "getafe": "Getafe",
   "rayo": "Rayo",
   "celta": "Celta",
+  "celta vigo": "Celta",
   "alaves": "Alaves",
+  "deportivo alaves": "Alaves",
   "real oviedo": "Oviedo",
   "oviedo": "Oviedo",
   "levante": "Levante",
-  "elche": "Elche"
+  "levante ud": "Levante",
+  "elche": "Elche",
+  "deportivo": "Deportivo",
+  "deportivo de a coruna": "Deportivo",
+  "deportivo de la coruna": "Deportivo",
+  "malaga": "Malaga",
+  "malaga cf": "Malaga",
+  "racing": "Racing",
+  "real racing": "Racing",
+  "real racing club": "Racing",
+  "racing de santander": "Racing"
 };
 
 window.NATIONAL_TEAM_ALIASES = {

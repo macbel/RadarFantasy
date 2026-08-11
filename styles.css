@@ -8700,6 +8700,10 @@ html[data-theme="day"] .admin-user-form select { background: #fff; border-color:
 .lineup-substitutes-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .lineup-substitute-slot { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 10px; border-radius: 14px; background: rgba(255,255,255,.04); }
 .lineup-substitute-slot select, .lineup-position-select { min-width: 0; }
+html[data-theme="day"] .lineup-substitutes { border-color: #9dbbb6; background: #f3f8f5; color: #13272b; }
+html[data-theme="day"] .lineup-substitute-slot { border: 1px solid rgba(19, 39, 43, .12); background: #fbfdfb; }
+html[data-theme="day"] .lineup-substitutes-heading .eyebrow { color: #415d61; }
+html[data-theme="day"] .lineup-substitutes-heading strong { color: #13272b; }
 .multi-position-label { display: inline-flex; padding: 2px 6px; border-radius: 999px; background: rgba(41,199,153,.14); color: var(--accent); font-size: .7rem; }
 @media (max-width: 900px) { .lineup-substitutes-grid { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 560px) { .lineup-substitutes-grid { grid-template-columns: 1fr; } }

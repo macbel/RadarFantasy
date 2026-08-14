@@ -5354,7 +5354,7 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
 {
     $competition = trim((string)($session['competition'] ?? ''));
     $leagueName = trim((string)($session['leagueName'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v4-' . slugify($competition ?: $leagueName) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v5-' . slugify($competition ?: $leagueName) . '.json';
     $cached = read_json_file($cachePath, []);
     if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit';
@@ -5378,8 +5378,8 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
                 $id = (int)($unique['id'] ?? 0);
                 if ($id <= 0) continue;
                 $name = (string)($unique['name'] ?? $entity['name'] ?? '');
-                $score = identity_name_score($name, $candidateQuery);
-                if ($score > 0) {
+                $score = fixture_competition_match_score($name, [$candidateQuery]);
+                if ($score >= 70) {
                     $tournaments[$id] = [
                         'id' => $id,
                         'name' => $name,
@@ -5389,7 +5389,7 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
                     ];
                 }
             }
-            if ($tournaments) {
+            if ($tournaments && max(array_column($tournaments, 'score')) >= 100) {
                 $query = $candidateQuery;
                 break;
             }
@@ -5693,7 +5693,7 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
         }
     }
     $fixtures = decorate_fixture_competition_state($fixtures, $session);
-    $fixtures['schemaVersion'] = 6;
+    $fixtures['schemaVersion'] = 7;
     $fixtures['fetchedAtTs'] = (int)($fixtures['fetchedAtTs'] ?? time());
     $fixtures['sourceStrategy'] = $sourceStrategy;
     $fixtures['durationMs'] = (int)round((microtime(true) - $startedAt) * 1000);
@@ -6481,13 +6481,10 @@ function fixture_competition_match_score(string $competitionLabel, array $querie
         foreach ($queries as $query) {
             $queryNorm = normalize_text($query);
             if ($queryNorm === '') continue;
-            if (preg_match('/world|mundial/', $queryNorm) && preg_match('/mundial|world/', $label)) return 100;
-            if (preg_match('/laliga|la liga|primera/', $queryNorm) && preg_match('/liga|primera/', $label)) return 100;
-            if (preg_match('/champions/', $queryNorm) && preg_match('/champions/', $label)) return 100;
-            if (preg_match('/premier/', $queryNorm) && preg_match('/premier/', $label)) return 100;
-            if (preg_match('/bundesliga/', $queryNorm) && preg_match('/bundesliga/', $label)) return 100;
-            if (preg_match('/serie a/', $queryNorm) && preg_match('/serie a/', $label)) return 100;
-            if (preg_match('/ligue 1/', $queryNorm) && preg_match('/ligue 1/', $label)) return 100;
+            $queryFamily = fixture_competition_family($queryNorm);
+            $labelFamily = fixture_competition_family($label);
+            if ($queryFamily !== '' && $labelFamily !== '') return $queryFamily === $labelFamily ? 100 : 0;
+            if ($queryFamily !== '' && $labelFamily === '') continue;
         }
     }
     $best = 0;
@@ -6495,6 +6492,23 @@ function fixture_competition_match_score(string $competitionLabel, array $querie
         $best = max($best, identity_name_score($competitionLabel, $query));
     }
     return $best;
+}
+
+function fixture_competition_family(string $value): string
+{
+    $value = normalize_text($value);
+    if ($value === '') return '';
+    if (preg_match('/world cup|copa del mundo|mundial/', $value)) return 'world-cup';
+    if (preg_match('/champions/', $value)) return 'champions-league';
+    if (preg_match('/bundesliga/', $value)) return 'bundesliga';
+    if (preg_match('/premier league|english premier/', $value)) return 'premier-league';
+    if (preg_match('/serie a|italian serie/', $value)) return 'serie-a';
+    if (preg_match('/ligue 1|french ligue/', $value)) return 'ligue-1';
+    if (preg_match('/eredivisie/', $value)) return 'eredivisie';
+    if (preg_match('/copa del rey/', $value)) return 'copa-del-rey';
+    if (preg_match('/supercopa/', $value)) return 'supercopa';
+    if (preg_match('/(^| )(laliga|la liga|primera division|liga ea sports)( |$)/', $value)) return 'la-liga';
+    return '';
 }
 
 function thesportsdb_event_timestamp(array $event): int

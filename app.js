@@ -207,7 +207,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.10.2";
+const APP_VERSION = "3.10.3";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -1006,7 +1006,28 @@ const hasUpcomingFixtureEvents = (fixtures = state.leagueFixtures) => {
 const fixtureDataNeedsRefresh = (fixtures = state.leagueFixtures) => {
   const fetchedAtMs = Number(fixtures?.fetchedAtTs || 0) * 1000;
   const stale = !Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0 || Date.now() - fetchedAtMs > 45 * 60 * 1000;
-  return Number(fixtures?.schemaVersion || 0) < 6 || stale || !hasUpcomingFixtureEvents(fixtures);
+  return Number(fixtures?.schemaVersion || 0) < 7 || stale || !hasUpcomingFixtureEvents(fixtures);
+};
+
+const fixtureCompetitionFamily = (value) => {
+  const normalized = normalize(value).replace(/-/g, " ");
+  if (/world cup|copa del mundo|mundial/.test(normalized)) return "world-cup";
+  if (/champions/.test(normalized)) return "champions-league";
+  if (/bundesliga/.test(normalized)) return "bundesliga";
+  if (/premier league|english premier/.test(normalized)) return "premier-league";
+  if (/serie a|italian serie/.test(normalized)) return "serie-a";
+  if (/ligue 1|french ligue/.test(normalized)) return "ligue-1";
+  if (/eredivisie/.test(normalized)) return "eredivisie";
+  if (/copa del rey/.test(normalized)) return "copa-del-rey";
+  if (/supercopa/.test(normalized)) return "supercopa";
+  if (/(^| )(laliga|la liga|primera division|liga ea sports)( |$)/.test(normalized)) return "la-liga";
+  return "";
+};
+
+const fixturePayloadMatchesCompetition = (fixtures, competition = state.competition) => {
+  const expected = fixtureCompetitionFamily(competition);
+  const received = fixtureCompetitionFamily(fixtures?.competition || "");
+  return !expected || !received || expected === received;
 };
 
 const playerIsEliminatedFromCompetition = (player) => {
@@ -6515,7 +6536,7 @@ const applyLeague = (league) => {
   };
   state.selectedPlayerId = null;
   state.recommendedLineup = null;
-  state.editableLineup = league.editableLineup || null;
+  state.editableLineup = reconcileEditableLineup(league.editableLineup || null, state.teamPlayers);
   state.lineupRequested = Boolean(league.lineupRequested && state.editableLineup?.playerIds?.length);
   state.biwengerOperations = null;
   state.leagueOverview = league.leagueOverview || (previousLeagueId === league.id ? previousLeagueOverview : null);
@@ -7539,7 +7560,10 @@ const importFromBiwenger = async (kind, options = {}) => {
       state.teamNews = [];
       state.teamNewsUpdatedAt = null;
       state.recommendedLineup = null;
-      const importedEditableLineup = editableLineupFromBiwengerPayload(payload.lineup, state.teamPlayers);
+      const importedEditableLineup = reconcileEditableLineup(
+        editableLineupFromBiwengerPayload(payload.lineup, state.teamPlayers),
+        state.teamPlayers
+      );
       const preservedEditableLineup = reconcileEditableLineup(previousEditableLineup, state.teamPlayers);
       state.editableLineup = importedEditableLineup || preservedEditableLineup || null;
       state.lineupRequested = Boolean(state.editableLineup?.playerIds?.length && (importedEditableLineup || previousLineupRequested));
@@ -9075,16 +9099,21 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
     let payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "No se pudo cargar la jornada actual");
     let coverage = fixturePlayerCoverage(payload);
-    if (state.biwenger.authenticated && (!hasUpcomingFixtureEvents(payload) || (coverage.total > 0 && coverage.covered === 0))) {
+    if (state.biwenger.authenticated && (!fixturePayloadMatchesCompetition(payload)
+      || !hasUpcomingFixtureEvents(payload)
+      || (coverage.total > 0 && coverage.covered === 0))) {
       const competition = String(state.biwenger.competition || payload.competition || activeLeagueName() || "la-liga");
       const fallbackResponse = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(competition)}${forceRefresh ? "&refresh=1" : ""}`);
       const fallbackPayload = await fallbackResponse.json().catch(() => ({}));
       const fallbackCoverage = fixturePlayerCoverage(fallbackPayload);
-      if (fallbackResponse.ok && hasUpcomingFixtureEvents(fallbackPayload)
-        && (fallbackCoverage.covered > coverage.covered || !hasUpcomingFixtureEvents(payload))) {
+      if (fallbackResponse.ok && fixturePayloadMatchesCompetition(fallbackPayload) && hasUpcomingFixtureEvents(fallbackPayload)
+        && (fallbackCoverage.covered > coverage.covered || !fixturePayloadMatchesCompetition(payload) || !hasUpcomingFixtureEvents(payload))) {
         payload = fallbackPayload;
         coverage = fallbackCoverage;
       }
+    }
+    if (!fixturePayloadMatchesCompetition(payload)) {
+      throw new Error(`El proveedor devolvió ${payload.competition || "otra competición"} en vez de la competición seleccionada.`);
     }
     if (!hasUpcomingFixtureEvents(payload)) throw new Error("Las fuentes no han devuelto próximos partidos de la competición seleccionada.");
     if (coverage.total > 0 && coverage.covered === 0) {
@@ -9100,8 +9129,9 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
     if (showFeedback) setLeagueOperationStatus(`Jornada ${payload.round || "actual"} actualizada: ${(payload.events || []).length} partidos y ${coverage.covered}/${coverage.total || coverage.covered} jugadores con próximo rival.`, "ready");
     return true;
   } catch (error) {
-    state.leagueFixtures = previousFixtures;
-    if (previousFixtures?.events?.length) renderLeagueFixtures();
+    const previousMatchesCompetition = fixturePayloadMatchesCompetition(previousFixtures);
+    state.leagueFixtures = previousMatchesCompetition ? previousFixtures : null;
+    if (previousMatchesCompetition && previousFixtures?.events?.length) renderLeagueFixtures();
     else if (target) target.innerHTML = `<p class="muted-empty">${escapeHtml(error.message || "No se pudo cargar la jornada actual.")}</p>`;
     if (showFeedback) setLeagueOperationStatus(error.message || "No se pudo cargar la jornada actual.", "error");
     return false;
@@ -11569,6 +11599,15 @@ const reconcileEditableLineup = (lineup = state.editableLineup, players = state.
       return valid;
     }));
   const formation = FORMATIONS.find((item) => item.name === formationName) || FORMATIONS[0];
+  if (playerIds.length !== 11) {
+    const candidates = (players || []).map(playerForCompetition).map((player) => ({
+      ...player,
+      lineupEligible: playerEligibleForNextLineup(player),
+      lineupScore: lineupPlayerScore(player)
+    }));
+    const completed = assignPlayersToFormation(candidates, formation);
+    if (completed.selected.length === 11) return editableLineupFromRecommendation(completed);
+  }
   const orderedSlots = formationPositionSlots(formation);
   const lineupPositions = Object.fromEntries(playerIds.map((id, index) => {
     const player = byId.get(String(id));

@@ -233,9 +233,13 @@ const worldCupAliasPairs = [
 if (worldCupAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(biwengerName, fixtureName) < 88)) {
   throw new Error("World Cup team translations must match SofaScore fixture names: " + JSON.stringify(worldCupAliasPairs));
 }
-if (!fixtureDataNeedsRefresh({ schemaVersion: 5, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
-  || fixtureDataNeedsRefresh({ schemaVersion: 6, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
+if (!fixtureDataNeedsRefresh({ schemaVersion: 6, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
+  || fixtureDataNeedsRefresh({ schemaVersion: 7, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
   throw new Error("Fixture cache freshness must invalidate old schemas without refetching a current complete snapshot");
+}
+if (fixturePayloadMatchesCompetition({ competition: "Bundesliga" }, "la-liga")
+  || !fixturePayloadMatchesCompetition({ competition: "LaLiga" }, "la-liga")) {
+  throw new Error("Fixture competition validation must never confuse Bundesliga with LaLiga");
 }
 
 const laLigaAliasPairs = [
@@ -795,6 +799,15 @@ if (importedMultiLineup?.lineupPositions?.["multi-flex"] !== "MC"
   || importedMultiLineup?.substituteIds?.MC
   || importedMultiLineup?.substituteIds?.DL !== "reserve-dl") {
   throw new Error("Imported Biwenger lineup must preserve position by ordered formation slot: " + JSON.stringify(importedMultiLineup));
+}
+const repairedPartialLineup = reconcileEditableLineup({
+  formationName: "4-4-2",
+  playerIds: ["multi-por", "multi-df-0", "multi-mc-0", "multi-dl-1"],
+  lineupPositions: { "multi-por": "POR", "multi-df-0": "DF", "multi-mc-0": "MC", "multi-dl-1": "DL" },
+  substituteIds: {}
+}, state.teamPlayers);
+if (repairedPartialLineup?.playerIds?.length !== 11) {
+  throw new Error("A partial four-player lineup must be completed to eleven players: " + JSON.stringify(repairedPartialLineup));
 }
 state.biwenger.lineupMultiPos = false;
 if (playerEligiblePositions(state.teamPlayers.find((player) => player.id === "multi-flex")).length !== 1) {

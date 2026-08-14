@@ -86,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=123') || !sw.includes('radar-fantasy-shell-v74')) {
+if (!html.includes('app.js?v=124') || !sw.includes('radar-fantasy-shell-v75')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -328,9 +328,14 @@ if (!js.includes("fixtureUnresolved") || !js.includes("upcomingFixtureCoverage")
   throw new Error("An unresolved fixture link must be distinct from a confirmed missing next match");
 }
 
-if (!php.includes("$fixtures['schemaVersion'] = 6") || !php.includes("fixtures-v4-") || !php.includes("eliminatedTeams")
+if (!php.includes("$fixtures['schemaVersion'] = 7") || !php.includes("fixtures-v5-") || !php.includes("eliminatedTeams")
   || !php.includes("$queries[] = 'La Liga'") || !js.includes("45 * 60 * 1000") || !js.includes("invalidateMarketAnalysisCache();\n    saveLocalLeagueSnapshot();")) {
   throw new Error("Old incomplete fixture snapshots must be invalidated after the calendar fix");
+}
+
+if (!php.includes("function fixture_competition_family") || !php.includes("$queryFamily === $labelFamily ? 100 : 0")
+  || !js.includes("fixturePayloadMatchesCompetition") || !js.includes("reconcileEditableLineup(league.editableLineup || null")) {
+  throw new Error("LaLiga fixtures must reject Bundesliga matches and incomplete saved lineups must be repaired");
 }
 
 if (!php.includes("'bidCountFree' => $premiumBidCounts") || !php.includes("marketShowBids")

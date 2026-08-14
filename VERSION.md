@@ -1,8 +1,15 @@
-# Version 3.10.2
+# Version 3.10.3
 
 Fecha de publicación: 2026-08-14
 
 ## Notas de versión
+
+- LaLiga ya no puede confundirse con Bundesliga al buscar la competición en los proveedores de calendarios.
+- Se invalida la caché de partidos incorrecta y la aplicación comprueba la competición recibida antes de mostrarla.
+- Las alineaciones importadas o guardadas con solo un jugador por demarcación se completan automáticamente hasta once.
+- El campo y el editor recuperan todos los titulares y sus selectores tras seleccionar o volver a importar la liga.
+
+## Historial 3.10.2
 
 - "Actualizar todo" fuerza una consulta nueva del calendario y deja de aceptar la caché como una actualización completada.
 - El calendario se carga antes que el resto de secciones y valida cuántos jugadores reciben próximo rival.

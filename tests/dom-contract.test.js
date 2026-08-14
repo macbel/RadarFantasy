@@ -20,6 +20,14 @@ const queriedIds = Array.from(js.matchAll(/qs\(["']#([a-zA-Z0-9_-]+)["']\)/g))
 
 const missing = queriedIds.filter((id) => !ids.has(id));
 
+if (!html.includes('id="biwenger-onboarding-form"') || !html.includes('id="biwenger-onboarding-refresh"')) {
+  throw new Error("Platform login must expose the required Biwenger connection flow");
+}
+
+if (!js.includes("const connectBiwenger") || !js.includes("!hasUpcomingFixtureEvents(payload)")) {
+  throw new Error("Biwenger connection must refresh selected data and recover missing future fixtures");
+}
+
 if (html.indexOf('data-view="team"') > html.indexOf('data-view="market"')) {
   throw new Error("Mi equipo must be the first menu option, followed by Mercado");
 }
@@ -78,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=119') || !sw.includes('radar-fantasy-shell-v70')) {
+if (!html.includes('app.js?v=122') || !sw.includes('radar-fantasy-shell-v73')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -98,7 +106,7 @@ if (!js.includes('checkTeamWhenMarketUnchanged: reason === "startup"')) {
   throw new Error("Startup synchronization must still check the current Biwenger lineup after an unchanged market");
 }
 
-if (!js.includes("playerEligibleForNextLineup") || !js.includes("unavailable * 120") || !js.includes("Number(b.lineupEligible) - Number(a.lineupEligible)")) {
+if (!js.includes("playerEligibleForNextLineup") || !js.includes("player.lineupEligible === false ? 240") || !js.includes("Number(b.lineupEligible) - Number(a.lineupEligible)")) {
   throw new Error("The ideal lineup must prefer available players while still filling formations when alternatives do not exist");
 }
 
@@ -185,13 +193,20 @@ if (!html.includes('id="show-live-round"') || !js.includes("showExperimentalLive
 if (!html.includes('id="appearance-mode"') || !js.includes("APP_THEME_MODE_KEY") || !js.includes("solarDaylightFor") || !css.includes('html[data-theme="day"]')) {
   throw new Error("Appearance mode must support persisted day, night, and automatic solar themes");
 }
+const themeBootstrapIndex = html.indexOf('const modeKey = "radar-fantasy.theme-mode.v1"');
+const stylesheetIndex = html.indexOf('<link rel="stylesheet"');
+if (themeBootstrapIndex < 0 || stylesheetIndex < 0 || themeBootstrapIndex > stylesheetIndex) {
+  throw new Error("Persisted appearance mode must be resolved before the stylesheet loads");
+}
 
 if (!html.includes('id="refresh-all-settings"') || !html.includes('id="refresh-league-settings"') || !html.includes('id="refresh-daily-plan-settings"') || !js.includes("refreshAllSettingsManually") || !js.includes("refreshDailyPlanSettingsManually") || !js.includes("runSettingsRefreshAction")) {
   throw new Error("Settings must expose manual refresh controls for league data");
 }
 
 const refreshAllBlock = js.slice(js.indexOf("const refreshAllSettingsManually"), js.indexOf("const handleNavigationButtonClick"));
-if (!refreshAllBlock.includes("syncSelectedLeagueWithBiwenger")
+if (!refreshAllBlock.includes("refreshTeamSettingsManually()")
+  || !refreshAllBlock.includes("refreshMarketSettingsManually()")
+  || !refreshAllBlock.includes("loadBiwengerOperations(false)")
   || !refreshAllBlock.includes("requestedBiwengerLeagueId")
   || !refreshAllBlock.includes("refreshTeamNews({ force: true })")
   || !refreshAllBlock.includes("refreshFavoritesAll({ force: true })")
@@ -199,6 +214,24 @@ if (!refreshAllBlock.includes("syncSelectedLeagueWithBiwenger")
   || !refreshAllBlock.includes("refreshLeagueCenterSettingsManually")
   || !refreshAllBlock.includes("refreshDailyPlanSettingsManually")) {
   throw new Error("Actualizar todo must refresh every league-backed section and news feed");
+}
+
+if (!html.includes('id="show-futbolfantasy-settings"') || !html.includes('id="show-api-config"')
+  || !html.includes('id="futbolfantasy-settings-card" hidden') || !html.includes('id="api-config-card" hidden')) {
+  throw new Error("Advanced source connections must be optional in Settings");
+}
+
+if (!js.includes("lineup-substitute-select") || !js.includes("playerEligiblePositions") || !js.includes("assignPlayersToFormation")
+  || !js.includes("lineupPlayersInFormationOrder") || !js.includes("Biwenger puede cobrar monedas")
+  || !js.includes("Number(editable.substitutes?.[position]?.biwengerPlayerId || 0) || null")
+  || !php.includes("biwenger_player_positions") || !php.includes("return [null, null, null, null]") || !php.includes("reservesID")) {
+  throw new Error("Lineup editor must support substitutes and Biwenger multi-position players");
+}
+
+if (!php.includes("favorite_news_is_recent") || !php.includes("$maxAgeDays = 7")
+  || !php.includes("favorite_news_html_datetime_near_offset") || !js.includes("recentPlayerNewsArticles")
+  || !php.includes("$host !== 'news.google.com'") || !js.includes("formatPlayerNewsDate")) {
+  throw new Error("Player news must discard stale articles");
 }
 
 if (!js.includes("const startupLeagueSelectionReady")
@@ -286,8 +319,19 @@ if (!js.includes("fixtureUnresolved") || !js.includes("upcomingFixtureCoverage")
   throw new Error("An unresolved fixture link must be distinct from a confirmed missing next match");
 }
 
-if (!php.includes("$fixtures['schemaVersion'] = 5") || !php.includes("eliminatedTeams") || !js.includes("45 * 60 * 1000")) {
+if (!php.includes("$fixtures['schemaVersion'] = 6") || !php.includes("fixtures-v4-") || !php.includes("eliminatedTeams")
+  || !php.includes("$queries[] = 'La Liga'") || !js.includes("45 * 60 * 1000") || !js.includes("invalidateMarketAnalysisCache();\n    saveLocalLeagueSnapshot();")) {
   throw new Error("Old incomplete fixture snapshots must be invalidated after the calendar fix");
+}
+
+if (!php.includes("'bidCountFree' => $premiumBidCounts") || !php.includes("marketShowBids")
+  || !php.includes("'jsonValue' => $jsonValid ? $json : null") || !php.includes("bool $allowScalar = false")
+  || php.includes("if ($count === null) $count = 0") || !js.includes("await saveActiveLeague();")) {
+  throw new Error("Bid counts must honor league visibility, classic-market access, and never disguise provider errors as zero");
+}
+
+if (!css.includes('html[data-theme="day"] .lineup-substitutes') || !css.includes("background: #f3f8f5")) {
+  throw new Error("The day theme must keep substitute headings legible");
 }
 
 if (!js.includes("query-player-bid-count") || !js.includes("showBidCountPopup")) {

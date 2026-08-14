@@ -664,11 +664,24 @@ if ($route === '/biwenger/lineup' && $requestMethod === 'POST') {
     $players = array_values(array_filter(array_map('intval', (array)($payload['playersID'] ?? [])), static fn($id) => $id > 0));
     $captain = (int)($payload['captain'] ?? 0);
     $striker = (int)($payload['striker'] ?? 0);
-    if ($type === '' || count($players) < 11) send_json(400, ['error' => 'Alineacion incompleta o sin formacion']);
+    $rawReserves = array_slice((array)($payload['reservesID'] ?? $payload['substitutesID'] ?? []), 0, 4);
+    $reserves = array_pad(array_map(static function ($id) {
+        $value = (int)$id;
+        return $value > 0 ? $value : null;
+    }, $rawReserves), 4, null);
+    if ($type === '' || count($players) !== 11 || count(array_unique($players)) !== 11) {
+        send_json(400, ['error' => 'Alineacion incompleta, repetida o sin formacion']);
+    }
     if ($captain > 0 && $captain === $striker) send_json(400, ['error' => 'El capitan y el ariete deben ser jugadores distintos']);
     $lineup = ['type' => $type, 'playersID' => $players];
     if ($captain > 0 && in_array($captain, $players, true)) $lineup['captain'] = $captain;
     if ($striker > 0 && in_array($striker, $players, true)) $lineup['striker'] = $striker;
+    $seenReserves = [];
+    $lineup['reservesID'] = array_map(static function ($id) use ($players, &$seenReserves) {
+        if (!is_int($id) || $id <= 0 || in_array($id, $players, true) || isset($seenReserves[$id])) return null;
+        $seenReserves[$id] = true;
+        return $id;
+    }, $reserves);
     try {
         $result = biwenger_private_request_json('PUT', 'https://biwenger.as.com/api/v2/user', $sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls, [
             'lineup' => $lineup
@@ -702,6 +715,9 @@ if ($route === '/biwenger/bid-count' && $requestMethod === 'POST') {
     $playerId = (int)($payload['playerId'] ?? 0);
     $ownerId = (int)($payload['ownerId'] ?? 0);
     if ($playerId <= 0) send_json(400, ['error' => 'Jugador requerido']);
+    if (($sessionState['marketShowBids'] ?? null) === false) {
+        send_json(403, ['error' => 'Esta liga de Biwenger no permite consultar el numero de pujas']);
+    }
     if (empty($sessionState['bidCountFree']) && empty($payload['confirmedCreditCost'])) {
         send_json(402, [
             'error' => 'Consultar este contador cuesta 1 moneda Biwenger en cuentas o ligas sin acceso incluido',
@@ -712,7 +728,9 @@ if ($route === '/biwenger/bid-count' && $requestMethod === 'POST') {
     try {
         $detail = biwenger_visible_bid_count_detail($sessionState, $playerId, $ownerId, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
         $count = $detail['count'];
-        if ($count === null) $count = 0;
+        if ($count === null) {
+            throw new RuntimeException((string)($detail['error'] ?? '') ?: 'Biwenger no ha devuelto un contador de pujas verificable');
+        }
         $ownOffers = [];
         try {
             $userOffersResponse = biwenger_private_get_json(
@@ -1254,6 +1272,9 @@ function biwenger_session_state(array $session): array
         'credits' => $session['credits'] ?? null,
         'rewardSettings' => is_array($session['rewardSettings'] ?? null) ? $session['rewardSettings'] : [],
         'bidCountFree' => !empty($session['bidCountFree']),
+        'marketShowBids' => array_key_exists('marketShowBids', $session) ? $session['marketShowBids'] : null,
+        'marketMode' => $session['marketMode'] ?? '',
+        'lineupMultiPos' => array_key_exists('lineupMultiPos', $session) ? $session['lineupMultiPos'] : null,
         'xVersion' => $session['xVersion'] ?? '',
         'syncedAt' => $session['syncedAt'] ?? null
     ];
@@ -1703,6 +1724,15 @@ function biwenger_build_session(string $token, string $version, string $preferre
     $accountLeagues = (array)($data['leagues'] ?? []);
     $league = biwenger_pick_league($accountLeagues, $preferredLeagueName, $preferredLeagueId);
     $user = is_array($league['user'] ?? null) ? $league['user'] : [];
+    $settings = is_array($league['settings'] ?? null) ? $league['settings'] : [];
+    $marketMode = strtolower(trim((string)($settings['marketMode'] ?? $league['marketMode'] ?? '')));
+    $marketShowBids = array_key_exists('marketShowBids', $settings) ? (bool)$settings['marketShowBids'] : null;
+    $lineupMultiPos = array_key_exists('lineupMultiPos', $settings) ? (bool)$settings['lineupMultiPos'] : null;
+    $userType = strtolower(trim((string)($user['type'] ?? $data['user']['type'] ?? $data['account']['type'] ?? '')));
+    $leagueType = strtolower(trim((string)($league['type'] ?? '')));
+    $premiumBidCounts = !empty($user['isPremium'])
+        || in_array($userType, ['premium', 'ultra'], true)
+        || in_array($leagueType, ['premium', 'ultra'], true);
 
     if ($requirePreferredMatch && $preferredLeagueId > 0 && (int)($league['id'] ?? 0) !== $preferredLeagueId) {
         throw new RuntimeException('No existe en Biwenger la liga vinculada con ID ' . $preferredLeagueId);
@@ -1746,7 +1776,10 @@ function biwenger_build_session(string $token, string $version, string $preferre
         'maximumBid' => biwenger_maximum_bid_from_data((array)$user, (array)$league, (array)$data),
         'credits' => biwenger_first_numeric_value($data, ['credits', 'account.credits', 'user.credits', 'coins']),
         'rewardSettings' => biwenger_reward_settings_from_node((array)($league['settings'] ?? $league)),
-        'bidCountFree' => !empty($user['isPremium']) || in_array(strtolower((string)($league['type'] ?? '')), ['premium', 'ultra'], true),
+        'bidCountFree' => $premiumBidCounts,
+        'marketShowBids' => $marketShowBids,
+        'marketMode' => $marketMode,
+        'lineupMultiPos' => $lineupMultiPos,
         'syncedAt' => gmdate('c')
     ];
 }
@@ -1889,7 +1922,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
     if ($kind === 'team') {
         try {
             $response = biwenger_private_get_json(
-                'https://biwenger.as.com/api/v2/user?fields=*,lineup(type,playersID),players(*,fitness,team,owner),market(*,-userID),offers,-trophies',
+                'https://biwenger.as.com/api/v2/user?fields=*,lineup(*),players(*,fitness,team,owner),market(*,-userID),offers,-trophies',
                 $session,
                 $timeoutSeconds,
                 $headers,
@@ -1965,12 +1998,16 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
         $finance['bidTotal'] = array_sum(array_column($offerMap, 'myBidAmount'));
         $activeLineup = biwenger_pick_active_lineup($userData);
         if ($activeLineup) {
-            $lineupIds = array_map('intval', array_keys(biwenger_lineup_player_ids($userData)));
+            $activeLineupIds = [];
+            biwenger_collect_lineup_ids($activeLineup, $activeLineupIds);
+            $lineupIds = array_map('intval', array_keys($activeLineupIds));
+            $reserveIds = biwenger_lineup_substitute_ids($activeLineup);
             $lineupPayload = [
                 'type' => (string)($activeLineup['type'] ?? $activeLineup['formation'] ?? ''),
                 'playersID' => array_values(array_filter($lineupIds, static fn($id) => $id > 0)),
-                'captain' => biwenger_lineup_role_id($userData, 'captain'),
-                'striker' => biwenger_lineup_role_id($userData, 'striker')
+                'reservesID' => $reserveIds,
+                'captain' => biwenger_lineup_direct_role_id($activeLineup, $userData, 'captain'),
+                'striker' => biwenger_lineup_direct_role_id($activeLineup, $userData, 'striker')
             ];
         }
     } else {
@@ -2226,7 +2263,7 @@ function biwenger_private_get_json(string $url, array $session, int $timeoutSeco
     return biwenger_private_request_json('GET', $url, $session, $timeoutSeconds, $headers, $strictTls);
 }
 
-function biwenger_private_request_json(string $method, string $url, array $session, int $timeoutSeconds, array $headers, bool $strictTls, ?array $payload = null): array
+function biwenger_private_request_json(string $method, string $url, array $session, int $timeoutSeconds, array $headers, bool $strictTls, ?array $payload = null, bool $allowScalar = false)
 {
     global $biwengerRateLimitPath;
     $rateLimit = read_json_file($biwengerRateLimitPath, []);
@@ -2255,8 +2292,9 @@ function biwenger_private_request_json(string $method, string $url, array $sessi
                 $strictTls,
                 $payload === null ? null : json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
             );
-            if ($response['status'] >= 200 && $response['status'] < 300 && is_array($response['json'])) {
-                return $response['json'];
+            if ($response['status'] >= 200 && $response['status'] < 300) {
+                if ($allowScalar && !empty($response['jsonValid'])) return $response['jsonValue'];
+                if (is_array($response['json'])) return $response['json'];
             }
             $lastStatus = (int)$response['status'];
             $lastMessage = (string)($response['json']['error'] ?? $response['json']['message'] ?? '');
@@ -2849,9 +2887,7 @@ function favorite_news_feed_url(array $player): string
         '"' . $name . '"',
         '(site:as.com OR site:marca.com OR site:futbolfantasy.com OR site:biwenger.as.com OR site:jornadaperfecta.com)'
     ];
-    if ($team !== '') {
-        $queryParts[] = '"' . $team . '"';
-    }
+    if ($team !== '') $queryParts[] = $team;
     return 'https://news.google.com/rss/search?q=' . rawurlencode(implode(' ', $queryParts)) . '&hl=es&gl=ES&ceid=ES:es';
 }
 
@@ -2867,10 +2903,8 @@ function favorite_news_parse_rss_items(string $xml, array $player): array
         $title = team_tracking_xml_value($itemXml, 'title');
         $link = team_tracking_xml_value($itemXml, 'link');
         if ($title === '' || $link === '') continue;
-        $normalizedTitle = normalize_text($title);
-        if ($nameKey !== '' && strpos($normalizedTitle, $nameKey) === false && ($teamKey === '' || strpos($normalizedTitle, $teamKey) === false)) {
-            continue;
-        }
+        $candidate = ['title' => $title, 'link' => $link];
+        if (favorite_news_relevance_score($candidate, $player, true) < 30) continue;
         $source = favorite_news_source_label($link, team_tracking_xml_value($itemXml, 'source'));
         $publishedRaw = team_tracking_xml_value($itemXml, 'pubDate');
         $publishedAt = null;
@@ -2906,7 +2940,7 @@ function favorite_news_make_article(string $source, string $title, string $link,
     $link = trim(html_entity_decode($link, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
     if ($link === '' || !preg_match('#^https?://#i', $link)) return null;
     $host = strtolower((string)(parse_url($link, PHP_URL_HOST) ?: ''));
-    if ($host === '' || strpos($host, 'google.') !== false) return null;
+    if ($host === '' || (strpos($host, 'google.') !== false && $host !== 'news.google.com')) return null;
     if (preg_match('/(?:^|[?&])s=|\/search(?:\/|$)|buscar|buscador/i', $link)) return null;
     $titleKey = normalize_text($title);
     if ($title === '' || preg_match('/^(noticia|parte medico|lesionado|lesion|buscar|ver todas?|abrir ficha)/', $titleKey)) {
@@ -3155,14 +3189,68 @@ function favorite_news_parse_ff_html(string $html, string $url, array $player): 
     return $articles;
 }
 
+function favorite_news_html_datetime_near_offset(string $html, int $offset): ?string
+{
+    $before = substr($html, 0, max(0, $offset + 1));
+    $articleStart = strripos($before, '<article');
+    $articleEnd = stripos($html, '</article>', max(0, $offset));
+    $scopeStart = 0;
+    if ($articleStart !== false && $articleEnd !== false && $articleEnd > $articleStart && $articleEnd - $articleStart < 30000) {
+        $scopeStart = $articleStart;
+        $scope = substr($html, $articleStart, $articleEnd + 10 - $articleStart);
+    } else {
+        $moduleStart = false;
+        if (preg_match_all('~<(?:article|div)\b[^>]*class=["\'][^"\']*\btd_module_[^"\']*["\'][^>]*>~i', $before, $moduleMatches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+            $lastModule = $moduleMatches[count($moduleMatches) - 1];
+            $moduleStart = (int)($lastModule[0][1] ?? -1);
+        }
+        $moduleEnd = false;
+        if ($moduleStart !== false && preg_match('~<(?:article|div)\b[^>]*class=["\'][^"\']*\btd_module_[^"\']*["\'][^>]*>~i', $html, $nextModule, PREG_OFFSET_CAPTURE, max($offset + 1, $moduleStart + 1))) {
+            $moduleEnd = (int)($nextModule[0][1] ?? -1);
+        }
+        if ($moduleStart !== false && ($moduleEnd === false || $moduleEnd > $offset) && $offset - $moduleStart < 30000) {
+            $scopeStart = $moduleStart;
+            $scopeEnd = $moduleEnd !== false ? $moduleEnd : min(strlen($html), $offset + 5000);
+            $scope = substr($html, $scopeStart, max(0, $scopeEnd - $scopeStart));
+        } else {
+            $scopeStart = max(0, $offset - 1200);
+            $scope = substr($html, $scopeStart, 3000);
+        }
+    }
+    $candidates = [];
+    if (preg_match_all('~<time\b[^>]*datetime=["\']([^"\']+)["\'][^>]*>~i', $scope, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+        foreach ($matches as $match) {
+            $absoluteOffset = $scopeStart + (int)($match[0][1] ?? 0);
+            $candidates[] = [
+                'value' => (string)($match[1][0] ?? ''),
+                'priority' => stripos((string)($match[0][0] ?? ''), 'published') !== false ? 0 : 1,
+                'distance' => abs($absoluteOffset - $offset)
+            ];
+        }
+    }
+    if (preg_match_all('~<meta\b[^>]*(?:property|name)=["\'](?:article:published_time|date|publish(?:ed)?date)["\'][^>]*content=["\']([^"\']+)["\'][^>]*>~i', $scope, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
+        foreach ($matches as $match) {
+            $absoluteOffset = $scopeStart + (int)($match[0][1] ?? 0);
+            $candidates[] = ['value' => (string)($match[1][0] ?? ''), 'priority' => 0, 'distance' => abs($absoluteOffset - $offset)];
+        }
+    }
+    usort($candidates, static fn($left, $right) => $left['priority'] <=> $right['priority'] ?: $left['distance'] <=> $right['distance']);
+    foreach ($candidates as $candidate) {
+        $timestamp = strtotime(html_entity_decode(trim((string)($candidate['value'] ?? '')), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        if ($timestamp !== false) return gmdate('c', $timestamp);
+    }
+    return null;
+}
+
 function favorite_news_parse_biwenger_html(string $html, array $player): array
 {
     $articles = [];
-    if (preg_match_all('~<h[1-4]\b[^>]*class=["\'][^"\']*\bentry-title\b[^"\']*["\'][^>]*>\s*<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>([\s\S]*?)</a>~i', $html, $matches, PREG_SET_ORDER)) {
+    if (preg_match_all('~<h[1-4]\b[^>]*class=["\'][^"\']*\bentry-title\b[^"\']*["\'][^>]*>\s*<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>([\s\S]*?)</a>~i', $html, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
         foreach ($matches as $match) {
-            $link = absolute_source_url((string)$match[1], 'https://biwenger.as.com');
-            $title = trim(strip_html_text((string)$match[2]));
-            $article = favorite_news_make_article('Biwenger', $title, $link);
+            $link = absolute_source_url((string)($match[1][0] ?? ''), 'https://biwenger.as.com');
+            $title = trim(strip_html_text((string)($match[2][0] ?? '')));
+            $publishedAt = favorite_news_html_datetime_near_offset($html, (int)($match[0][1] ?? 0));
+            $article = favorite_news_make_article('Biwenger', $title, $link, $publishedAt);
             if ($article && favorite_news_relevance_score($article, $player, true) >= 30) $articles[] = $article;
         }
     }
@@ -3172,11 +3260,12 @@ function favorite_news_parse_biwenger_html(string $html, array $player): array
 function favorite_news_parse_jp_html(string $html, array $player): array
 {
     $articles = [];
-    if (preg_match_all('~<h[1-4]\b[^>]*class=["\'][^"\']*\bentry-title\b[^"\']*["\'][^>]*>\s*<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>([\s\S]*?)</a>~i', $html, $matches, PREG_SET_ORDER)) {
+    if (preg_match_all('~<h[1-4]\b[^>]*class=["\'][^"\']*\bentry-title\b[^"\']*["\'][^>]*>\s*<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>([\s\S]*?)</a>~i', $html, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE)) {
         foreach ($matches as $match) {
-            $link = absolute_source_url((string)$match[1], 'https://www.jornadaperfecta.com');
-            $title = trim(strip_html_text((string)$match[2]));
-            $article = favorite_news_make_article('Jornada Perfecta', $title, $link);
+            $link = absolute_source_url((string)($match[1][0] ?? ''), 'https://www.jornadaperfecta.com');
+            $title = trim(strip_html_text((string)($match[2][0] ?? '')));
+            $publishedAt = favorite_news_html_datetime_near_offset($html, (int)($match[0][1] ?? 0));
+            $article = favorite_news_make_article('Jornada Perfecta', $title, $link, $publishedAt);
             if ($article && favorite_news_relevance_score($article, $player, true) >= 30) $articles[] = $article;
         }
     }
@@ -3196,31 +3285,15 @@ function favorite_news_source_priority(array $article): int
 
 function favorite_news_limit_articles(array $articles, int $limit = 6): array
 {
-    $selected = [];
-    $used = [];
-    $quotas = [
-        'futbolfantasy' => 2,
-        'biwenger' => 2,
-        'jornada' => 2
-    ];
-    foreach ($quotas as $needle => $quota) {
-        $count = 0;
-        foreach ($articles as $index => $article) {
-            if ($count >= $quota || isset($used[$index])) continue;
-            $source = normalize_text((string)($article['source'] ?? ''));
-            if (strpos($source, $needle) === false) continue;
-            $selected[] = $article;
-            $used[$index] = true;
-            $count++;
-            if (count($selected) >= $limit) return $selected;
-        }
-    }
-    foreach ($articles as $index => $article) {
-        if (isset($used[$index])) continue;
-        $selected[] = $article;
-        if (count($selected) >= $limit) break;
-    }
-    return $selected;
+    return array_slice(array_values($articles), 0, max(0, $limit));
+}
+
+function favorite_news_is_recent(array $article, int $maxAgeDays = 7): bool
+{
+    $publishedAt = trim((string)($article['publishedAt'] ?? ''));
+    if ($publishedAt === '') return false;
+    $timestamp = strtotime($publishedAt);
+    return $timestamp !== false && $timestamp >= time() - ($maxAgeDays * 86400) && $timestamp <= time() + 86400;
 }
 
 function favorite_news_payload(array $players, int $timeoutSeconds, array $headers, bool $strictTls, string $competition = 'club'): array
@@ -3315,16 +3388,17 @@ function favorite_news_payload(array $players, int $timeoutSeconds, array $heade
             );
             if (!$article) continue;
             if ($competition === 'worldcup' && !favorite_news_worldcup_article_relevant($article, $player)) continue;
+            if (!favorite_news_is_recent($article)) continue;
             $signature = sha1(strtolower(trim((string)($article['source'] ?? ''))) . '|' . strtolower(trim((string)($article['title'] ?? ''))) . '|' . trim((string)($article['link'] ?? '')));
             if (!isset($merged[$signature])) $merged[$signature] = $article;
         }
         $articles = array_values($merged);
         usort($articles, static function ($left, $right) {
-            $priorityDiff = favorite_news_source_priority($left) <=> favorite_news_source_priority($right);
-            if ($priorityDiff !== 0) return $priorityDiff;
             $leftTs = !empty($left['publishedAt']) ? strtotime((string)$left['publishedAt']) : 0;
             $rightTs = !empty($right['publishedAt']) ? strtotime((string)$right['publishedAt']) : 0;
             if ($leftTs !== $rightTs) return $rightTs <=> $leftTs;
+            $priorityDiff = favorite_news_source_priority($left) <=> favorite_news_source_priority($right);
+            if ($priorityDiff !== 0) return $priorityDiff;
             return strcasecmp((string)($left['title'] ?? ''), (string)($right['title'] ?? ''));
         });
         $result[] = [
@@ -3357,7 +3431,7 @@ function biwenger_competition_to_local(string $competition): string
 function sanitize_editable_lineup($value): ?array
 {
     if (!is_array($value)) return null;
-    $allowedFormations = ['4-3-3', '4-4-2', '3-5-2', '3-4-3', '5-3-2', '5-4-1'];
+    $allowedFormations = ['4-3-3', '4-4-2', '4-5-1', '3-5-2', '3-4-3', '5-3-2', '5-4-1', '3-3-4', '3-6-1', '4-2-4', '4-6-0', '5-2-3'];
     $formationName = (string)($value['formationName'] ?? '');
     if (!in_array($formationName, $allowedFormations, true)) return null;
     $playerIds = array_values(array_unique(array_filter(array_map(static function ($id) {
@@ -3366,11 +3440,24 @@ function sanitize_editable_lineup($value): ?array
     }, array_slice((array)($value['playerIds'] ?? []), 0, 11)))));
     $captainId = trim((string)($value['captainId'] ?? ''));
     $strikerId = trim((string)($value['strikerId'] ?? ''));
+    $substituteIds = [];
+    foreach ((array)($value['substituteIds'] ?? []) as $position => $id) {
+        $position = strtoupper(trim((string)$position));
+        $id = trim((string)$id);
+        if (in_array($position, ['POR', 'DF', 'MC', 'DL'], true) && $id !== '' && !in_array($id, $playerIds, true)) $substituteIds[$position] = $id;
+    }
+    $lineupPositions = [];
+    foreach ($playerIds as $id) {
+        $position = strtoupper(trim((string)($value['lineupPositions'][$id] ?? '')));
+        if (in_array($position, ['POR', 'DF', 'MC', 'DL'], true)) $lineupPositions[$id] = $position;
+    }
     return [
         'formationName' => $formationName,
         'playerIds' => $playerIds,
         'captainId' => in_array($captainId, $playerIds, true) ? $captainId : null,
-        'strikerId' => in_array($strikerId, $playerIds, true) ? $strikerId : null
+        'strikerId' => in_array($strikerId, $playerIds, true) ? $strikerId : null,
+        'substituteIds' => $substituteIds,
+        'lineupPositions' => $lineupPositions
     ];
 }
 
@@ -3378,7 +3465,7 @@ function sanitize_league_payload(array $payload): array
 {
     $sanitizePlayers = static function ($players): array {
         $allowed = [
-            'id', 'name', 'team', 'clubTeam', 'baseTeam', 'nationalTeam', 'position', 'biwengerPosition', 'price',
+            'id', 'name', 'team', 'clubTeam', 'baseTeam', 'nationalTeam', 'position', 'biwengerPosition', 'eligiblePositions', 'multiPosition', 'price',
             'starter', 'form', 'asScore', 'sofascore', 'stats', 'valueTrend', 'risk',
             'riskReasons', 'sourceStatus', 'dataConfidence', 'sources', 'note',
             'statusText', 'outOfCompetition', 'activeInCompetition',
@@ -3476,6 +3563,8 @@ function sanitize_preferences_payload($preferences): array
         'showMarketAnalysis' => !empty($preferences['showMarketAnalysis']),
         'showSportDirector' => !array_key_exists('showSportDirector', $preferences) || !empty($preferences['showSportDirector']),
         'showExperimentalLiveRound' => !empty($preferences['showExperimentalLiveRound']),
+        'showFutbolFantasySettings' => !empty($preferences['showFutbolFantasySettings']),
+        'showApiConfig' => !empty($preferences['showApiConfig']),
         'startupSync' => !array_key_exists('startupSync', $preferences) || !empty($preferences['startupSync']),
         'autoSync' => !array_key_exists('autoSync', $preferences) || !empty($preferences['autoSync']),
         'notifications' => !empty($preferences['notifications']),
@@ -5101,6 +5190,34 @@ function biwenger_pick_active_lineup(array $data): array
     return $candidates[0] ?? [];
 }
 
+function biwenger_lineup_direct_role_id(array $lineup, array $data, string $role): int
+{
+    $value = $lineup[$role] ?? $data[$role] ?? null;
+    if (is_array($value)) return (int)($value['id'] ?? $value['playerID'] ?? $value['playerId'] ?? 0);
+    return is_numeric($value) ? (int)$value : 0;
+}
+
+function biwenger_lineup_substitute_ids(array $lineup): array
+{
+    foreach (['reservesID', 'reservesId', 'substitutesID', 'substitutesId', 'substitutePlayersID', 'benchPlayersID', 'bench'] as $key) {
+        if (!array_key_exists($key, $lineup)) continue;
+        $entries = array_slice((array)$lineup[$key], 0, 4);
+        return array_pad(array_map(static function ($entry) {
+            $id = is_array($entry) ? (int)($entry['id'] ?? $entry['playerID'] ?? $entry['playerId'] ?? 0) : (int)$entry;
+            return $id > 0 ? $id : null;
+        }, $entries), 4, null);
+    }
+    foreach (['reserves', 'substitutes'] as $key) {
+        if (!array_key_exists($key, $lineup)) continue;
+        $entries = array_slice((array)$lineup[$key], 0, 4);
+        return array_pad(array_map(static function ($entry) {
+            $id = is_array($entry) ? (int)($entry['id'] ?? $entry['playerID'] ?? $entry['playerId'] ?? 0) : (int)$entry;
+            return $id > 0 ? $id : null;
+        }, $entries), 4, null);
+    }
+    return [null, null, null, null];
+}
+
 function biwenger_pick_latest_scored_lineup(array $data): array
 {
     $candidates = [];
@@ -5235,7 +5352,7 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
 {
     $competition = trim((string)($session['competition'] ?? ''));
     $leagueName = trim((string)($session['leagueName'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v3-' . slugify($competition ?: $leagueName) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v4-' . slugify($competition ?: $leagueName) . '.json';
     $cached = read_json_file($cachePath, []);
     if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit';
@@ -5243,23 +5360,48 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
     }
 
     $fixtureQueries = fixture_competition_queries($session);
-    $query = trim((string)($fixtureQueries[0] ?? str_replace(['-', '_'], ' ', $competition ?: $leagueName)));
-    $search = sofascore_api_json('/search/all?q=' . rawurlencode($query) . '&page=0', $timeoutSeconds, $headers, $strictTls);
-    $results = (array)($search['results'] ?? []);
+    if (!$fixtureQueries) $fixtureQueries[] = str_replace(['-', '_'], ' ', $competition ?: $leagueName);
     $tournaments = [];
-    foreach ($results as $result) {
-        if (!is_array($result)) continue;
-        $entity = is_array($result['entity'] ?? null) ? $result['entity'] : $result;
-        $unique = is_array($entity['uniqueTournament'] ?? null) ? $entity['uniqueTournament'] : $entity;
-        $id = (int)($unique['id'] ?? 0);
-        if ($id <= 0) continue;
-        $name = (string)($unique['name'] ?? $entity['name'] ?? '');
-        $score = identity_name_score($name, $query);
-        if ($score > 0) $tournaments[] = ['id' => $id, 'name' => $name, 'slug' => (string)($unique['slug'] ?? slugify($name)), 'score' => $score];
+    $query = '';
+    $searchErrors = [];
+    foreach ($fixtureQueries as $candidateQuery) {
+        $candidateQuery = trim((string)$candidateQuery);
+        if ($candidateQuery === '') continue;
+        try {
+            $search = sofascore_api_json('/search/all?q=' . rawurlencode($candidateQuery) . '&page=0', $timeoutSeconds, $headers, $strictTls);
+            foreach ((array)($search['results'] ?? []) as $result) {
+                if (!is_array($result)) continue;
+                $entity = is_array($result['entity'] ?? null) ? $result['entity'] : $result;
+                $unique = is_array($entity['uniqueTournament'] ?? null) ? $entity['uniqueTournament'] : $entity;
+                $id = (int)($unique['id'] ?? 0);
+                if ($id <= 0) continue;
+                $name = (string)($unique['name'] ?? $entity['name'] ?? '');
+                $score = identity_name_score($name, $candidateQuery);
+                if ($score > 0) {
+                    $tournaments[$id] = [
+                        'id' => $id,
+                        'name' => $name,
+                        'slug' => (string)($unique['slug'] ?? slugify($name)),
+                        'score' => $score,
+                        'query' => $candidateQuery
+                    ];
+                }
+            }
+            if ($tournaments) {
+                $query = $candidateQuery;
+                break;
+            }
+        } catch (Throwable $error) {
+            $searchErrors[] = $candidateQuery . ': ' . $error->getMessage();
+        }
     }
+    $tournaments = array_values($tournaments);
     usort($tournaments, static fn($a, $b) => $b['score'] <=> $a['score']);
     $tournament = $tournaments[0] ?? null;
-    if (!$tournament) throw new RuntimeException('SofaScore no ha encontrado la competicion activa: ' . ($competition ?: $leagueName));
+    if (!$tournament) {
+        $detail = $searchErrors ? ' (' . implode('; ', array_slice($searchErrors, 0, 2)) . ')' : '';
+        throw new RuntimeException('SofaScore no ha encontrado la competicion activa: ' . ($competition ?: $leagueName) . $detail);
+    }
 
     $seasonId = 0;
     try {
@@ -5540,7 +5682,7 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
         }
     }
     $fixtures = decorate_fixture_competition_state($fixtures, $session);
-    $fixtures['schemaVersion'] = 5;
+    $fixtures['schemaVersion'] = 6;
     $fixtures['fetchedAtTs'] = (int)($fixtures['fetchedAtTs'] ?? time());
     $fixtures['sourceStrategy'] = $sourceStrategy;
     $fixtures['durationMs'] = (int)round((microtime(true) - $startedAt) * 1000);
@@ -5857,14 +5999,16 @@ function api_football_known_league(array $session): ?array
 {
     $competition = normalize_text((string)($session['competition'] ?? ''));
     if ($competition === '') return null;
+    $currentYear = (int)gmdate('Y');
+    $europeanSeason = (int)gmdate('n') >= 7 ? $currentYear : $currentYear - 1;
     $known = [
         '/world|mundial|selecc|copa del mundo/' => ['id' => 1, 'name' => 'World Cup', 'season' => 2026],
-        '/laliga|la liga|primera|ea sports/' => ['id' => 140, 'name' => 'La Liga', 'season' => 2025],
-        '/premier/' => ['id' => 39, 'name' => 'Premier League', 'season' => 2025],
-        '/bundesliga/' => ['id' => 78, 'name' => 'Bundesliga', 'season' => 2025],
-        '/serie a/' => ['id' => 135, 'name' => 'Serie A', 'season' => 2025],
-        '/ligue 1|ligue-1/' => ['id' => 61, 'name' => 'Ligue 1', 'season' => 2025],
-        '/champions/' => ['id' => 2, 'name' => 'UEFA Champions League', 'season' => 2025]
+        '/laliga|la liga|primera|ea sports/' => ['id' => 140, 'name' => 'La Liga', 'season' => $europeanSeason],
+        '/premier/' => ['id' => 39, 'name' => 'Premier League', 'season' => $europeanSeason],
+        '/bundesliga/' => ['id' => 78, 'name' => 'Bundesliga', 'season' => $europeanSeason],
+        '/serie a/' => ['id' => 135, 'name' => 'Serie A', 'season' => $europeanSeason],
+        '/ligue 1|ligue-1/' => ['id' => 61, 'name' => 'Ligue 1', 'season' => $europeanSeason],
+        '/champions/' => ['id' => 2, 'name' => 'UEFA Champions League', 'season' => $europeanSeason]
     ];
     foreach ($known as $pattern => $league) {
         if (preg_match($pattern, $competition)) return $league;
@@ -6280,10 +6424,10 @@ function fixture_competition_queries(array $session): array
         if (preg_match('/world|mundial|selecc|copa del mundo/', $competition)) {
             $queries[] = 'FIFA World Cup';
             $queries[] = 'World Cup';
-        } elseif (preg_match('/laliga|la liga|primera|ea sports/', $competition)) {
-            $queries[] = 'Spanish La Liga';
+        } elseif ($competition === 'club' || preg_match('/laliga|la liga|primera|ea sports/', $competition)) {
             $queries[] = 'La Liga';
             $queries[] = 'LaLiga';
+            $queries[] = 'Spanish La Liga';
         } elseif (preg_match('/premier/', $competition)) {
             $queries[] = 'Premier League';
         } elseif (preg_match('/champions/', $competition)) {
@@ -6681,6 +6825,9 @@ function biwenger_extract_sale_bid_count(array $sale): ?int
 
 function biwenger_extract_sale_bid_count_detail(array $sale, string $path = 'sale', int $depth = 0): array
 {
+    if ($sale === [] && preg_match('/bid|offer|puja/i', $path)) {
+        return ['count' => 0, 'source' => $path . '[]'];
+    }
     $keys = array_keys($sale);
     if ($sale && $keys === range(0, count($sale) - 1)) {
         return ['count' => count($sale), 'source' => $path . '[]'];
@@ -6688,14 +6835,15 @@ function biwenger_extract_sale_bid_count_detail(array $sale, string $path = 'sal
     $directKeys = [
         'bidCount', 'bidsCount', 'offerCount', 'offersCount', 'totalBids', 'totalOffers',
         'numberOfBids', 'numberOfOffers', 'numBids', 'numOffers', 'bidsNumber',
-        'offersNumber', 'counter', 'count', 'total'
+        'offersNumber', 'countBids', 'countOffers', 'biddersCount', 'participantsCount',
+        'counter', 'count', 'total'
     ];
     foreach ($directKeys as $key) {
         if (array_key_exists($key, $sale) && is_numeric($sale[$key])) {
             return ['count' => max(0, (int)$sale[$key]), 'source' => $path . '.' . $key];
         }
     }
-    foreach (['bids', 'offers', 'bidOffers', 'marketBids'] as $key) {
+    foreach (['bids', 'offers', 'bidOffers', 'marketBids', 'users', 'bidders', 'participants'] as $key) {
         if (is_array($sale[$key] ?? null)) {
             return ['count' => count($sale[$key]), 'source' => $path . '.' . $key . '[]'];
         }
@@ -6704,7 +6852,7 @@ function biwenger_extract_sale_bid_count_detail(array $sale, string $path = 'sal
     foreach ($sale as $key => $value) {
         if (!is_array($value)) continue;
         $normalizedKey = strtolower((string)$key);
-        if (!preg_match('/bid|offer|puja|market|sale|status|summary|meta|count|total/', $normalizedKey)) continue;
+        if (!preg_match('/bid|offer|puja|market|sale|status|summary|meta|count|total|user|participant|data|result/', $normalizedKey)) continue;
         $nested = biwenger_extract_sale_bid_count_detail($value, $path . '.' . (string)$key, $depth + 1);
         if ($nested['count'] !== null) return $nested;
     }
@@ -6736,13 +6884,17 @@ function biwenger_visible_bid_count_detail(array $session, int $playerId, int $o
                 min($timeoutSeconds, 5),
                 $headers,
                 $strictTls,
-                $payload
+                $payload,
+                true
             );
-            $data = is_array($result['data'] ?? null) ? $result['data'] : $result;
+            $data = is_array($result) && is_array($result['data'] ?? null) ? $result['data'] : $result;
             if (is_numeric($data)) {
                 return ['count' => max(0, (int)$data), 'source' => strtolower($method) . ':numeric', 'error' => null];
             }
             if (is_array($data)) {
+                if ($data === []) {
+                    return ['count' => 0, 'source' => strtolower($method) . ':market/bids-empty', 'error' => null];
+                }
                 $detail = biwenger_extract_sale_bid_count_detail($data, strtolower($method) . ':market/bids');
                 if ($detail['count'] !== null) return $detail + ['error' => null];
             }
@@ -7176,7 +7328,10 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
         $bidDetail = biwenger_extract_sale_bid_count_detail($sale);
         $bidCount = $bidDetail['count'];
         if ($ownerId !== $userId) {
-            if ($bidCount === null && !empty($session['bidCountFree']) && $queriedBidCounts < 40) {
+            if ($bidCount === null
+                && !empty($session['bidCountFree'])
+                && ($session['marketShowBids'] ?? null) !== false
+                && $queriedBidCounts < 40) {
                 $bidDetail = biwenger_visible_bid_count_detail($session, $salePlayerId, $ownerId, $timeoutSeconds, $headers, $strictTls);
                 $bidCount = $bidDetail['count'];
                 $queriedBidCounts++;
@@ -7240,6 +7395,8 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
             'sales' => count($sales),
             'visibleBidCounts' => count(array_filter($marketBidCounts, static fn($count) => $count !== null)),
             'queriedBidCounts' => $queriedBidCounts,
+            'marketShowBids' => array_key_exists('marketShowBids', $session) ? $session['marketShowBids'] : null,
+            'bidCountFree' => !empty($session['bidCountFree']),
             'offerSource' => $offerSources[0] ?? 'market'
         ]
     ];
@@ -7310,7 +7467,8 @@ function biwenger_normalize_player(array $entry, array $catalog, string $competi
         ?? ($playerId > 0 ? 'https://cdn.biwenger.com/i/p/' . $playerId . '.png' : null);
     $teamImage = biwenger_media_url($team, ['shield', 'badge', 'logo', 'image', 'flag', 'crest', 'photo', 'icon'])
         ?? ($teamId > 0 ? 'https://cdn.biwenger.com/i/t/' . $teamId . '.png' : null);
-    $position = biwenger_position((int)($entry['position'] ?? 3));
+    $eligiblePositions = biwenger_player_positions($entry);
+    $position = $eligiblePositions[0] ?? biwenger_position((int)($entry['position'] ?? 3));
     $fitness = array_values(array_filter((array)($entry['fitness'] ?? []), 'is_numeric'));
     $fitnessAverage = $fitness ? average($fitness) : null;
     $form = $fitnessAverage !== null ? (int)round(clamp(48 + $fitnessAverage * 5.2, 35, 92)) : 56;
@@ -7337,6 +7495,8 @@ function biwenger_normalize_player(array $entry, array $catalog, string $competi
         'clubTeam' => preg_match('/world|mundial/i', $competition) ? null : ($teamName !== '' ? $teamName : null),
         'position' => $position,
         'biwengerPosition' => $position,
+        'eligiblePositions' => $eligiblePositions ?: [$position],
+        'multiPosition' => count($eligiblePositions) > 1,
         'price' => $price,
         'salePrice' => $sale !== null ? $price : null,
         'marketOwnerId' => $marketOwnerId,
@@ -7427,6 +7587,26 @@ function biwenger_position(int $position): string
     if ($position === 4) return 'DL';
     if ($position === 5) return 'ENT';
     return 'MC';
+}
+
+function biwenger_player_positions(array $entry): array
+{
+    $values = [];
+    foreach (['position', 'altPositions', 'positions', 'positionIDs', 'positionIds'] as $key) {
+        if (!array_key_exists($key, $entry)) continue;
+        $raw = $entry[$key];
+        foreach (is_array($raw) ? $raw : [$raw] as $value) {
+            if (is_array($value)) $value = $value['id'] ?? $value['position'] ?? $value['positionID'] ?? null;
+            if (is_numeric($value)) {
+                $mapped = biwenger_position((int)$value);
+                if ($mapped !== 'ENT') $values[] = $mapped;
+            } elseif (is_string($value)) {
+                $mapped = map_position($value);
+                if (in_array($mapped, ['POR', 'DF', 'MC', 'DL'], true)) $values[] = $mapped;
+            }
+        }
+    }
+    return array_values(array_unique($values));
 }
 
 function biwenger_media_url(array $entity, array $keys): ?string
@@ -7550,11 +7730,14 @@ function http_request(string $method, string $url, int $timeoutSeconds, array $h
             throw new RuntimeException($error !== '' ? $error : 'Error HTTP remoto');
         }
         $json = json_decode((string)$responseBody, true);
+        $jsonValid = json_last_error() === JSON_ERROR_NONE;
         return [
             'status' => $status,
             'contentType' => $contentType,
             'body' => (string)$responseBody,
-            'json' => is_array($json) ? $json : []
+            'json' => is_array($json) ? $json : [],
+            'jsonValue' => $jsonValid ? $json : null,
+            'jsonValid' => $jsonValid
         ];
     }
 
@@ -7583,11 +7766,14 @@ function http_request(string $method, string $url, int $timeoutSeconds, array $h
         }
     }
     $json = json_decode((string)$responseBody, true);
+    $jsonValid = json_last_error() === JSON_ERROR_NONE;
     return [
         'status' => $status,
         'contentType' => '',
         'body' => (string)$responseBody,
-        'json' => is_array($json) ? $json : []
+        'json' => is_array($json) ? $json : [],
+        'jsonValue' => $jsonValid ? $json : null,
+        'jsonValid' => $jsonValid
     ];
 }
 

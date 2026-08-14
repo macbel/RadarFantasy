@@ -233,9 +233,33 @@ const worldCupAliasPairs = [
 if (worldCupAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(biwengerName, fixtureName) < 88)) {
   throw new Error("World Cup team translations must match SofaScore fixture names: " + JSON.stringify(worldCupAliasPairs));
 }
-if (!fixtureDataNeedsRefresh({ schemaVersion: 4, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
-  || fixtureDataNeedsRefresh({ schemaVersion: 5, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
+if (!fixtureDataNeedsRefresh({ schemaVersion: 5, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
+  || fixtureDataNeedsRefresh({ schemaVersion: 6, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
   throw new Error("Fixture cache freshness must invalidate old schemas without refetching a current complete snapshot");
+}
+
+const laLigaAliasPairs = [
+  ["Alaves", "Deportivo Alavés"],
+  ["Betis", "Real Betis"],
+  ["Celta", "Celta Vigo"],
+  ["Deportivo", "Deportivo de A Coruña"],
+  ["Levante", "Levante UD"],
+  ["Malaga", "Málaga CF"],
+  ["Racing", "Real Racing Club"]
+];
+if (laLigaAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(biwengerName, fixtureName) < 88)) {
+  throw new Error("LaLiga aliases must link Biwenger teams with current fixture providers: " + JSON.stringify(laLigaAliasPairs));
+}
+
+const recentNews = recentPlayerNewsArticles([
+  { title: "Antigua", publishedAt: new Date(Date.now() - 8 * 86400000).toISOString() },
+  { title: "Ayer", publishedAt: new Date(Date.now() - 86400000).toISOString() },
+  { title: "Hoy", publishedAt: new Date(Date.now() - 3600000).toISOString() },
+  { title: "Sin fecha" }
+]);
+if (recentNews.length !== 2 || recentNews[0].title !== "Hoy" || recentNews[1].title !== "Ayer"
+  || !/20\\d{2}/.test(formatPlayerNewsDate(recentNews[0].publishedAt))) {
+  throw new Error("Player news must reject undated/stale items, include a date, and remain newest-first: " + JSON.stringify(recentNews));
 }
 
 const premiumDecisionInput = {
@@ -697,6 +721,7 @@ const lineupTestTeam = state.teamPlayers;
 const lineupTestFixtures = state.leagueFixtures;
 const lineupTestCompetition = state.competition;
 const lineupTestEditable = state.editableLineup;
+const lineupTestBiwenger = state.biwenger;
 state.competition = "worldcup";
 state.leagueFixtures = { eliminatedTeams: ["Ivory Coast"], events: [{ timestamp: Math.floor(Date.now() / 1000) + 86400, home: { name: "Spain" }, away: { name: "France" } }] };
 state.teamPlayers = [
@@ -721,10 +746,49 @@ state.editableLineup = { formationName: "5-2-3", playerIds: ["injured-df", "elig
 if (!resolvedEditableLineup().selected.some((player) => player.id === "injured-df")) {
   throw new Error("Manual and imported Biwenger lineups must preserve the user's unavailable selections");
 }
+
+state.competition = "club";
+state.biwenger = { ...state.biwenger, connected: true, lineupMultiPos: true };
+state.leagueFixtures = { events: [] };
+state.teamPlayers = [
+  { id: "multi-por", biwengerPlayerId: 3001, name: "Portero", team: "Alaves", position: "POR", eligiblePositions: ["POR"], starter: 70, form: 70 },
+  ...Array.from({ length: 4 }, (_, index) => ({ id: "multi-df-" + index, biwengerPlayerId: 3010 + index, name: "Defensa " + index, team: "Alaves", position: "DF", eligiblePositions: ["DF"], starter: 70, form: 70 })),
+  ...Array.from({ length: 3 }, (_, index) => ({ id: "multi-mc-" + index, biwengerPlayerId: 3020 + index, name: "Medio " + index, team: "Alaves", position: "MC", eligiblePositions: ["MC"], starter: 70, form: 70 })),
+  { id: "multi-flex", biwengerPlayerId: 3030, name: "Delantero multiposicion", team: "Alaves", position: "DL", eligiblePositions: ["DL", "MC"], starter: 82, form: 82 },
+  { id: "multi-dl-1", biwengerPlayerId: 3031, name: "Delantero 1", team: "Alaves", position: "DL", eligiblePositions: ["DL"], starter: 70, form: 70 },
+  { id: "multi-dl-2", biwengerPlayerId: 3032, name: "Delantero 2", team: "Alaves", position: "DL", eligiblePositions: ["DL"], starter: 70, form: 70 },
+  { id: "reserve-df", biwengerPlayerId: 3040, name: "Reserva defensa", team: "Alaves", position: "DF", eligiblePositions: ["DF"], starter: 1, form: 1 },
+  { id: "reserve-dl", biwengerPlayerId: 3041, name: "Reserva delantero", team: "Alaves", position: "DL", eligiblePositions: ["DL"], starter: 1, form: 1 }
+];
+const multiLineup = lineupForFormation("4-4-2");
+state.editableLineup = multiLineup;
+const multiEditable = resolvedEditableLineup();
+const multiOrdered = lineupPlayersInFormationOrder(multiEditable);
+const flexIndex = multiOrdered.findIndex((player) => player.id === "multi-flex");
+if (multiLineup.lineupPositions["multi-flex"] !== "MC" || flexIndex < 5 || flexIndex > 8 || !lineupFormationState(multiEditable).exact) {
+  throw new Error("Multi-position player must fill and serialize the alternate MC slot: " + JSON.stringify(multiLineup));
+}
+const importedMultiLineup = editableLineupFromBiwengerPayload({
+  type: "4-4-2",
+  playersID: multiOrdered.map((player) => player.biwengerPlayerId),
+  reservesID: [null, 3040, null, 3041]
+}, state.teamPlayers);
+if (importedMultiLineup?.lineupPositions?.["multi-flex"] !== "MC"
+  || importedMultiLineup?.substituteIds?.POR
+  || importedMultiLineup?.substituteIds?.DF !== "reserve-df"
+  || importedMultiLineup?.substituteIds?.MC
+  || importedMultiLineup?.substituteIds?.DL !== "reserve-dl") {
+  throw new Error("Imported Biwenger lineup must preserve position by ordered formation slot: " + JSON.stringify(importedMultiLineup));
+}
+state.biwenger.lineupMultiPos = false;
+if (playerEligiblePositions(state.teamPlayers.find((player) => player.id === "multi-flex")).length !== 1) {
+  throw new Error("League lineupMultiPos=false must disable alternate positions");
+}
 state.teamPlayers = lineupTestTeam;
 state.leagueFixtures = lineupTestFixtures;
 state.competition = lineupTestCompetition;
 state.editableLineup = lineupTestEditable;
+state.biwenger = lineupTestBiwenger;
 
 if (compareAppVersions("3.2.0", "3.1.9") !== 1 || compareAppVersions("3.2", "3.2.0") !== 0 || compareAppVersions("3.1.9", "3.2.0") !== -1) {
   throw new Error("Mobile release version comparison is not reliable");

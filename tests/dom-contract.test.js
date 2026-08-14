@@ -86,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=124') || !sw.includes('radar-fantasy-shell-v75')) {
+if (!html.includes('app.js?v=125') || !sw.includes('radar-fantasy-shell-v76')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -336,6 +336,12 @@ if (!php.includes("$fixtures['schemaVersion'] = 7") || !php.includes("fixtures-v
 if (!php.includes("function fixture_competition_family") || !php.includes("$queryFamily === $labelFamily ? 100 : 0")
   || !js.includes("fixturePayloadMatchesCompetition") || !js.includes("reconcileEditableLineup(league.editableLineup || null")) {
   throw new Error("LaLiga fixtures must reject Bundesliga matches and incomplete saved lineups must be repaired");
+}
+
+if (!php.includes("if ($primaryMapped === 'ENT') return ['ENT'];")
+  || !js.includes('player?.position === "ENT" || player?.biwengerPosition === "ENT"')
+  || !js.includes("matchdaySolvencyGuard") || !js.includes("activeBidCommitmentTotal")) {
+  throw new Error("Coaches must stay outside field positions and transfer advice must protect matchday solvency");
 }
 
 if (!php.includes("'bidCountFree' => $premiumBidCounts") || !php.includes("marketShowBids")

@@ -207,7 +207,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.10.3";
+const APP_VERSION = "3.10.4";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -1516,6 +1516,7 @@ const smartBidPlan = (player) => {
   const hasOwnBid = playerHasOwnBid(player);
   const demand = Math.max(0, Number(player.bidCount || 0), Number(player.rivalBidCount || 0));
   const decision = player.marketDecision || {};
+  const solvencyGuard = decision.solvencyGuard || matchdaySolvencyGuard(player, price);
   const confidence = analysisConfidence(player);
   const baseRecommended = Number(decision.recommendedBid || 0) || (decision.type === "buy" || decision.type === "limited" ? price : 0);
   const rationalBase = Number(decision.reasonableLimit || player.maxBid || baseRecommended || price || 0);
@@ -1533,15 +1534,22 @@ const smartBidPlan = (player) => {
     rationalMax = Math.min(rationalMax, maximumBid);
     aggressiveBid = Math.min(aggressiveBid, maximumBid);
   }
+  if (solvencyGuard.known && Number.isFinite(solvencyGuard.maxSafeBid)) {
+    recommendedBid = Math.min(recommendedBid, solvencyGuard.maxSafeBid);
+    rationalMax = Math.min(rationalMax, solvencyGuard.maxSafeBid);
+    aggressiveBid = Math.min(aggressiveBid, solvencyGuard.maxSafeBid);
+  }
   if (decision.type === "avoid") {
     recommendedBid = 0;
     rationalMax = 0;
     aggressiveBid = 0;
   }
-  const blocked = !hasOwnBid && hasMaximumBid && price > maximumBid;
+  const blocked = solvencyGuard.blocksBid || (!hasOwnBid && hasMaximumBid && price > maximumBid);
   const overReference = recommendedBid && referenceValue ? recommendedBid - referenceValue : null;
-  const warning = blocked
-    ? `No entra en tu puja máxima: necesitas ${formatFinanceMoney(price - maximumBid)} más.`
+  const warning = solvencyGuard.blocksBid
+    ? solvencyGuard.message
+    : blocked
+      ? `No entra en tu puja máxima: necesitas ${formatFinanceMoney(price - maximumBid)} más.`
     : decision.type === "avoid"
       ? "No comprometer saldo ahora."
       : overReference > Math.max(250000, referenceValue * 0.08)
@@ -1561,6 +1569,7 @@ const smartBidPlan = (player) => {
     hasOwnBid,
     ownBidAmount,
     blocked,
+    solvencyGuard,
     warning
   };
 };
@@ -1884,7 +1893,10 @@ const activeSaleForPlayer = (player) => {
 
 const assistantBidBudget = () => {
   const maximumBid = currentMaximumBid();
-  return maximumBid !== null && maximumBid >= 0 ? maximumBid : Infinity;
+  const rawBalance = state.biwengerOperations?.finance?.balance ?? state.finance.balance;
+  const balance = rawBalance === null || rawBalance === undefined || rawBalance === "" ? null : Number(rawBalance);
+  const cashSafeBudget = Number.isFinite(balance) ? Math.max(0, balance - activeBidCommitmentTotal()) : Infinity;
+  return maximumBid !== null && maximumBid >= 0 ? Math.min(maximumBid, cashSafeBudget) : cashSafeBudget;
 };
 
 const isIncomingOffer = (offer) => {
@@ -5226,6 +5238,76 @@ const currentMaximumBid = () => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
+const nextMatchdayStartContext = (fixtures = state.leagueFixtures) => {
+  const now = Date.now() / 1000;
+  const events = (fixtures?.events || [])
+    .map((event) => ({ ...event, timestamp: Number(event.timestamp || 0) }))
+    .filter((event) => Number.isFinite(event.timestamp) && event.timestamp > 0);
+  if (!events.length) return { known: false, timestamp: null, round: null };
+  const groups = new Map();
+  events.forEach((event) => {
+    const round = String(event.round || "").trim();
+    const key = round || "sin-jornada";
+    const group = groups.get(key) || { round: round || null, timestamps: [] };
+    group.timestamps.push(event.timestamp);
+    groups.set(key, group);
+  });
+  const futureRounds = [...groups.values()]
+    .map((group) => ({ ...group, timestamp: Math.min(...group.timestamps) }))
+    .filter((group) => group.timestamp > now)
+    .sort((left, right) => left.timestamp - right.timestamp);
+  if (futureRounds.length) return { known: true, timestamp: futureRounds[0].timestamp, round: futureRounds[0].round };
+  const nextEvent = events.filter((event) => event.timestamp > now).sort((left, right) => left.timestamp - right.timestamp)[0];
+  return nextEvent
+    ? { known: true, timestamp: nextEvent.timestamp, round: String(nextEvent.round || "").trim() || null }
+    : { known: false, timestamp: null, round: null };
+};
+
+const activeBidCommitmentTotal = () => {
+  if (Array.isArray(state.biwengerOperations?.offers)) {
+    return activeOwnBidOffers(state.biwengerOperations.offers).reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
+  }
+  const fallback = Number(state.finance?.bidTotal);
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
+};
+
+const matchdaySolvencyGuard = (player, targetAmount = Number(player?.price || player?.biwengerValue || 0)) => {
+  const rawBalance = state.biwengerOperations?.finance?.balance ?? state.finance?.balance;
+  const balance = rawBalance === null || rawBalance === undefined || rawBalance === "" ? null : Number(rawBalance);
+  const deadline = nextMatchdayStartContext();
+  if (!Number.isFinite(balance)) {
+    return { known: false, blocksBid: false, balance: null, projectedBalance: null, maxSafeBid: null, deadline };
+  }
+  const currentBid = Number(playerOwnBidAmount(player) || 0);
+  const totalCommitted = activeBidCommitmentTotal();
+  const otherCommitments = Math.max(0, totalCommitted - currentBid);
+  const amount = Math.max(0, Number(targetAmount || 0));
+  const projectedBalance = balance - otherCommitments - amount;
+  const maxSafeBid = Math.max(0, balance - otherCommitments);
+  const blocksBid = amount > maxSafeBid || projectedBalance < 0;
+  const deadlineText = deadline.timestamp
+    ? new Date(deadline.timestamp * 1000).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" })
+    : "el inicio de la próxima jornada";
+  const roundLabel = deadline.round
+    ? (/jornada/i.test(deadline.round) ? deadline.round : `la jornada ${deadline.round}`)
+    : "la próxima jornada";
+  const deficit = Math.max(0, -projectedBalance);
+  return {
+    known: true,
+    blocksBid,
+    balance,
+    projectedBalance,
+    maxSafeBid,
+    totalCommitted,
+    otherCommitments,
+    deficit,
+    deadline,
+    message: blocksBid
+      ? `Bloqueado: te dejaría ${formatFinanceMoney(projectedBalance)} al inicio de ${roundLabel} (${deadlineText}). Debes liberar al menos ${formatFinanceMoney(deficit)} antes de pujar.`
+      : `Saldo protegido para ${roundLabel}: quedarían ${formatFinanceMoney(projectedBalance)} el ${deadlineText}.`
+  };
+};
+
 const TEAM_TRACKING_SOURCES = ["FutbolFantasy", "MARCA", "Diario AS"];
 
 const renderTrackedTeamSourceFilter = () => {
@@ -5318,12 +5400,13 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
   const recent = player.recentForm || null;
   const competitionContext = competitionMarketContext();
   const budgetGuard = earlySeasonBudgetGuard(player, score, competitionContext);
+  const solvencyGuard = matchdaySolvencyGuard(player, price);
   const unavailableBlocked = player.health?.status === "suspended"
     || player.health?.status === "injured"
     || intelligence.noNextMatch;
   const recentBlocked = Boolean(recent?.noRecentMinutes);
   const maximumBidBlocked = !ownBid && hasMaximumBid && price > maximumBid;
-  const hardBlocked = unavailableBlocked || recentBlocked || maximumBidBlocked || competitionContext.biddingClosed || budgetGuard.blocksBid;
+  const hardBlocked = unavailableBlocked || recentBlocked || maximumBidBlocked || competitionContext.biddingClosed || budgetGuard.blocksBid || solvencyGuard.blocksBid;
   let type = "watch";
   const reasons = [];
 
@@ -5348,12 +5431,13 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
     type = "limited";
   }
 
-  if (ownBid && !competitionContext.biddingClosed && !budgetGuard.blocksBid) {
+  if (ownBid && !competitionContext.biddingClosed && !budgetGuard.blocksBid && !solvencyGuard.blocksBid) {
     const canRecoverOwnBid = !unavailableBlocked && !recentBlocked && !relative?.cheapTrap && score >= 45;
     type = type === "avoid" && canRecoverOwnBid ? "limited" : type;
     reasons.push(`Ya tienes puja activa por ${formatFinanceMoney(playerOwnBidAmount(player))}.`);
   }
   if (competitionContext.biddingClosed) reasons.push(competitionContext.message);
+  else if (solvencyGuard.blocksBid) reasons.push(solvencyGuard.message);
   else if (budgetGuard.blocksBid) reasons.push(`Operación top bloqueada: compromete ${Math.round(budgetGuard.budgetShare * 100)}% del presupuesto en las primeras jornadas.`);
   else if (budgetGuard.limitsBid) reasons.push(`Puja limitada: ${budgetGuard.message} Conviene reservar liquidez.`);
   if (!ownBid && hasMaximumBid && price > maximumBid) reasons.push(`No entra en tu puja máxima actual (${formatFinanceMoney(maximumBid)}).`);
@@ -5391,6 +5475,10 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
     recommendedBid = Math.min(recommendedBid, maximumBid);
     reasonableLimit = Math.min(reasonableLimit, maximumBid);
   }
+  if (solvencyGuard.known && Number.isFinite(solvencyGuard.maxSafeBid)) {
+    recommendedBid = Math.min(recommendedBid, solvencyGuard.maxSafeBid);
+    reasonableLimit = Math.min(reasonableLimit, solvencyGuard.maxSafeBid);
+  }
   if (type === "watch") recommendedBid = 0;
   if (type === "avoid") {
     recommendedBid = 0;
@@ -5408,6 +5496,7 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
     type === "avoid" ? "No pujar ahora" : `Puja recomendada ${formatFinanceMoney(recommendedBid)}`,
     reasonableLimit ? `Tope ${formatFinanceMoney(reasonableLimit)}` : null,
     hasMaximumBid ? `Tu máximo ${formatFinanceMoney(maximumBid)}` : null,
+    solvencyGuard.message || null,
     budgetGuard.message || null
   ].filter(Boolean);
   const fit = [
@@ -5430,6 +5519,7 @@ const marketDecisionForPlayer = (player, score, intelligence, relative, maxBid) 
     reasonableLimit,
     competitionContext,
     budgetGuard,
+    solvencyGuard,
     reasons: reasons.slice(0, 4),
     summary: reasons[0] || decisionLabels[type].label,
     sporting,
@@ -11416,6 +11506,7 @@ const formationPositionSlots = (formation) => ["POR", "DF", "MC", "DL"]
   .flatMap((position) => Array.from({ length: Number(formation?.slots?.[position] || 0) }, () => position));
 
 const playerEligiblePositions = (player) => {
+  if (player?.position === "ENT" || player?.biwengerPosition === "ENT") return [];
   const primary = ["POR", "DF", "MC", "DL"].includes(player?.position) ? player.position : "MC";
   if (state.biwenger.connected && state.biwenger.lineupMultiPos === false) return [primary];
   const positions = Array.isArray(player?.eligiblePositions) ? player.eligiblePositions : [primary];
@@ -11476,6 +11567,7 @@ const assignPlayersToFormation = (players, formation) => {
 
 const calculateBestLineup = () => {
   const players = state.teamPlayers
+    .filter((player) => player.position !== "ENT" && player.biwengerPosition !== "ENT")
     .map(playerForCompetition)
     .map((player) => ({
       ...player,
@@ -11572,7 +11664,8 @@ const editableLineupFromBiwengerPayload = (lineup = null, players = state.teamPl
 
 const reconcileEditableLineup = (lineup = state.editableLineup, players = state.teamPlayers) => {
   if (!lineup?.playerIds?.length) return null;
-  const validIds = new Set((players || []).map((player) => String(player.id)));
+  const fieldPlayers = (players || []).filter((player) => player.position !== "ENT" && player.biwengerPosition !== "ENT");
+  const validIds = new Set(fieldPlayers.map((player) => String(player.id)));
   const seenIds = new Set();
   const playerIds = lineup.playerIds.map(String).filter((id) => {
     if (!validIds.has(id) || seenIds.has(id)) return false;
@@ -11585,7 +11678,7 @@ const reconcileEditableLineup = (lineup = state.editableLineup, players = state.
     : "4-4-2";
   const captainId = playerIds.includes(String(lineup.captainId || "")) ? lineup.captainId : null;
   const strikerId = playerIds.includes(String(lineup.strikerId || "")) ? lineup.strikerId : null;
-  const byId = new Map((players || []).map((player) => [String(player.id), player]));
+  const byId = new Map(fieldPlayers.map((player) => [String(player.id), player]));
   const usedSubstituteIds = new Set();
   const substituteIds = Object.fromEntries(Object.entries(lineup.substituteIds || {})
     .filter(([position, id]) => {
@@ -11600,7 +11693,8 @@ const reconcileEditableLineup = (lineup = state.editableLineup, players = state.
     }));
   const formation = FORMATIONS.find((item) => item.name === formationName) || FORMATIONS[0];
   if (playerIds.length !== 11) {
-    const candidates = (players || []).map(playerForCompetition).map((player) => ({
+    const candidates = fieldPlayers
+      .map(playerForCompetition).map((player) => ({
       ...player,
       lineupEligible: playerEligibleForNextLineup(player),
       lineupScore: lineupPlayerScore(player)
@@ -11621,6 +11715,7 @@ const reconcileEditableLineup = (lineup = state.editableLineup, players = state.
 };
 
 const teamPlayersWithLineupScore = () => state.teamPlayers
+  .filter((player) => player.position !== "ENT" && player.biwengerPosition !== "ENT")
   .map(playerForCompetition)
   .map((player) => ({
     ...player,

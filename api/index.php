@@ -7619,6 +7619,13 @@ function biwenger_position(int $position): string
 
 function biwenger_player_positions(array $entry): array
 {
+    $primaryRaw = $entry['position'] ?? null;
+    $primaryValue = is_array($primaryRaw)
+        ? ($primaryRaw['id'] ?? $primaryRaw['position'] ?? $primaryRaw['positionID'] ?? null)
+        : $primaryRaw;
+    $primaryMapped = is_numeric($primaryValue) ? biwenger_position((int)$primaryValue) : map_position((string)$primaryValue);
+    if ($primaryMapped === 'ENT') return ['ENT'];
+
     $values = [];
     foreach (['position', 'altPositions', 'positions', 'positionIDs', 'positionIds'] as $key) {
         if (!array_key_exists($key, $entry)) continue;

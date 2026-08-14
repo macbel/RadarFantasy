@@ -1,8 +1,15 @@
-# Version 3.10.3
+# Version 3.10.4
 
 Fecha de publicación: 2026-08-14
 
 ## Notas de versión
+
+- Los entrenadores quedan excluidos de todas las posiciones del campo y nunca pueden ocupar una plaza de MC.
+- Las alineaciones antiguas que tenían un entrenador entre los once se reparan automáticamente.
+- Las recomendaciones calculan el saldo tras todas las pujas activas y protegen el inicio de la próxima jornada.
+- Si un fichaje dejaría el saldo negativo al comenzar la jornada, se bloquea, recomienda puja cero e indica cuánto dinero debe liberarse y antes de qué fecha.
+
+## Historial 3.10.3
 
 - LaLiga ya no puede confundirse con Bundesliga al buscar la competición en los proveedores de calendarios.
 - Se invalida la caché de partidos incorrecta y la aplicación comprueba la competición recibida antes de mostrarla.

@@ -727,6 +727,26 @@ const aggressivePlan = dailyScenarioSnapshot("aggressive");
 if (conservativePlan.bids.length > aggressivePlan.bids.length || aggressivePlan.bids.meta.used > state.finance.maximumBid) {
   throw new Error("Daily plan scenarios must respect risk ordering and maximum bid budget");
 }
+state.leagueFixtures = { events: [{
+  timestamp: Math.floor(Date.now() / 1000) + 86400,
+  round: "Jornada 1",
+  home: { name: "Equipo A" },
+  away: { name: "Equipo B" }
+}] };
+state.finance = { ...state.finance, balance: 1000000, maximumBid: 6000000, bidTotal: 0 };
+state.biwengerOperations = { offers: [], sales: [], finance: { balance: 1000000, maximumBid: 6000000 } };
+const insolventRecommendation = analyzePlayer(state.players[0], state.players);
+if (insolventRecommendation.marketDecision.type !== "avoid"
+  || insolventRecommendation.marketDecision.recommendedBid !== 0
+  || !insolventRecommendation.marketDecision.solvencyGuard?.blocksBid
+  || !insolventRecommendation.marketDecision.solvencyGuard?.message.includes("inicio de")) {
+  throw new Error("A signing that causes a negative balance at the next matchday must be blocked: " + JSON.stringify(insolventRecommendation.marketDecision));
+}
+if (assistantBidBudget() !== 1000000 || assistantBidCandidates().length !== 0) {
+  throw new Error("The daily assistant must use cash-safe budget instead of Biwenger credit");
+}
+state.finance = { ...state.finance, balance: 10000000, maximumBid: 6000000 };
+state.biwengerOperations = { offers: [], sales: [], finance: { balance: 10000000, maximumBid: 6000000 } };
 recordDailyActionFeedback({ id: "bid:2001", type: "bid", player: state.players[0] }, true);
 if (learnedDecisionAdjustment(state.players[0], "bid") <= 0) {
   throw new Error("Useful daily-plan feedback should create a bounded positive adjustment");
@@ -778,9 +798,22 @@ state.teamPlayers = [
   { id: "multi-dl-1", biwengerPlayerId: 3031, name: "Delantero 1", team: "Alaves", position: "DL", eligiblePositions: ["DL"], starter: 70, form: 70 },
   { id: "multi-dl-2", biwengerPlayerId: 3032, name: "Delantero 2", team: "Alaves", position: "DL", eligiblePositions: ["DL"], starter: 70, form: 70 },
   { id: "reserve-df", biwengerPlayerId: 3040, name: "Reserva defensa", team: "Alaves", position: "DF", eligiblePositions: ["DF"], starter: 1, form: 1 },
-  { id: "reserve-dl", biwengerPlayerId: 3041, name: "Reserva delantero", team: "Alaves", position: "DL", eligiblePositions: ["DL"], starter: 1, form: 1 }
+  { id: "reserve-dl", biwengerPlayerId: 3041, name: "Reserva delantero", team: "Alaves", position: "DL", eligiblePositions: ["DL"], starter: 1, form: 1 },
+  { id: "coach", biwengerPlayerId: 3099, name: "Entrenador", team: "Alaves", position: "ENT", biwengerPosition: "ENT", eligiblePositions: ["ENT"], starter: 99, form: 99 }
 ];
 const multiLineup = lineupForFormation("4-4-2");
+if (multiLineup.playerIds.includes("coach") || playerEligiblePositions(state.teamPlayers.find((player) => player.id === "coach")).length !== 0) {
+  throw new Error("A coach must never be eligible for an MC slot or enter the eleven");
+}
+const repairedCoachLineup = reconcileEditableLineup({
+  formationName: "4-4-2",
+  playerIds: ["coach", ...multiLineup.playerIds.slice(0, 10)],
+  lineupPositions: { coach: "MC", ...multiLineup.lineupPositions },
+  substituteIds: {}
+}, state.teamPlayers);
+if (repairedCoachLineup.playerIds.includes("coach") || repairedCoachLineup.playerIds.length !== 11) {
+  throw new Error("A saved lineup with a coach in MC must be repaired automatically: " + JSON.stringify(repairedCoachLineup));
+}
 state.editableLineup = multiLineup;
 const multiEditable = resolvedEditableLineup();
 const multiOrdered = lineupPlayersInFormationOrder(multiEditable);

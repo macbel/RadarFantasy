@@ -1,8 +1,16 @@
-# Version 3.10.1
+# Version 3.10.2
 
-Fecha de publicación: 2026-08-06
+Fecha de publicación: 2026-08-14
 
 ## Notas de versión
+
+- "Actualizar todo" fuerza una consulta nueva del calendario y deja de aceptar la caché como una actualización completada.
+- El calendario se carga antes que el resto de secciones y valida cuántos jugadores reciben próximo rival.
+- SofaScore y ESPN se combinan durante la actualización manual para mejorar la cobertura de equipos y partidos.
+- Un fallo en noticias o fuentes secundarias ya no impide actualizar calendario, plantilla, mercado y las demás secciones.
+- Si las fuentes devuelven un calendario vacío o de otra competición, se conserva el último calendario válido y se muestra el error real.
+
+## Historial 3.10.1
 
 - Las noticias de jugadores solo muestran publicaciones fechadas de los últimos siete días, con fecha visible y orden de más reciente a más antigua.
 - Recuperados los próximos partidos de LaLiga 2026/27 mediante la consulta vigente y nuevos alias de equipos; el mercado invalida su análisis al recibir el calendario.

@@ -230,13 +230,14 @@ if ($route === '/healthz' && $requestMethod === 'GET') {
 
 if ($route === '/fixtures' && $requestMethod === 'GET') {
     $competition = trim((string)($_GET['competition'] ?? 'world-cup'));
+    $forceRefresh = filter_var($_GET['refresh'] ?? false, FILTER_VALIDATE_BOOLEAN);
     $fixtureSession = [
         'competition' => $competition,
         'leagueName' => preg_match('/world|mundial|selecc|copa del mundo/i', $competition) ? 'World Cup' : $competition
     ];
     session_write_close();
     try {
-        send_json(200, fast_current_fixtures($fixtureSession, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir));
+        send_json(200, fast_current_fixtures($fixtureSession, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir, $forceRefresh));
     } catch (Throwable $error) {
         send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar el calendario']);
     }
@@ -796,9 +797,10 @@ if ($route === '/biwenger/league' && $requestMethod === 'GET') {
 
 if ($route === '/biwenger/fixtures' && $requestMethod === 'GET') {
     $sessionState = require_biwenger_session();
+    $forceRefresh = filter_var($_GET['refresh'] ?? false, FILTER_VALIDATE_BOOLEAN);
     session_write_close();
     try {
-        send_json(200, fast_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir));
+        send_json(200, fast_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir, $forceRefresh));
     } catch (Throwable $error) {
         send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar el calendario']);
     }
@@ -5348,13 +5350,13 @@ function biwenger_collect_lineup_points(array $node, array &$points, string $pat
     }
 }
 
-function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
+function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
 {
     $competition = trim((string)($session['competition'] ?? ''));
     $leagueName = trim((string)($session['leagueName'] ?? ''));
     $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v4-' . slugify($competition ?: $leagueName) . '.json';
     $cached = read_json_file($cachePath, []);
-    if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit';
         return $cached;
     }
@@ -5575,12 +5577,12 @@ function resultados_futbol_current_fixtures(array $session, int $timeoutSeconds,
     ];
 }
 
-function resultados_futbol_calendar_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
+function resultados_futbol_calendar_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
 {
     $competition = (string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? 'partidos'));
     $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'calendar-v2-' . slugify($competition) . '.json';
     $cached = read_json_file($cachePath, []);
-    if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && !empty($cached['events'])) {
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit-resultados-calendar';
         return $cached;
     }
@@ -5636,20 +5638,20 @@ function resultados_futbol_calendar_urls(array $session): array
     return [];
 }
 
-function fast_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
+function fast_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
 {
     $startedAt = microtime(true);
     $sourceStrategy = 'sofascore-primary';
     try {
-        $fixtures = sofascore_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir);
+        $fixtures = sofascore_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh);
     } catch (Throwable $sofascoreError) {
         try {
-            $fixtures = api_football_current_fixtures($session, max($timeoutSeconds, 12), $headers, $strictTls, $dbDir);
+            $fixtures = api_football_current_fixtures($session, max($timeoutSeconds, 12), $headers, $strictTls, $dbDir, $forceRefresh);
             $sourceStrategy = 'api-football-fallback';
             $fixtures['primarySourceError'] = $sofascoreError->getMessage();
         } catch (Throwable $apiFootballError) {
             try {
-                $fixtures = espn_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir);
+                $fixtures = espn_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh);
                 $sourceStrategy = 'espn-fallback';
                 $fixtures['primarySourceError'] = $sofascoreError->getMessage();
                 $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
@@ -5662,7 +5664,7 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
                     $fixtures['tertiarySourceError'] = $espnError->getMessage();
                 } catch (Throwable $sportsDbError) {
                     try {
-                        $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir);
+                        $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir, $forceRefresh);
                         $sourceStrategy = 'resultados-futbol-fallback';
                         $fixtures['primarySourceError'] = $sofascoreError->getMessage();
                         $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
@@ -5679,6 +5681,15 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
                     }
                 }
             }
+        }
+    }
+    if ($forceRefresh && $sourceStrategy === 'sofascore-primary') {
+        try {
+            $espnFixtures = espn_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, true);
+            $fixtures = merge_fixture_payloads($fixtures, $espnFixtures);
+            $sourceStrategy = 'sofascore+espn-refresh';
+        } catch (Throwable $mergeError) {
+            $fixtures['refreshMergeError'] = $mergeError->getMessage();
         }
     }
     $fixtures = decorate_fixture_competition_state($fixtures, $session);
@@ -5772,7 +5783,7 @@ function resultados_futbol_parse_calendar_html(string $html, string $sourceUrl):
     return $events;
 }
 
-function espn_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
+function espn_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
 {
     $competition = normalize_text((string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? '')));
     $slug = match (true) {
@@ -5788,7 +5799,7 @@ function espn_current_fixtures(array $session, int $timeoutSeconds, array $heade
     if ($slug === '') throw new RuntimeException('ESPN no reconoce la competicion');
     $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'espn-fixtures-' . slugify($competition) . '.json';
     $cached = read_json_file($cachePath, []);
-    if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && !empty($cached['events'])) {
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit-espn';
         return $cached;
     }
@@ -5903,14 +5914,14 @@ function thesportsdb_current_fixtures(array $session, int $timeoutSeconds, array
     return ['ok' => true, 'competition' => $league['name'], 'round' => 'actual', 'events' => array_values($rows), 'cacheStatus' => 'thesportsdb'];
 }
 
-function api_football_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
+function api_football_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
 {
     $key = api_football_key();
     if ($key === '') throw new RuntimeException('API-Football no configurada');
     $competition = trim((string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? 'football')));
     $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'api-football-fixtures-' . slugify($competition) . '.json';
     $cached = read_json_file($cachePath, []);
-    if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 3600 && !empty($cached['events'])) {
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 3600 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit-api-football';
         return $cached;
     }
@@ -6539,6 +6550,9 @@ function merge_fixture_payloads(array $primary, array $fallback): array
     return [
         'ok' => true,
         'competition' => (string)($primary['competition'] ?? $fallback['competition'] ?? ''),
+        'tournamentId' => $primary['tournamentId'] ?? $fallback['tournamentId'] ?? null,
+        'seasonId' => $primary['seasonId'] ?? $fallback['seasonId'] ?? null,
+        'seasonName' => (string)($primary['seasonName'] ?? $fallback['seasonName'] ?? ''),
         'round' => (string)($primary['round'] ?? $fallback['round'] ?? 'actual'),
         'events' => $events,
         'cacheStatus' => (string)($primary['cacheStatus'] ?? 'merged') . '+merge'

@@ -86,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=122') || !sw.includes('radar-fantasy-shell-v73')) {
+if (!html.includes('app.js?v=123') || !sw.includes('radar-fantasy-shell-v74')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -204,16 +204,25 @@ if (!html.includes('id="refresh-all-settings"') || !html.includes('id="refresh-l
 }
 
 const refreshAllBlock = js.slice(js.indexOf("const refreshAllSettingsManually"), js.indexOf("const handleNavigationButtonClick"));
-if (!refreshAllBlock.includes("refreshTeamSettingsManually()")
-  || !refreshAllBlock.includes("refreshMarketSettingsManually()")
+if (!refreshAllBlock.includes("refreshTeamSettingsManually")
+  || !refreshAllBlock.includes("refreshMarketSettingsManually")
   || !refreshAllBlock.includes("loadBiwengerOperations(false)")
   || !refreshAllBlock.includes("requestedBiwengerLeagueId")
   || !refreshAllBlock.includes("refreshTeamNews({ force: true })")
   || !refreshAllBlock.includes("refreshFavoritesAll({ force: true })")
   || !refreshAllBlock.includes("refreshTrackedTeamFeed({ force: true })")
-  || !refreshAllBlock.includes("refreshLeagueCenterSettingsManually")
-  || !refreshAllBlock.includes("refreshDailyPlanSettingsManually")) {
+  || !refreshAllBlock.includes("loadLeagueFixtures(false, { forceRefresh: true })")
+  || !refreshAllBlock.includes("loadLeagueOverview()")
+  || !refreshAllBlock.includes("refreshDailyPlanSettingsManually")
+  || !refreshAllBlock.includes("attemptRefreshStep")) {
   throw new Error("Actualizar todo must refresh every league-backed section and news feed");
+}
+
+if (!js.includes('refresh=1') || !js.includes("fixturePlayerCoverage")
+  || !php.includes("$forceRefresh = filter_var")
+  || !php.includes("!$forceRefresh && !empty($cached['fetchedAtTs'])")
+  || !php.includes("sofascore+espn-refresh")) {
+  throw new Error("Manual full refresh must bypass fixture caches and validate player coverage");
 }
 
 if (!html.includes('id="show-futbolfantasy-settings"') || !html.includes('id="show-api-config"')

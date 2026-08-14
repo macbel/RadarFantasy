@@ -207,7 +207,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.10.1";
+const APP_VERSION = "3.10.2";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -1029,11 +1029,11 @@ const upcomingFixtureCoverage = (fixtures = state.leagueFixtures) => {
   return teams.size;
 };
 
-const nextMatchForPlayer = (player) => {
-  const events = state.leagueFixtures?.events || [];
+const fixtureCandidatesForPlayer = (player, fixtures = state.leagueFixtures) => {
+  const events = fixtures?.events || [];
   const nowSeconds = Date.now() / 1000;
   const teamNames = teamNamesForFixtureMatching(player);
-  const candidates = events
+  return events
     .filter((event) => Number(event.timestamp || 0) >= nowSeconds - (3 * 60 * 60))
     .map((event) => {
       const homeName = event.home?.name || "";
@@ -1045,6 +1045,21 @@ const nextMatchForPlayer = (player) => {
     })
     .filter((candidate) => candidate.score >= 55)
     .sort((left, right) => Number(left.event.timestamp || 0) - Number(right.event.timestamp || 0));
+};
+
+const fixturePlayerCoverage = (fixtures, players = [...state.players, ...state.teamPlayers]) => {
+  const unique = new Map();
+  players.forEach((player) => {
+    const key = String(player?.biwengerPlayerId || player?.id || `${player?.name || ""}-${player?.team || ""}`);
+    if (teamNamesForFixtureMatching(player).length) unique.set(key, player);
+  });
+  const rows = [...unique.values()];
+  const covered = rows.filter((player) => fixtureCandidatesForPlayer(player, fixtures).length > 0).length;
+  return { covered, total: rows.length };
+};
+
+const nextMatchForPlayer = (player) => {
+  const candidates = fixtureCandidatesForPlayer(player);
   if (!candidates.length) return null;
   const { event, isHome } = candidates[0];
   return {
@@ -9030,8 +9045,10 @@ const handleRecentDotHover = (event) => {
   openRecentFormPopover(button);
 };
 
-const loadLeagueFixtures = async (showFeedback = true) => {
+const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
   const target = qs("#league-fixtures");
+  const previousFixtures = state.leagueFixtures;
+  const forceRefresh = options.forceRefresh ?? showFeedback;
   beginDataSync("Actualizando próximos partidos y resultados...");
   if (showFeedback) setLeagueOperationStatus("Consultando partidos de la jornada...", "busy");
   if (target) target.innerHTML = `<p class="muted-empty">Cargando partidos y resultados...</p>`;
@@ -9053,25 +9070,39 @@ const loadLeagueFixtures = async (showFeedback = true) => {
       }
       endpoint = "/api/biwenger/fixtures";
     }
+    if (forceRefresh) endpoint += `${endpoint.includes("?") ? "&" : "?"}refresh=1`;
     const response = await apiFetch(endpoint);
     let payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "No se pudo cargar la jornada actual");
-    if (state.biwenger.authenticated && !hasUpcomingFixtureEvents(payload)) {
+    let coverage = fixturePlayerCoverage(payload);
+    if (state.biwenger.authenticated && (!hasUpcomingFixtureEvents(payload) || (coverage.total > 0 && coverage.covered === 0))) {
       const competition = String(state.biwenger.competition || payload.competition || activeLeagueName() || "la-liga");
-      const fallbackResponse = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(competition)}`);
+      const fallbackResponse = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(competition)}${forceRefresh ? "&refresh=1" : ""}`);
       const fallbackPayload = await fallbackResponse.json().catch(() => ({}));
-      if (fallbackResponse.ok && hasUpcomingFixtureEvents(fallbackPayload)) payload = fallbackPayload;
+      const fallbackCoverage = fixturePlayerCoverage(fallbackPayload);
+      if (fallbackResponse.ok && hasUpcomingFixtureEvents(fallbackPayload)
+        && (fallbackCoverage.covered > coverage.covered || !hasUpcomingFixtureEvents(payload))) {
+        payload = fallbackPayload;
+        coverage = fallbackCoverage;
+      }
     }
+    if (!hasUpcomingFixtureEvents(payload)) throw new Error("Las fuentes no han devuelto próximos partidos de la competición seleccionada.");
+    if (coverage.total > 0 && coverage.covered === 0) {
+      throw new Error("El calendario recibido no coincide con los equipos de los jugadores de esta liga.");
+    }
+    payload.playerCoverage = coverage;
     state.leagueFixtures = payload;
     invalidateMarketAnalysisCache();
     saveLocalLeagueSnapshot();
     renderLeagueFixtures();
     updateLiveViewForLeague();
     renderTable();
-    if (showFeedback) setLeagueOperationStatus(`Jornada ${payload.round || "actual"} actualizada: ${(payload.events || []).length} partidos.`, "ready");
+    if (showFeedback) setLeagueOperationStatus(`Jornada ${payload.round || "actual"} actualizada: ${(payload.events || []).length} partidos y ${coverage.covered}/${coverage.total || coverage.covered} jugadores con próximo rival.`, "ready");
     return true;
   } catch (error) {
-    if (target) target.innerHTML = `<p class="muted-empty">${escapeHtml(error.message || "No se pudo cargar la jornada actual.")}</p>`;
+    state.leagueFixtures = previousFixtures;
+    if (previousFixtures?.events?.length) renderLeagueFixtures();
+    else if (target) target.innerHTML = `<p class="muted-empty">${escapeHtml(error.message || "No se pudo cargar la jornada actual.")}</p>`;
     if (showFeedback) setLeagueOperationStatus(error.message || "No se pudo cargar la jornada actual.", "error");
     return false;
   } finally {
@@ -12393,12 +12424,12 @@ const refreshSourcesSettingsManually = async () => {
   if (state.favorites.length) await refreshFavoritesAll({ force: true });
 };
 
-const refreshLeagueCenterSettingsManually = async () => {
+const refreshLeagueCenterSettingsManually = async ({ forceFixtures = true } = {}) => {
   if (!state.biwenger.connected) {
     setLeagueOperationStatus("Conecta Biwenger para actualizar el centro de liga.", "error");
     return false;
   }
-  const fixturesLoaded = await loadLeagueFixtures(false);
+  const fixturesLoaded = await loadLeagueFixtures(false, { forceRefresh: forceFixtures });
   const overviewLoaded = await loadLeagueOverview();
   if (shouldShowExperimentalLiveRound()) await ensureLiveRoundForFinance(false);
   return Boolean(fixturesLoaded && overviewLoaded);
@@ -12435,12 +12466,26 @@ const refreshAllSettingsManually = async ({ reason = "manual" } = {}) => {
   }
   const requestedLeagueId = state.activeLeagueId;
   const requestedBiwengerLeagueId = Number(activeLeague()?.biwengerLeagueId || 0);
+  const failures = [];
+  const attemptRefreshStep = async (statusText, failureLabel, action) => {
+    throwIfDataSyncCancelled();
+    updateDataSync(statusText);
+    try {
+      const result = await action();
+      if (result === false) throw new Error(failureLabel);
+      throwIfDataSyncCancelled();
+      return true;
+    } catch (error) {
+      if (isDataSyncCancellation(error)) throw error;
+      failures.push(`${failureLabel}: ${error?.message || "sin respuesta"}`);
+      return false;
+    }
+  };
   beginDataSync(reason === "startup"
     ? "Cargando todos los datos de la liga seleccionada..."
     : "Actualizando todos los datos y secciones de la liga...");
   try {
-    updateDataSync("Sincronizando ligas y sesion de Biwenger...");
-    await refreshLeagueSettingsManually();
+    await attemptRefreshStep("Sincronizando ligas y sesión de Biwenger...", "Ligas y sesión", refreshLeagueSettingsManually);
     const requestedLeague = state.leagues.find((league) => league.id === requestedLeagueId)
       || state.leagues.find((league) => requestedBiwengerLeagueId > 0
         && Number(league.biwengerLeagueId || 0) === requestedBiwengerLeagueId);
@@ -12453,42 +12498,49 @@ const refreshAllSettingsManually = async ({ reason = "manual" } = {}) => {
       setBiwengerStatus("Conecta Biwenger para que Actualizar todo pueda traer plantilla, mercado, calendario y director deportivo.", "error");
       return false;
     }
-    updateDataSync("Actualizando plantilla de la liga seleccionada...");
-    if (!await refreshTeamSettingsManually()) throw new Error("No se pudo actualizar la plantilla de la liga seleccionada.");
-    throwIfDataSyncCancelled();
-    updateDataSync("Actualizando mercado y pujas de la liga seleccionada...");
-    if (!await refreshMarketSettingsManually()) throw new Error("No se pudo actualizar el mercado de la liga seleccionada.");
-    await loadBiwengerOperations(false);
-    throwIfDataSyncCancelled();
-    updateDataSync("Actualizando fuentes deportivas...");
-    await refreshSourcesSettingsManually();
-    throwIfDataSyncCancelled();
+
+    await attemptRefreshStep("Actualizando plantilla de la liga seleccionada...", "Plantilla", refreshTeamSettingsManually);
+    await attemptRefreshStep("Actualizando mercado y pujas de la liga seleccionada...", "Mercado", async () => {
+      if (!await refreshMarketSettingsManually()) return false;
+      await loadBiwengerOperations(false);
+      return true;
+    });
+    // El calendario siempre se intenta, aunque plantilla o mercado fallen, y
+    // fuerza red después de disponer de los equipos recién sincronizados.
+    await attemptRefreshStep("Actualizando próximos partidos...", "Calendario", () => loadLeagueFixtures(false, { forceRefresh: true }));
+    await attemptRefreshStep("Actualizando clasificación y centro de liga...", "Centro de liga", async () => {
+      const overviewLoaded = await loadLeagueOverview();
+      if (shouldShowExperimentalLiveRound()) await ensureLiveRoundForFinance(false);
+      return overviewLoaded;
+    });
+    await attemptRefreshStep("Actualizando fuentes deportivas...", "Fuentes deportivas", refreshSourcesSettingsManually);
     if (platformUserCanAccess("team") && state.teamPlayers.length) {
-      updateDataSync("Actualizando noticias de los jugadores del equipo...");
-      await refreshTeamNews({ force: true });
-      throwIfDataSyncCancelled();
+      await attemptRefreshStep("Actualizando noticias de los jugadores del equipo...", "Noticias del equipo", () => refreshTeamNews({ force: true }));
     }
-    updateDataSync("Actualizando calendario y centro de liga...");
-    if (!await refreshLeagueCenterSettingsManually()) throw new Error("No se pudo actualizar el centro de liga.");
-    throwIfDataSyncCancelled();
-    updateDataSync("Actualizando director deportivo...");
-    await refreshDailyPlanSettingsManually();
-    throwIfDataSyncCancelled();
+    await attemptRefreshStep("Actualizando director deportivo...", "Director deportivo", refreshDailyPlanSettingsManually);
     if (platformUserCanAccess("favorites")) {
-      updateDataSync("Actualizando favoritos y sus noticias...");
-      await refreshFavoritesAll({ force: true });
-      throwIfDataSyncCancelled();
+      await attemptRefreshStep("Actualizando favoritos y sus noticias...", "Favoritos", () => refreshFavoritesAll({ force: true }));
     }
     if (platformUserCanAccess("team-tracking")) {
-      updateDataSync("Actualizando seguimiento y noticias de equipos...");
-      await syncTeamTrackingFromServer();
-      if (state.trackedTeams.length) await refreshTrackedTeamFeed({ force: true });
-      throwIfDataSyncCancelled();
+      await attemptRefreshStep("Actualizando seguimiento y noticias de equipos...", "Seguimiento de equipos", async () => {
+        await syncTeamTrackingFromServer();
+        if (state.trackedTeams.length) await refreshTrackedTeamFeed({ force: true });
+        return true;
+      });
     }
     renderDailyPlanIfVisible();
-    await notifyDailyPlanIfNeeded();
-    await flushActiveLeagueSave();
-    updateDataSync("Todas las secciones están actualizadas.", "ready");
+    await attemptRefreshStep("Guardando los datos actualizados...", "Guardado final", async () => {
+      await notifyDailyPlanIfNeeded();
+      await flushActiveLeagueSave();
+      return true;
+    });
+    if (failures.length) {
+      const message = `Actualización completada con incidencias en ${failures.map((item) => item.split(":")[0]).join(", ")}. El resto de secciones sí se ha actualizado.`;
+      setLeagueOperationStatus(message, "error");
+      updateDataSync(message, "error");
+      return false;
+    }
+    updateDataSync("Todas las secciones están actualizadas, incluidos los próximos partidos.", "ready");
   } catch (error) {
     const message = isDataSyncCancellation(error)
       ? "Actualización detenida. Se conservan los últimos datos válidos."

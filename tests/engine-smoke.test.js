@@ -251,6 +251,22 @@ if (laLigaAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(bi
   throw new Error("LaLiga aliases must link Biwenger teams with current fixture providers: " + JSON.stringify(laLigaAliasPairs));
 }
 
+const coverageFixture = {
+  events: [{
+    timestamp: Math.floor(Date.now() / 1000) + 86400,
+    home: { name: "Real Betis" },
+    away: { name: "Deportivo Alavés" }
+  }]
+};
+const fixtureCoverage = fixturePlayerCoverage(coverageFixture, [
+  { id: "betis-player", team: "Betis" },
+  { id: "alaves-player", team: "Alaves" },
+  { id: "celta-player", team: "Celta" }
+]);
+if (fixtureCoverage.covered !== 2 || fixtureCoverage.total !== 3) {
+  throw new Error("Fixture refresh must report how many players received a next match: " + JSON.stringify(fixtureCoverage));
+}
+
 const recentNews = recentPlayerNewsArticles([
   { title: "Antigua", publishedAt: new Date(Date.now() - 8 * 86400000).toISOString() },
   { title: "Ayer", publishedAt: new Date(Date.now() - 86400000).toISOString() },

@@ -1,8 +1,16 @@
-# Version 3.11.0
+# Version 3.11.1
 
 Fecha de publicación: 2026-08-21
 
 ## Notas de versión
+
+- La racha muestra exclusivamente partidos disputados en la temporada actual y descarta el histórico anterior del popup.
+- El detalle de minutos indica si el jugador fue titular o, si entró desde el banquillo, el minuto de entrada disponible en las fuentes.
+- El mercado distingue lesionados con una cruz roja y sancionados con tarjeta roja, incluyendo duración y enlace al parte médico cuando existe.
+- La protección de saldo respeta el primer partido real de la jornada y la resolución diaria de pujas a las 07:00; una jornada ya iniciada no bloquea pujas de forma retroactiva.
+- Se usa la próxima resolución comunicada por Biwenger cuando está disponible y las 07:00 del día siguiente como respaldo.
+
+## Historial 3.11.0
 
 - Añadido el sistema Feeberse Score y la modalidad Media AS/Feeberse.
 - La puntuación se detecta automáticamente desde la configuración real de cada liga de Biwenger.

@@ -210,7 +210,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.11.0";
+const APP_VERSION = "3.11.1";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -4560,8 +4560,8 @@ const toggleTrackedTeamSourceFilter = (source) => {
 
 const healthMeta = (player) => {
   const health = player.health || {};
-  if (health.status === "injured") return { className: "injured", mark: "X", label: "Lesionado" };
-  if (health.status === "suspended") return { className: "injured", mark: "X", label: "Sancionado" };
+  if (health.status === "injured") return { className: "injured", mark: "×", label: "Lesionado" };
+  if (health.status === "suspended") return { className: "suspended", mark: "", label: "Sancionado" };
   if (health.status === "doubtful") return { className: "doubtful", mark: "?", label: "Duda" };
   if (health.status === "unknown") return { className: "unknown", mark: "-", label: "Sin dato" };
   return { className: "available", mark: "OK", label: "Disponible" };
@@ -4571,7 +4571,9 @@ const renderHealthBadge = (player) => {
   const meta = healthMeta(player);
   const health = player.health || {};
   const title = [meta.label, health.detail, health.expectedReturn].filter(Boolean).join(" - ");
-  return `<span class="health-badge ${meta.className}" title="${escapeHtml(title)}"><b>${meta.mark}</b><span>${escapeHtml(meta.label)}</span></span>`;
+  const detail = [health.detail, health.expectedReturn && !String(health.detail || "").includes(health.expectedReturn) ? health.expectedReturn : ""].filter(Boolean).join(" · ");
+  const medicalUrl = health.medicalUrl || null;
+  return `<div class="health-cell"><span class="health-badge ${meta.className}" title="${escapeHtml(title)}"><b>${escapeHtml(meta.mark)}</b><span>${escapeHtml(meta.label)}</span></span>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}${medicalUrl ? `<a href="${escapeHtml(medicalUrl)}" target="_blank" rel="noopener">Parte médico</a>` : ""}</div>`;
 };
 
 const readTeamAlertsState = () => {
@@ -4965,6 +4967,26 @@ const matchHasMinutes = (match) => match?.minutes !== null
   && match?.minutes !== undefined
   && Number.isFinite(Number(match.minutes));
 
+const currentSeasonStartMs = () => {
+  const now = new Date();
+  const startYear = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
+  return new Date(startYear, 6, 1, 0, 0, 0, 0).getTime();
+};
+
+const currentSeasonMatches = (matches = []) => {
+  const seasonId = String(state.leagueFixtures?.seasonId || "");
+  const seasonName = normalize(state.leagueFixtures?.seasonName || "");
+  return matches.filter((match) => {
+    if (match?.historyScope === "current-season") return true;
+    if (match?.historyScope === "previous-season") return false;
+    if (seasonId && String(match?.seasonId || "") === seasonId) return true;
+    if (seasonName && normalize(match?.seasonName || "") === seasonName) return true;
+    const timestamp = Number(match?.timestamp || 0) * 1000;
+    const dated = timestamp > 0 ? timestamp : Date.parse(String(match?.date || ""));
+    return Number.isFinite(dated) && dated >= currentSeasonStartMs() && dated <= Date.now() + 86400000;
+  });
+};
+
 const recommendationHistoryMatches = (player) => {
   const summary = player?.sourceSummary || {};
   const primary = Array.isArray(summary.recentMatches) ? summary.recentMatches.slice(-5) : [];
@@ -4972,6 +4994,10 @@ const recommendationHistoryMatches = (player) => {
   const explicitPrevious = Array.isArray(summary.previousSeasonRecentMatches)
     ? summary.previousSeasonRecentMatches.slice(-5)
     : [];
+  const currentExternal = currentSeasonMatches(external);
+  const currentPrimary = currentSeasonMatches(primary);
+  if (currentExternal.length) return { matches: currentExternal.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
+  if (currentPrimary.length) return { matches: currentPrimary.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
   const context = competitionMarketContext();
   const events = Array.isArray(state.leagueFixtures?.events) ? state.leagueFixtures.events : [];
   const completedCurrentRound = events.some((event) => {
@@ -4993,6 +5019,18 @@ const recommendationHistoryMatches = (player) => {
   const matches = (priorSeason.length ? priorSeason : candidates).slice(-5);
   const seasonLabel = String(matches.find((match) => match?.seasonName)?.seasonName || "temporada anterior");
   return { matches, usesPreviousSeason: true, seasonLabel };
+};
+
+const recentDisplayHistoryMatches = (player) => {
+  const summary = player?.sourceSummary || {};
+  const external = Array.isArray(summary.sourceRecentMatches) ? summary.sourceRecentMatches : [];
+  const primary = Array.isArray(summary.recentMatches) ? summary.recentMatches : [];
+  const current = currentSeasonMatches(external);
+  if (current.length) return { matches: current.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
+  const currentPrimary = currentSeasonMatches(primary);
+  if (currentPrimary.length) return { matches: currentPrimary.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
+  const hasSeasonMetadata = [...external, ...primary].some((match) => match?.date || match?.timestamp || match?.seasonId || match?.seasonName || match?.historyScope);
+  return { matches: hasSeasonMetadata ? [] : primary.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
 };
 
 const recentFormProfile = (player) => {
@@ -5088,12 +5126,12 @@ const recentMatchDetail = (match, score, played) => {
 const recentMatchTitle = (detail) => detail.rows.join(" · ");
 
 const renderRecentFormDots = (player) => {
-  const history = recommendationHistoryMatches(player);
+  const history = recentDisplayHistoryMatches(player);
   const matches = history.matches;
   const padded = [...Array(Math.max(0, 5 - matches.length)).fill(null), ...matches];
   const playerAttrs = `data-recent-player-id="${escapeHtml(player?.id || "")}" data-recent-biwenger-id="${escapeHtml(player?.biwengerPlayerId || "")}" data-recent-player-name="${escapeHtml(player?.name || "")}"`;
   return `
-    <span class="recent-form-dots" title="${escapeHtml(history.usesPreviousSeason ? `Últimos datos de ${history.seasonLabel || "la temporada anterior"}` : `Últimos 5 partidos según ${scoringLabel()}`)}">
+    <span class="recent-form-dots" title="${escapeHtml(`Partidos jugados esta temporada según ${scoringLabel()}`)}">
       ${padded.map((match, index) => {
         if (!match) return `<span class="recent-dot missing" title="Sin dato" aria-label="Sin dato"></span>`;
         const score = selectedRecentScore(match);
@@ -5272,6 +5310,42 @@ const nextMatchdayStartContext = (fixtures = state.leagueFixtures) => {
     : { known: false, timestamp: null, round: null };
 };
 
+const nextBidResolutionContext = () => {
+  const exposed = Number(state.biwengerOperations?.finance?.nextMarketExecution || state.finance?.nextMarketExecution || 0);
+  if (Number.isFinite(exposed) && exposed > Date.now() / 1000) return { timestamp: exposed, source: "biwenger" };
+  const now = new Date();
+  const resolution = new Date(now);
+  resolution.setHours(7, 0, 0, 0);
+  if (resolution.getTime() <= now.getTime()) resolution.setDate(resolution.getDate() + 1);
+  return { timestamp: Math.floor(resolution.getTime() / 1000), source: "daily-07:00" };
+};
+
+const protectedMatchdayStartContext = (fixtures = state.leagueFixtures) => {
+  const now = Date.now() / 1000;
+  const groups = new Map();
+  (fixtures?.events || []).forEach((event) => {
+    const timestamp = Number(event?.timestamp || 0);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return;
+    const round = String(event?.round || "").trim() || "sin-jornada";
+    const group = groups.get(round) || { round: round === "sin-jornada" ? null : round, timestamps: [] };
+    group.timestamps.push(timestamp);
+    groups.set(round, group);
+  });
+  const rounds = [...groups.values()].map((group) => ({
+    ...group,
+    timestamp: Math.min(...group.timestamps),
+    lastTimestamp: Math.max(...group.timestamps)
+  }));
+  const active = rounds
+    .filter((round) => round.timestamp <= now && round.lastTimestamp >= now - 3 * 3600)
+    .sort((left, right) => right.timestamp - left.timestamp)[0];
+  if (active) return { known: true, timestamp: active.timestamp, round: active.round, active: true };
+  const next = rounds.filter((round) => round.timestamp > now).sort((left, right) => left.timestamp - right.timestamp)[0];
+  return next
+    ? { known: true, timestamp: next.timestamp, round: next.round, active: false }
+    : { known: false, timestamp: null, round: null, active: false };
+};
+
 const activeBidCommitmentTotal = () => {
   if (Array.isArray(state.biwengerOperations?.offers)) {
     return activeOwnBidOffers(state.biwengerOperations.offers).reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
@@ -5283,7 +5357,8 @@ const activeBidCommitmentTotal = () => {
 const matchdaySolvencyGuard = (player, targetAmount = Number(player?.price || player?.biwengerValue || 0)) => {
   const rawBalance = state.biwengerOperations?.finance?.balance ?? state.finance?.balance;
   const balance = rawBalance === null || rawBalance === undefined || rawBalance === "" ? null : Number(rawBalance);
-  const deadline = nextMatchdayStartContext();
+  const deadline = protectedMatchdayStartContext();
+  const bidResolution = nextBidResolutionContext();
   if (!Number.isFinite(balance)) {
     return { known: false, blocksBid: false, balance: null, projectedBalance: null, maxSafeBid: null, deadline };
   }
@@ -5293,7 +5368,8 @@ const matchdaySolvencyGuard = (player, targetAmount = Number(player?.price || pl
   const amount = Math.max(0, Number(targetAmount || 0));
   const projectedBalance = balance - otherCommitments - amount;
   const maxSafeBid = Math.max(0, balance - otherCommitments);
-  const blocksBid = amount > maxSafeBid || projectedBalance < 0;
+  const settlesBeforeMatchday = Boolean(deadline.timestamp && bidResolution.timestamp <= deadline.timestamp);
+  const blocksBid = (amount > maxSafeBid || projectedBalance < 0) && settlesBeforeMatchday;
   const deadlineText = deadline.timestamp
     ? new Date(deadline.timestamp * 1000).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" })
     : "el inicio de la próxima jornada";
@@ -5311,9 +5387,13 @@ const matchdaySolvencyGuard = (player, targetAmount = Number(player?.price || pl
     otherCommitments,
     deficit,
     deadline,
+    bidResolution,
+    settlesBeforeMatchday,
     message: blocksBid
-      ? `Bloqueado: te dejaría ${formatFinanceMoney(projectedBalance)} al inicio de ${roundLabel} (${deadlineText}). Debes liberar al menos ${formatFinanceMoney(deficit)} antes de pujar.`
-      : `Saldo protegido para ${roundLabel}: quedarían ${formatFinanceMoney(projectedBalance)} el ${deadlineText}.`
+      ? `Bloqueado: la puja se resolvería antes de ${roundLabel} y te dejaría ${formatFinanceMoney(projectedBalance)} (${deadlineText}). Debes liberar al menos ${formatFinanceMoney(deficit)} antes de pujar.`
+      : projectedBalance < 0
+        ? `Puja posible: se resolverá a las 07:00 después del inicio de ${roundLabel}; el saldo proyectado sería ${formatFinanceMoney(projectedBalance)}, así que deberás vender antes de la siguiente jornada.`
+        : `Saldo protegido para ${roundLabel}: quedarían ${formatFinanceMoney(projectedBalance)} el ${deadlineText}.`
   };
 };
 
@@ -7156,6 +7236,17 @@ const playerIsAlreadyInTeam = (player) => Boolean(teamPlayerForMarketPlayer(play
 const removeTeamPlayersFromMarket = (marketPlayers = state.players, teamPlayers = state.teamPlayers) =>
   (marketPlayers || []).filter((player) => !teamPlayerForMarketPlayer(player, teamPlayers));
 
+const mergePlayerHealth = (previousHealth = {}, freshHealth = {}) => {
+  const freshStatus = String(freshHealth?.status || "").toLowerCase();
+  const previousStatus = String(previousHealth?.status || "").toLowerCase();
+  if (freshStatus && freshStatus !== "unknown") {
+    return freshStatus === previousStatus
+      ? { ...previousHealth, ...Object.fromEntries(Object.entries(freshHealth).filter(([, value]) => value !== null && value !== "")) }
+      : { ...freshHealth };
+  }
+  return previousHealth?.status ? previousHealth : freshHealth;
+};
+
 const mergeFreshBiwengerPlayers = (freshPlayers, previousPlayers = state.players) => {
   const previousByKey = new Map((previousPlayers || []).map((player) => [playerMergeKey(player), player]));
   return freshPlayers.map((fresh) => {
@@ -7163,7 +7254,6 @@ const mergeFreshBiwengerPlayers = (freshPlayers, previousPlayers = state.players
     if (!previous) return fresh;
     const previousHasFantasy = hasUsefulFantasySignals(previous.sourceSummary);
     const previousIsLive = previous.sourceStatus === "live";
-    const previousHealthKnown = previous.health && !["unknown", ""].includes(String(previous.health.status || ""));
     return {
       ...previous,
       ...fresh,
@@ -7181,7 +7271,7 @@ const mergeFreshBiwengerPlayers = (freshPlayers, previousPlayers = state.players
       risk: previousIsLive ? previous.risk : (fresh.risk || previous.risk),
       riskReasons: previousIsLive ? previous.riskReasons : (fresh.riskReasons || previous.riskReasons),
       sources: Array.from(new Set([...(previous.sources || []), ...(fresh.sources || [])])),
-      health: previousHealthKnown ? previous.health : (fresh.health || previous.health),
+      health: mergePlayerHealth(previous.health, fresh.health),
       note: previousIsLive ? previous.note : (fresh.note || previous.note)
     };
   });

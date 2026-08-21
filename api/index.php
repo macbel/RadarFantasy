@@ -1134,6 +1134,7 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
     $competition = (string)($payload['competition'] ?? $sessionState['competition'] ?? '');
     if ($competition !== '') $sessionState['competition'] = $competition;
     $errors = [];
+    $detailPayloads = [];
     $usesFeeberse = in_array((int)($sessionState['scoreId'] ?? 0), [7, 8], true)
         || in_array((string)($sessionState['scoring'] ?? ''), ['feeberse', 'feeberse-mixed'], true);
     if ($usesFeeberse) {
@@ -1145,9 +1146,7 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
                 $strictTls,
                 $dbDir
             );
-            if (!empty($feeberseDetails['recentMatches'])) {
-                send_json(200, array_merge(['ok' => true], $feeberseDetails));
-            }
+            if (!empty($feeberseDetails['recentMatches'])) $detailPayloads[] = $feeberseDetails;
         } catch (Throwable $error) {
             $errors[] = 'Feeberse: ' . ($error->getMessage() ?: 'sin datos');
         }
@@ -1162,9 +1161,7 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
             $strictTls,
             $dbDir
         );
-        if (!empty($ffDetails['recentMatches'])) {
-            send_json(200, array_merge(['ok' => true], $ffDetails));
-        }
+        if (!empty($ffDetails['recentMatches'])) $detailPayloads[] = $ffDetails;
     } catch (Throwable $error) {
         $errors[] = 'FutbolFantasy: ' . ($error->getMessage() ?: 'sin datos');
     }
@@ -1177,15 +1174,51 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
             $strictTls,
             $dbDir
         );
-        send_json(200, array_merge(['ok' => true], $details));
+        if (!empty($details['recentMatches'])) $detailPayloads[] = $details;
     } catch (Throwable $error) {
         $errors[] = 'API-Football: ' . ($error->getMessage() ?: 'sin datos');
-        send_json(502, [
-            'ok' => false,
-            'provider' => 'cascade',
-            'error' => $errors ? implode(' | ', $errors) : 'No se pudieron cargar minutos recientes'
-        ]);
     }
+    if ($detailPayloads) send_json(200, array_merge(['ok' => true], merge_recent_detail_payloads($detailPayloads)));
+    send_json(502, [
+        'ok' => false,
+        'provider' => 'cascade',
+        'error' => $errors ? implode(' | ', $errors) : 'No se pudieron cargar minutos recientes'
+    ]);
+}
+
+function merge_recent_detail_payloads(array $payloads): array
+{
+    $primary = $payloads[0];
+    $primaryMatches = array_values((array)($primary['recentMatches'] ?? []));
+    foreach (array_slice($payloads, 1) as $supplemental) {
+        foreach ((array)($supplemental['recentMatches'] ?? []) as $candidate) {
+            if (!is_array($candidate)) continue;
+            $candidateDate = (string)($candidate['date'] ?? '');
+            $candidateOpponent = normalize_text((string)($candidate['opponent'] ?? ''));
+            $bestIndex = null;
+            $bestScore = -1;
+            foreach ($primaryMatches as $index => $match) {
+                if (!is_array($match)) continue;
+                $score = 0;
+                $matchDate = (string)($match['date'] ?? '');
+                if ($candidateDate !== '' && $matchDate !== '' && substr($candidateDate, 0, 10) === substr($matchDate, 0, 10)) $score += 100;
+                $matchOpponent = normalize_text((string)($match['opponent'] ?? ''));
+                if ($candidateOpponent !== '' && $matchOpponent !== '') $score += (int)round(identity_name_score($candidateOpponent, $matchOpponent) * 0.4);
+                if ($score > $bestScore) {
+                    $bestIndex = $index;
+                    $bestScore = $score;
+                }
+            }
+            if ($bestIndex === null || ($bestScore < 60 && count($primaryMatches) !== 1)) continue;
+            foreach (['starter', 'minuteIn', 'minuteOut', 'minuteInLabel', 'minuteOutLabel', 'lineupSource', 'minutesSource'] as $key) {
+                if (array_key_exists($key, $candidate) && $candidate[$key] !== null && $candidate[$key] !== '') $primaryMatches[$bestIndex][$key] = $candidate[$key];
+            }
+        }
+        if (empty($primary['health']) && !empty($supplemental['health'])) $primary['health'] = $supplemental['health'];
+    }
+    $primary['recentMatches'] = $primaryMatches;
+    $primary['providers'] = array_values(array_unique(array_filter(array_map(static fn($payload) => (string)($payload['provider'] ?? ''), $payloads))));
+    return $primary;
 }
 
 send_json(404, ['error' => 'Endpoint no encontrado']);
@@ -2126,6 +2159,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
         $status = is_array($marketData['status'] ?? null) ? $marketData['status'] : [];
         $finance['balance'] = isset($status['balance']) ? (int)$status['balance'] : $finance['balance'];
         $finance['maximumBid'] = biwenger_maximum_bid_from_data($status, $marketData, $userOffersData ?? []) ?? $finance['maximumBid'];
+        $finance['nextMarketExecution'] = biwenger_next_market_execution($status, $marketData, $userOffersData ?? []);
         $finance['activeBids'] = count(array_filter($offerMap, static function ($offer) {
             return !empty($offer['hasBid']);
         }));
@@ -6290,7 +6324,7 @@ function feeberse_player_recent_details(array $player, string $competition, int 
         throw new RuntimeException('solo está disponible para LaLiga');
     }
     $cacheKey = slugify((string)($player['name'] ?? '') . '-' . (string)($player['team'] ?? $player['clubTeam'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-player-recent-' . $cacheKey . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-player-recent-v2-' . $cacheKey . '.json';
     $cached = read_json_file($cachePath, []);
     if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 21600 && !empty($cached['recentMatches'])) {
         $cached['cacheStatus'] = 'hit-feeberse-player';
@@ -6316,20 +6350,32 @@ function feeberse_player_recent_details(array $player, string $competition, int 
         $isHome = identity_name_score($home, $candidateTeam) >= identity_name_score($away, $candidateTeam);
         $opponent = $isHome ? $away : $home;
         $minutes = max(0, (int)round((float)($stats['minutesPlayed'] ?? 0)));
+        $starter = $minutes > 0 ? $minutes >= 45 : null;
+        $estimatedMinuteIn = $minutes > 0 && $starter === false ? max(1, 90 - $minutes) : null;
         $rating = isset($stats['rating']) && is_numeric($stats['rating']) ? (float)$stats['rating'] : null;
         $score = feeberse_points_from_rating($rating, $minutes);
         $label = (string)($match['dateLabel'] ?? $match['date'] ?? 'Partido Feeberse');
         $url = feeberse_absolute_url((string)($match['url'] ?? ''));
+        $timestamp = feeberse_date_timestamp($label);
+        $seasonStartYear = (int)date('n') >= 7 ? (int)date('Y') : (int)date('Y') - 1;
+        $seasonStart = (new DateTimeImmutable($seasonStartYear . '-07-01', new DateTimeZone('Europe/Madrid')))->getTimestamp();
+        if ($timestamp > 0 && $timestamp < $seasonStart) continue;
         $recent[] = [
             'provider' => 'feeberse',
             'label' => $label,
             'date' => $label,
-            'timestamp' => feeberse_date_timestamp($label),
+            'timestamp' => $timestamp,
+            'seasonName' => $seasonStartYear . '/' . substr((string)($seasonStartYear + 1), -2),
+            'historyScope' => 'current-season',
             'opponent' => $opponent,
             'home' => $isHome,
             'minutes' => $minutes,
-            'minutesSource' => 'feeberse',
+            'minutesSource' => $estimatedMinuteIn !== null ? 'estimated' : 'feeberse',
             'played' => $minutes > 0,
+            'starter' => $starter,
+            'minuteIn' => $estimatedMinuteIn,
+            'minuteInLabel' => $estimatedMinuteIn !== null ? (string)$estimatedMinuteIn : null,
+            'lineupSource' => 'feeberse-minutes',
             'rating' => $rating,
             'points' => ['feeberse' => $score, 'feeberse-mixed' => $score],
             'detailUrl' => $url,
@@ -7791,7 +7837,7 @@ function biwenger_normalize_player(array $entry, array $catalog, string $competi
         ? (biwenger_sale_price($sale) ?: biwenger_money_int($entry['ownerPrice'] ?? $marketValue))
         : biwenger_money_int($entry['ownerPrice'] ?? $marketValue);
     $status = strtolower((string)($entry['status'] ?? 'ok'));
-    $statusText = (string)($entry['statusText'] ?? '');
+    $statusText = biwenger_status_detail($entry);
     $valueDiff = (int)($entry['priceIncrement'] ?? 0);
     $playerImage = biwenger_media_url($entry, ['photo', 'image', 'avatar', 'picture', 'img', 'portrait', 'iconHero', 'icon'])
         ?? ($playerId > 0 ? 'https://cdn.biwenger.com/i/p/' . $playerId . '.png' : null);
@@ -8023,15 +8069,72 @@ function biwenger_health(string $status, string $statusText): array
 {
     $normalized = normalize_text($status . ' ' . $statusText);
     if (strpos($normalized, 'injur') !== false || strpos($normalized, 'lesion') !== false) {
-        return ['status' => 'injured', 'detail' => $statusText];
+        return ['status' => 'injured', 'label' => 'Lesionado', 'detail' => $statusText, 'expectedReturn' => biwenger_expected_return($statusText), 'medicalUrl' => null];
     }
     if (strpos($normalized, 'doubt') !== false || strpos($normalized, 'duda') !== false) {
-        return ['status' => 'doubtful', 'detail' => $statusText];
+        return ['status' => 'doubtful', 'label' => 'Duda', 'detail' => $statusText, 'expectedReturn' => biwenger_expected_return($statusText), 'medicalUrl' => null];
     }
     if (strpos($normalized, 'suspen') !== false || strpos($normalized, 'sanc') !== false) {
-        return ['status' => 'suspended', 'detail' => $statusText];
+        return ['status' => 'suspended', 'label' => 'Sancionado', 'detail' => $statusText, 'expectedReturn' => biwenger_sanction_duration($statusText), 'medicalUrl' => null];
     }
-    return ['status' => $statusText !== '' ? 'unknown' : 'available', 'detail' => $statusText];
+    return ['status' => $statusText !== '' ? 'unknown' : 'available', 'label' => $statusText !== '' ? 'Sin dato' : 'Disponible', 'detail' => $statusText, 'expectedReturn' => null, 'medicalUrl' => null];
+}
+
+function biwenger_next_market_execution(array ...$sources): ?int
+{
+    $keys = ['nextMarketExecution', 'nextMarketExecutionAt', 'nextMarketUpdate', 'marketResolution', 'marketResolutionAt', 'nextBidResolution', 'nextBidResolutionAt'];
+    $visit = static function ($node, int $depth = 0) use (&$visit, $keys): ?int {
+        if (!is_array($node) || $depth > 5) return null;
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $node)) continue;
+            $value = $node[$key];
+            if (is_numeric($value)) {
+                $timestamp = (int)$value;
+                if ($timestamp > 20000000000) $timestamp = (int)round($timestamp / 1000);
+                if ($timestamp > time() - 3600) return $timestamp;
+            }
+            if (is_string($value) && ($timestamp = strtotime($value)) !== false && $timestamp > time() - 3600) return $timestamp;
+        }
+        foreach ($node as $child) {
+            if (!is_array($child)) continue;
+            $found = $visit($child, $depth + 1);
+            if ($found) return $found;
+        }
+        return null;
+    };
+    foreach ($sources as $source) {
+        $found = $visit($source);
+        if ($found) return $found;
+    }
+    return null;
+}
+
+function biwenger_status_detail(array $entry): string
+{
+    foreach (['statusText', 'statusInfo', 'injury', 'injuryText', 'sanction', 'sanctionText', 'availabilityText'] as $key) {
+        $value = $entry[$key] ?? null;
+        if (is_string($value) && trim($value) !== '') return trim(strip_html_text($value));
+        if (is_array($value)) {
+            foreach (['text', 'description', 'detail', 'reason', 'name'] as $nestedKey) {
+                if (!empty($value[$nestedKey]) && is_string($value[$nestedKey])) return trim(strip_html_text($value[$nestedKey]));
+            }
+        }
+    }
+    return '';
+}
+
+function biwenger_expected_return(string $detail): ?string
+{
+    if (preg_match('/(?:retorno|regreso|baja)\s+(?:estimad[oa]\s*)?(?:hasta\s*)?[:\-]?\s*([^.;]+)/iu', $detail, $match)) return trim($match[1]);
+    return null;
+}
+
+function biwenger_sanction_duration(string $detail): ?string
+{
+    if (preg_match('/(?:jornadas?|partidos?)\s+([0-9]+(?:\s*(?:y|a|-)\s*[0-9]+)?)/iu', $detail, $match)) return trim($match[0]);
+    if (preg_match('/([0-9]+)\s*(?:jornadas?|partidos?)/iu', $detail, $match)) return trim($match[0]);
+    if (preg_match('/roja directa|acumulaci[oó]n de tarjetas/iu', $detail)) return '1 partido (pendiente de confirmación)';
+    return null;
 }
 
 function biwenger_risk(string $status, string $statusText): string

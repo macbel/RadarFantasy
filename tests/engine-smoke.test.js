@@ -739,9 +739,64 @@ const insolventRecommendation = analyzePlayer(state.players[0], state.players);
 if (insolventRecommendation.marketDecision.type !== "avoid"
   || insolventRecommendation.marketDecision.recommendedBid !== 0
   || !insolventRecommendation.marketDecision.solvencyGuard?.blocksBid
-  || !insolventRecommendation.marketDecision.solvencyGuard?.message.includes("inicio de")) {
+  || !insolventRecommendation.marketDecision.solvencyGuard?.message.includes("se resolvería antes")) {
   throw new Error("A signing that causes a negative balance at the next matchday must be blocked: " + JSON.stringify(insolventRecommendation.marketDecision));
 }
+const activeRoundStart = Math.floor(Date.now() / 1000) - 86400;
+state.leagueFixtures = { events: [
+  { timestamp: activeRoundStart, round: "Jornada 1", home: { name: "A" }, away: { name: "B" } },
+  { timestamp: Math.floor(Date.now() / 1000) + 7200, round: "Jornada 1", home: { name: "C" }, away: { name: "D" } },
+  { timestamp: Math.floor(Date.now() / 1000) + 7 * 86400, round: "Jornada 2", home: { name: "E" }, away: { name: "F" } }
+] };
+const activeRoundGuard = matchdaySolvencyGuard(state.players[0], 2200000);
+if (activeRoundGuard.blocksBid || !activeRoundGuard.deadline.active || activeRoundGuard.deadline.timestamp !== activeRoundStart
+  || !activeRoundGuard.message.includes("Puja posible")) {
+  throw new Error("An active round must keep its real first kickoff and allow bids settled the following day: " + JSON.stringify(activeRoundGuard));
+}
+
+state.leagueFixtures = { seasonId: 2026, seasonName: "2026/27", events: [] };
+const currentSeasonHistory = recentDisplayHistoryMatches({ sourceSummary: {
+  recentMatches: [
+    { provider: "biwenger", points: { biwenger: 8 } },
+    { provider: "biwenger", points: { biwenger: 6 } }
+  ],
+  sourceRecentMatches: [
+    { date: "2026-08-20", seasonName: "2026/27", historyScope: "current-season", minutes: 90, played: true },
+    { date: "2025-05-24", seasonName: "2024/25", historyScope: "previous-season", minutes: 90, played: true }
+  ]
+} });
+if (currentSeasonHistory.matches.length !== 1 || currentSeasonHistory.matches[0].date !== "2026-08-20") {
+  throw new Error("The recent-form popup must only expose matches from the current season: " + JSON.stringify(currentSeasonHistory));
+}
+
+const starterSubstitutionDetail = recentMatchDetail({
+  provider: "api-football",
+  played: true,
+  starter: true,
+  minutes: 63,
+  minuteIn: 0,
+  minuteOut: 63,
+  minuteOutLabel: "63"
+}, 7, true);
+if (!starterSubstitutionDetail.rows.includes("Titular")
+  || !starterSubstitutionDetail.rows.includes("↓ Sustituido en el 63'")
+  || starterSubstitutionDetail.rows.some((row) => row.includes("Entró en el 0"))
+  || !renderRecentPopoverRow("↓ Sustituido en el 63'").includes("sub-minute out")) {
+  throw new Error("Starter minute popups must show the red substitution minute and never a minute-zero entry: " + JSON.stringify(starterSubstitutionDetail));
+}
+
+const injuredHealthHtml = renderHealthBadge({ health: { status: "injured", detail: "Lesión muscular", expectedReturn: "principios de septiembre", medicalUrl: "https://example.com/parte" } });
+const suspendedHealthHtml = renderHealthBadge({ health: { status: "suspended", detail: "Sancionado jornadas 1 y 2" } });
+if (!injuredHealthHtml.includes("×") || !injuredHealthHtml.includes("Parte médico") || !injuredHealthHtml.includes("Lesión muscular")
+  || !suspendedHealthHtml.includes("health-badge suspended") || !suspendedHealthHtml.includes("Sancionado jornadas 1 y 2")) {
+  throw new Error("Market health cells must show distinct injury/suspension marks, duration and medical link");
+}
+state.leagueFixtures = { events: [{
+  timestamp: Math.floor(Date.now() / 1000) + 86400,
+  round: "Jornada 1",
+  home: { name: "Equipo A" },
+  away: { name: "Equipo B" }
+}] };
 if (assistantBidBudget() !== 1000000 || assistantBidCandidates().length !== 0) {
   throw new Error("The daily assistant must use cash-safe budget instead of Biwenger credit");
 }

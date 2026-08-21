@@ -4683,6 +4683,41 @@ tbody tr.selected .player-cell span {
   color: var(--red);
 }
 
+.health-badge.suspended {
+  border: 1px solid rgba(255, 102, 115, 0.48);
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.health-badge.suspended b {
+  min-width: 12px;
+  width: 12px;
+  height: 17px;
+  border-radius: 2px;
+  background: #e31f35;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.health-cell {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  min-width: 130px;
+  max-width: 230px;
+}
+
+.health-cell small {
+  color: var(--muted);
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.health-cell a {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .health-badge.unknown {
   border: 1px solid rgba(171, 196, 193, 0.28);
   background: rgba(171, 196, 193, 0.12);

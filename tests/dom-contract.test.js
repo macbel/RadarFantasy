@@ -86,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=126') || !sw.includes('radar-fantasy-shell-v77')) {
+if (!html.includes('app.js?v=128') || !html.includes('styles.css?v=71') || !sw.includes('radar-fantasy-shell-v79')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -246,7 +246,7 @@ if (!php.includes("favorite_news_is_recent") || !php.includes("$maxAgeDays = 7")
 if (!js.includes("const startupLeagueSelectionReady")
   || !js.includes("state.auth.authenticated")
   || !js.includes("Number(activeLeague()?.biwengerLeagueId || 0) > 0")
-  || !js.includes('refreshAllSettingsManually({ reason: "startup" })')) {
+  || !js.includes('runAutomaticSync({ force: false, reason: "startup" })')) {
   throw new Error("Startup full refresh must wait for platform login and a selected Biwenger league");
 }
 
@@ -350,6 +350,14 @@ if (!php.includes("if ($primaryMapped === 'ENT') return ['ENT'];")
   || !js.includes('player?.position === "ENT" || player?.biwengerPosition === "ENT"')
   || !js.includes("matchdaySolvencyGuard") || !js.includes("activeBidCommitmentTotal")) {
   throw new Error("Coaches must stay outside field positions and transfer advice must protect matchday solvency");
+}
+
+if (!js.includes("recentDisplayHistoryMatches") || !js.includes("currentSeasonMatches")
+  || !js.includes("nextBidResolutionContext") || !js.includes("protectedMatchdayStartContext")
+  || !js.includes("includeSubstitutions: true") || !js.includes('runAutomaticSync({ force: false, reason: "startup" })')
+  || !php.includes("biwenger_status_detail") || !php.includes("merge_recent_detail_payloads")
+  || !php.includes("recent_detail_payload_has_lineup_detail")) {
+  throw new Error("Current-season recent form, detailed health status and bid-resolution timing contracts must remain wired");
 }
 
 if (!php.includes("'bidCountFree' => $premiumBidCounts") || !php.includes("marketShowBids")

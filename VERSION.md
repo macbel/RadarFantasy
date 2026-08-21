@@ -1,8 +1,19 @@
-# Version 3.10.4
+# Version 3.11.0
 
-Fecha de publicación: 2026-08-14
+Fecha de publicación: 2026-08-21
 
 ## Notas de versión
+
+- Añadido el sistema Feeberse Score y la modalidad Media AS/Feeberse.
+- La puntuación se detecta automáticamente desde la configuración real de cada liga de Biwenger.
+- Feeberse aporta el calendario de LaLiga y enlaces directos a los partidos, con las fuentes anteriores como respaldo.
+- Las recomendaciones incorporan el historial, las valoraciones y los minutos jugados publicados por Feeberse.
+- El popup de la racha muestra los minutos exactos, rival, fecha y la procedencia Feeberse Score.
+- Las consultas públicas de Feeberse se almacenan temporalmente en caché para mejorar estabilidad y tiempos de carga.
+
+## Historial 3.10.4
+
+Fecha de publicación: 2026-08-14
 
 - Los entrenadores quedan excluidos de todas las posiciones del campo y nunca pueden ocupar una plaza de MC.
 - Las alineaciones antiguas que tenían un entrenador entre los once se reparan automáticamente.

@@ -30,6 +30,9 @@
     availableLeagues: [],
     userName: "",
     competition: "",
+    scoreId: null,
+    scoring: "",
+    scoreName: "",
     credits: null,
     bidCountFree: false,
     marketShowBids: null,
@@ -207,7 +210,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.10.4";
+const APP_VERSION = "3.11.0";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -3527,6 +3530,8 @@ const systemScore = (player, scoring) => {
   const base = (() => {
     if (scoring === "as") return player.asScore;
     if (scoring === "sofascore") return player.sofascore;
+    if (scoring === "feeberse") return player.feeberseScore ?? player.sofascore;
+    if (scoring === "feeberse-mixed") return Math.round((player.asScore + (player.feeberseScore ?? player.sofascore)) / 2);
     if (scoring === "stats") return player.stats;
     return Math.round((player.asScore + player.sofascore) / 2);
   })();
@@ -3540,7 +3545,7 @@ const fantasyPointsForScoring = (player, scoring = state.scoring) => {
   const key = scoring === "mixed" ? "mixed" : scoring;
   const direct = Number(points[key]);
   if (Number.isFinite(direct)) return direct;
-  const fallback = Number(points.mixed ?? points.sofascore ?? points.as ?? points.stats);
+  const fallback = Number(points["feeberse-mixed"] ?? points.feeberse ?? points.mixed ?? points.sofascore ?? points.as ?? points.stats);
   return Number.isFinite(fallback) ? fallback : null;
 };
 
@@ -4909,6 +4914,8 @@ const scoringLabel = () => ({
   mixed: "AS/Sofa",
   as: "AS",
   sofascore: "SofaScore",
+  feeberse: "Feeberse",
+  "feeberse-mixed": "AS/Feeberse",
   stats: "Estadisticas"
 }[state.scoring] || "Sistema");
 
@@ -4942,7 +4949,7 @@ const selectedRecentScore = (match) => {
   const key = state.scoring === "mixed" ? "mixed" : state.scoring;
   const direct = Number(points[key]);
   if (Number.isFinite(direct)) return direct;
-  const fallback = Number(points.mixed ?? points.sofascore ?? points.as ?? points.stats);
+  const fallback = Number(points["feeberse-mixed"] ?? points.feeberse ?? points.mixed ?? points.sofascore ?? points.as ?? points.stats);
   return Number.isFinite(fallback) ? fallback : 0;
 };
 
@@ -5065,6 +5072,8 @@ const recentMatchDetail = (match, score, played) => {
     rows.push("Dato Biwenger de la liga");
   } else if (match.provider === "api-football") {
     rows.push("Fuente: API-Football");
+  } else if (match.provider === "feeberse") {
+    rows.push("Fuente: Feeberse Score");
   } else if (match.provider === "futbolfantasy") {
     rows.push("Fuente: FutbolFantasy");
   }
@@ -5829,6 +5838,7 @@ const hydrateImportedPlayers = (players) => (players || []).map((player, index) 
   form: Number.isFinite(player.form) ? player.form : 56,
   asScore: Number.isFinite(player.asScore) ? player.asScore : 55,
   sofascore: Number.isFinite(player.sofascore) ? player.sofascore : 55,
+  feeberseScore: Number.isFinite(player.feeberseScore) ? player.feeberseScore : (Number.isFinite(player.sofascore) ? player.sofascore : 55),
   stats: Number.isFinite(player.stats) ? player.stats : 54,
   competitionPoints: Number(player.competitionPoints || 0),
   status: player.status || "ok",
@@ -6247,13 +6257,18 @@ const refreshSourceDbStatus = async () => {
       ? " SofaScore está bloqueando peticiones automáticas (403); se usa FutbolFantasy + identidad Biwenger."
       : "";
     const apiFootballNote = status.apiFootball?.configured
-      ? " API-Football activo para minutos y sustituciones."
-      : " API-Football no está configurado: faltarán minutos y sustituciones fiables.";
+      ? " API-Football activo como respaldo para minutos y sustituciones."
+      : (status.feeberse?.available
+        ? " API-Football queda como respaldo opcional."
+        : " API-Football no está configurado: faltarán minutos y sustituciones fiables.");
+    const feeberseNote = status.feeberse?.available
+      ? " Feeberse activo para puntuación, calendario y minutos en ligas compatibles."
+      : "";
     setSourceStatus(
       status.totalPlayers
-        ? `Base local lista: ${status.freshPlayers}/${status.totalPlayers} jugadores frescos (caduca cada ${status.ttlHours} h).${sofaNote}${apiFootballNote}`
-        : `Base local lista. Se llenara al analizar el primer mercado.${sofaNote}${apiFootballNote}`,
-      status.apiFootball?.configured ? "ready" : "error"
+        ? `Base local lista: ${status.freshPlayers}/${status.totalPlayers} jugadores frescos (caduca cada ${status.ttlHours} h).${sofaNote}${feeberseNote}${apiFootballNote}`
+        : `Base local lista. Se llenara al analizar el primer mercado.${sofaNote}${feeberseNote}${apiFootballNote}`,
+      status.apiFootball?.configured || status.feeberse?.available ? "ready" : "error"
     );
     setApiConfigStatus(`API conectada: ${apiUrl("/api/source-status").replace("/api/source-status", "") || window.location.origin}`, "ready");
   } catch (error) {
@@ -6390,6 +6405,9 @@ const applyBiwengerSession = (payload) => {
     ? payload.availableLeagues
     : (payload?.connected ? state.biwenger.availableLeagues : []);
   state.biwenger.competition = payload?.competition || "";
+  state.biwenger.scoreId = Number(payload?.scoreId || 0) || null;
+  state.biwenger.scoring = String(payload?.scoring || "");
+  state.biwenger.scoreName = String(payload?.scoreName || "");
   state.biwenger.credits = payload?.credits !== null && payload?.credits !== undefined && Number.isFinite(Number(payload.credits))
     ? Number(payload.credits)
     : state.biwenger.credits;
@@ -6415,6 +6433,14 @@ const applyBiwengerSession = (payload) => {
     if (state.biwenger.connected && remoteLeagueId > 0) {
       currentLeague.biwengerLeagueId = remoteLeagueId;
       currentLeague.fantasyProvider = "biwenger";
+      if (payload?.scoring) {
+        state.scoring = String(payload.scoring);
+        currentLeague.scoring = state.scoring;
+        currentLeague.biwengerScoreId = state.biwenger.scoreId;
+        currentLeague.scoreName = state.biwenger.scoreName;
+        const scoringControl = qs("#scoring-system");
+        if (scoringControl?.querySelector(`option[value="${CSS.escape(state.scoring)}"]`)) scoringControl.value = state.scoring;
+      }
     }
     if (visual.icon) currentLeague.icon = safeRemoteImageUrl(visual.icon);
     if (visual.cover) currentLeague.cover = safeRemoteImageUrl(visual.cover);
@@ -6468,7 +6494,9 @@ const syncBiwengerLeagueCatalog = async (sessionPayload) => {
       icon: safeRemoteImageUrl(remote?.icon) || "",
       cover: safeRemoteImageUrl(remote?.cover || remote?.icon) || "",
       competition: remoteId === currentRemoteId ? biwengerCompetitionToLocal(sessionPayload.competition) : "club",
-      scoring: state.scoring,
+      scoring: remote?.scoring || (remoteId === currentRemoteId ? (sessionPayload.scoring || state.scoring) : state.scoring),
+      biwengerScoreId: Number(remote?.scoreId || (remoteId === currentRemoteId ? sessionPayload.scoreId : 0)) || null,
+      scoreName: remote?.scoreName || (remoteId === currentRemoteId ? sessionPayload.scoreName : ""),
       marketPlayers: [],
       teamPlayers: [],
       teamDepartures: [],
@@ -7059,6 +7087,7 @@ const mergeSourcePlayer = (localPlayer, sourcePlayer) => {
     form: localPlayer.form,
     asScore: localPlayer.asScore,
     sofascore: localPlayer.sofascore,
+    feeberseScore: localPlayer.feeberseScore,
     stats: localPlayer.stats,
     risk: localPlayer.risk || merged.risk,
     riskReasons: Array.from(new Set([
@@ -7147,6 +7176,7 @@ const mergeFreshBiwengerPlayers = (freshPlayers, previousPlayers = state.players
       form: previousHasFantasy ? previous.form : (previous.form ?? fresh.form),
       asScore: previousHasFantasy ? previous.asScore : (previous.asScore ?? fresh.asScore),
       sofascore: previousHasFantasy ? previous.sofascore : (previous.sofascore ?? fresh.sofascore),
+      feeberseScore: previousHasFantasy ? previous.feeberseScore : (previous.feeberseScore ?? fresh.feeberseScore ?? previous.sofascore ?? fresh.sofascore),
       stats: previousHasFantasy ? previous.stats : (previous.stats ?? fresh.stats),
       risk: previousIsLive ? previous.risk : (fresh.risk || previous.risk),
       riskReasons: previousIsLive ? previous.riskReasons : (fresh.riskReasons || previous.riskReasons),
@@ -8695,7 +8725,7 @@ const renderLeagueFixtures = () => {
           <div class="fixture-score">${hasScore ? `<strong>${event.homeScore} - ${event.awayScore}</strong>` : `<strong>${escapeHtml(event.statusText || "Próximo")}</strong>`}</div>
           <div class="fixture-team away">${event.away?.image ? `<img src="${escapeHtml(event.away.image)}" alt="" loading="lazy" />` : ""}<strong>${escapeHtml(event.away?.name || "Visitante")}</strong></div>
           <div class="fixture-actions">
-            ${event.sofascoreUrl || event.detailUrl ? `<a class="ghost-button fixture-link" href="${escapeHtml(event.sofascoreUrl || event.detailUrl)}" target="_blank" rel="noopener">${event.sofascoreUrl ? "SofaScore" : "Ver partido"}</a>` : ""}
+            ${event.sofascoreUrl || event.feeberseUrl || event.detailUrl ? `<a class="ghost-button fixture-link" href="${escapeHtml(event.sofascoreUrl || event.feeberseUrl || event.detailUrl)}" target="_blank" rel="noopener">${event.sofascoreUrl ? "SofaScore" : (event.feeberseUrl ? "Feeberse" : "Ver partido")}</a>` : ""}
             ${event.videoEmbedUrl
               ? `<button class="ghost-button fixture-link video play-fixture-video" type="button" data-video-url="${escapeHtml(event.videoEmbedUrl)}" data-video-title="${escapeHtml(event.videoTitle || `${event.home?.name || "Local"} - ${event.away?.name || "Visitante"}`)}">Ver vídeo</button>`
               : (event.videoUrl
@@ -8983,6 +9013,12 @@ const mergeRecentMatchArrays = (current = [], fresh = []) => {
   });
 };
 
+const recentProviderLabel = (provider) => ({
+  feeberse: "Feeberse Score",
+  futbolfantasy: "FutbolFantasy",
+  "api-football": "API-Football"
+}[provider] || "Fuente de minutos");
+
 const replaceRecentPlayer = (target, recentMatches, payload = {}) => ({
   ...target,
   media: {
@@ -8993,9 +9029,10 @@ const replaceRecentPlayer = (target, recentMatches, payload = {}) => ({
   sourceSummary: {
     ...(target.sourceSummary || {}),
     recentMatches,
-    apiFootball: payload.apiFootball || target.sourceSummary?.apiFootball || null
+    apiFootball: payload.apiFootball || target.sourceSummary?.apiFootball || null,
+    feeberse: payload.feeberse || target.sourceSummary?.feeberse || null
   },
-  sources: Array.from(new Set([...(target.sources || []), "API-Football"]))
+  sources: Array.from(new Set([...(target.sources || []), recentProviderLabel(payload.provider)]))
 });
 
 const applyRecentDetailsToPlayer = (player, payload) => {
@@ -9010,7 +9047,12 @@ const applyRecentDetailsToPlayer = (player, payload) => {
       players: state.rivalTeam.players.map((item) => matchesPlayer(item) ? replaceRecentPlayer(item, recentMatches, payload) : item)
     };
   }
-  player.sourceSummary = { ...(player.sourceSummary || {}), recentMatches, apiFootball: payload.apiFootball || player.sourceSummary?.apiFootball || null };
+  player.sourceSummary = {
+    ...(player.sourceSummary || {}),
+    recentMatches,
+    apiFootball: payload.apiFootball || player.sourceSummary?.apiFootball || null,
+    feeberse: payload.feeberse || player.sourceSummary?.feeberse || null
+  };
   return recentMatches;
 };
 
@@ -9132,7 +9174,7 @@ const hydrateRecentFormButton = async (button) => {
     } catch (parseError) {
       currentDetail = { title: "Detalle", rows: [] };
     }
-    currentDetail.rows = [...(currentDetail.rows || []), "Minutos no disponibles en FutbolFantasy/API-Football"];
+    currentDetail.rows = [...(currentDetail.rows || []), "Minutos no disponibles en Feeberse/FutbolFantasy/API-Football"];
     button.dataset.recentDetail = encodeURIComponent(JSON.stringify(currentDetail));
     button.title = recentMatchTitle(currentDetail);
     if (!qs("#recent-form-popover")?.hidden) openRecentFormPopover(button);

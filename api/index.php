@@ -200,7 +200,8 @@ if ($route === '/healthz' && $requestMethod === 'GET') {
         'criteriaVersion' => $sourceCriteriaVersion,
         'apiBase' => api_base_url(),
         'apiFootballConfigured' => api_football_key() !== '',
-        'scorebatConfigured' => scorebat_token() !== ''
+        'scorebatConfigured' => scorebat_token() !== '',
+        'feeberseConfigured' => true
     ]);
 }
 $currentPlatformUser = auth_require_user($usersDbPath);
@@ -215,6 +216,13 @@ if (in_array($route, ['/fixtures', '/biwenger/league', '/biwenger/fixtures', '/b
 if ($route === '/source-status' && $requestMethod === 'GET') {
     $status = source_status_payload($playerDb, $playerCacheMs, $sourceCriteriaVersion);
     $status['sofascore'] = sofascore_diagnostic_payload($sofaDiagnosticsPath);
+    $status['feeberse'] = [
+        'available' => true,
+        'scoring' => true,
+        'calendar' => true,
+        'minutesPlayed' => true,
+        'mode' => 'public-web-cached'
+    ];
     send_json(200, $status);
 }
 
@@ -224,7 +232,8 @@ if ($route === '/healthz' && $requestMethod === 'GET') {
         'criteriaVersion' => $sourceCriteriaVersion,
         'apiBase' => api_base_url(),
         'apiFootballConfigured' => api_football_key() !== '',
-        'scorebatConfigured' => scorebat_token() !== ''
+        'scorebatConfigured' => scorebat_token() !== '',
+        'feeberseConfigured' => true
     ]);
 }
 
@@ -868,6 +877,9 @@ if ($route === '/leagues/import-biwenger' && $requestMethod === 'POST') {
             'icon' => sanitize_media_url($remote['icon'] ?? null),
             'cover' => sanitize_media_url($remote['cover'] ?? null),
             'competition' => $isCurrent ? biwenger_competition_to_local((string)($sessionState['competition'] ?? '')) : ($existing['competition'] ?? 'club'),
+            'scoring' => sanitize_scoring($remote['scoring'] ?? ($isCurrent ? ($sessionState['scoring'] ?? '') : ($existing['scoring'] ?? 'mixed'))),
+            'biwengerScoreId' => (int)($remote['scoreId'] ?? ($isCurrent ? ($sessionState['scoreId'] ?? 0) : ($existing['biwengerScoreId'] ?? 0))),
+            'scoreName' => (string)($remote['scoreName'] ?? ($isCurrent ? ($sessionState['scoreName'] ?? '') : ($existing['scoreName'] ?? ''))),
             'updatedAt' => $now
         ]);
         if ($isCurrent) $leaguesDb['activeLeagueId'] = $id;
@@ -1122,6 +1134,24 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
     $competition = (string)($payload['competition'] ?? $sessionState['competition'] ?? '');
     if ($competition !== '') $sessionState['competition'] = $competition;
     $errors = [];
+    $usesFeeberse = in_array((int)($sessionState['scoreId'] ?? 0), [7, 8], true)
+        || in_array((string)($sessionState['scoring'] ?? ''), ['feeberse', 'feeberse-mixed'], true);
+    if ($usesFeeberse) {
+        try {
+            $feeberseDetails = feeberse_player_recent_details(
+                $player,
+                $competition,
+                max($sourceTimeoutSeconds, 12),
+                $strictTls,
+                $dbDir
+            );
+            if (!empty($feeberseDetails['recentMatches'])) {
+                send_json(200, array_merge(['ok' => true], $feeberseDetails));
+            }
+        } catch (Throwable $error) {
+            $errors[] = 'Feeberse: ' . ($error->getMessage() ?: 'sin datos');
+        }
+    }
     try {
         $ffDetails = futbol_fantasy_player_recent_details(
             $player,
@@ -1268,6 +1298,8 @@ function biwenger_session_state(array $session): array
         'availableLeagues' => array_values((array)($session['availableLeagues'] ?? [])),
         'competition' => $session['competition'] ?? '',
         'scoreId' => $session['scoreId'] ?? null,
+        'scoring' => $session['scoring'] ?? biwenger_scoring_from_score_id((int)($session['scoreId'] ?? 0)),
+        'scoreName' => $session['scoreName'] ?? biwenger_score_name((int)($session['scoreId'] ?? 0)),
         'balance' => $session['balance'] ?? null,
         'teamValue' => $session['teamValue'] ?? null,
         'maximumBid' => $session['maximumBid'] ?? null,
@@ -1753,15 +1785,21 @@ function biwenger_build_session(string $token, string $version, string $preferre
     $leagueCover = biwenger_entity_media($league, ['cover', 'background', 'backgroundImage', 'header', 'banner', 'wallpaper']) ?: $leagueIcon;
     $availableLeagues = array_values(array_filter(array_map(static function ($entry) {
         if (!is_array($entry) || empty($entry['id'])) return null;
+        $entryScoreId = max(1, (int)($entry['scoreID'] ?? $entry['scoreId'] ?? $entry['score']['id'] ?? 2));
         $icon = biwenger_entity_media($entry, ['icon', 'logo', 'badge', 'shield', 'avatar', 'photo', 'image'])
             ?: biwenger_league_icon_fallback((int)($entry['id'] ?? 0));
         return [
             'id' => (int)$entry['id'],
             'name' => (string)($entry['name'] ?? ''),
             'icon' => $icon,
-            'cover' => biwenger_entity_media($entry, ['cover', 'background', 'backgroundImage', 'header', 'banner', 'wallpaper']) ?: $icon
+            'cover' => biwenger_entity_media($entry, ['cover', 'background', 'backgroundImage', 'header', 'banner', 'wallpaper']) ?: $icon,
+            'competition' => biwenger_competition_value($entry['competition'] ?? ''),
+            'scoreId' => $entryScoreId,
+            'scoring' => biwenger_scoring_from_score_id($entryScoreId),
+            'scoreName' => biwenger_score_name($entryScoreId)
         ];
     }, $accountLeagues)));
+    $scoreId = max(1, (int)($league['scoreID'] ?? $league['scoreId'] ?? $league['score']['id'] ?? 2));
     return [
         'token' => $token,
         'xVersion' => $version,
@@ -1773,7 +1811,9 @@ function biwenger_build_session(string $token, string $version, string $preferre
         'userId' => (int)$user['id'],
         'userName' => (string)($user['name'] ?? ''),
         'competition' => biwenger_competition_value($league['competition'] ?? ''),
-        'scoreId' => max(1, (int)($league['scoreID'] ?? $league['scoreId'] ?? $league['score']['id'] ?? 2)),
+        'scoreId' => $scoreId,
+        'scoring' => biwenger_scoring_from_score_id($scoreId),
+        'scoreName' => biwenger_score_name($scoreId),
         'balance' => isset($user['balance']) ? (int)$user['balance'] : null,
         'maximumBid' => biwenger_maximum_bid_from_data((array)$user, (array)$league, (array)$data),
         'credits' => biwenger_first_numeric_value($data, ['credits', 'account.credits', 'user.credits', 'coins']),
@@ -1898,6 +1938,33 @@ function biwenger_competition_value($competition): string
         return (string)($competition['slug'] ?? $competition['id'] ?? $competition['name'] ?? '');
     }
     return trim((string)$competition);
+}
+
+function biwenger_scoring_from_score_id(int $scoreId): string
+{
+    $systems = [
+        1 => 'as',
+        2 => 'sofascore',
+        3 => 'stats',
+        5 => 'mixed',
+        7 => 'feeberse',
+        8 => 'feeberse-mixed'
+    ];
+    return $systems[$scoreId] ?? 'mixed';
+}
+
+function biwenger_score_name(int $scoreId): string
+{
+    $names = [
+        1 => 'Diario AS',
+        2 => 'SofaScore',
+        3 => 'Estadísticas',
+        5 => 'Media AS y SofaScore',
+        6 => 'Biwenger Social',
+        7 => 'Feeberse Score',
+        8 => 'Media AS y Feeberse'
+    ];
+    return $names[$scoreId] ?? 'Sistema Biwenger';
 }
 
 function biwenger_import_players(array $session, string $kind, int $timeoutSeconds, array $headers, bool $strictTls, array $knownTeamPlayers = []): array
@@ -3415,7 +3482,7 @@ function favorite_news_payload(array $players, int $timeoutSeconds, array $heade
 
 function sanitize_scoring($value): string
 {
-    $allowed = ['mixed', 'as', 'sofascore', 'stats'];
+    $allowed = ['mixed', 'as', 'sofascore', 'stats', 'feeberse', 'feeberse-mixed'];
     return in_array((string)$value, $allowed, true) ? (string)$value : 'mixed';
 }
 
@@ -5638,11 +5705,92 @@ function resultados_futbol_calendar_urls(array $session): array
     return [];
 }
 
+function feeberse_current_fixtures(array $session, int $timeoutSeconds, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
+{
+    $competition = (string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? ''));
+    if (fixture_competition_family($competition) !== 'la-liga' && !preg_match('/liga/i', $competition)) {
+        throw new RuntimeException('Feeberse calendario solo está mapeado para LaLiga');
+    }
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-fixtures-la-liga.json';
+    $cached = read_json_file($cachePath, []);
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
+        $cached['cacheStatus'] = 'hit-feeberse-fixtures';
+        return $cached;
+    }
+    $urls = [];
+    $today = new DateTimeImmutable('today', new DateTimeZone('Europe/Madrid'));
+    for ($offset = -5; $offset <= 21; $offset++) {
+        $date = $today->modify(($offset >= 0 ? '+' : '') . $offset . ' days')->format('Y-m-d');
+        $urls[] = 'https://score.feeberse.com/proxy/v1/matches?date=' . $date;
+    }
+    $responses = http_get_text_many($urls, $timeoutSeconds, feeberse_headers(), $strictTls);
+    $events = [];
+    foreach ($responses as $body) {
+        if (!is_string($body) || $body === '') continue;
+        $payload = json_decode($body, true);
+        foreach ((array)($payload['data']['groups'] ?? []) as $group) {
+            $groupCompetition = (array)($group['competition'] ?? []);
+            if ((string)($groupCompetition['id'] ?? '') !== '6a18a75bcf4bfd4c6201e1c8'
+                && fixture_competition_family((string)($groupCompetition['name'] ?? '')) !== 'la-liga') continue;
+            foreach ((array)($group['matches'] ?? []) as $match) {
+                if (!is_array($match) || empty($match['id']) || empty($match['kickoff'])) continue;
+                $timestamp = strtotime((string)$match['kickoff']);
+                if (!$timestamp) continue;
+                $home = (array)($match['home_team'] ?? []);
+                $away = (array)($match['away_team'] ?? []);
+                $statusCode = strtoupper((string)($match['status'] ?? 'NS'));
+                $finished = preg_match('/^(FT|AET|FT_PEN)/', $statusCode) === 1;
+                $live = !$finished && !in_array($statusCode, ['NS', 'TBD', 'POSTPONED', 'CANCELLED'], true);
+                $detailUrl = 'https://score.feeberse.com/es/liga/la-liga/partido/'
+                    . slugify((string)($home['name'] ?? 'local')) . '-vs-' . slugify((string)($away['name'] ?? 'visitante'))
+                    . '-' . rawurlencode((string)$match['id']);
+                $events[(string)$match['id']] = [
+                    'id' => (string)$match['id'],
+                    'timestamp' => $timestamp,
+                    'status' => $finished ? 'finished' : ($live ? 'inprogress' : 'notstarted'),
+                    'statusText' => $live ? ((int)($match['minute'] ?? 0) . "'") : ($finished ? 'Finalizado' : 'Próximo'),
+                    'home' => ['name' => (string)($home['name'] ?? 'Local'), 'image' => $home['image_path'] ?? null],
+                    'away' => ['name' => (string)($away['name'] ?? 'Visitante'), 'image' => $away['image_path'] ?? null],
+                    'homeScore' => ($finished || $live) && is_numeric($home['goals'] ?? null) ? (int)$home['goals'] : null,
+                    'awayScore' => ($finished || $live) && is_numeric($away['goals'] ?? null) ? (int)$away['goals'] : null,
+                    'round' => !empty($match['round']) ? ('Jornada ' . $match['round']) : (string)($match['stage']['name'] ?? 'LaLiga'),
+                    'detailUrl' => $detailUrl,
+                    'feeberseUrl' => $detailUrl,
+                    'hasLineup' => !empty($match['has_lineup'])
+                ];
+            }
+        }
+    }
+    if (!$events) throw new RuntimeException('Feeberse no ha devuelto partidos de LaLiga');
+    $events = array_values($events);
+    usort($events, static fn($a, $b) => (int)$a['timestamp'] <=> (int)$b['timestamp']);
+    $result = [
+        'ok' => true,
+        'competition' => 'LaLiga',
+        'events' => $events,
+        'fetchedAtTs' => time(),
+        'cacheStatus' => 'fresh-feeberse-fixtures'
+    ];
+    write_json_file($cachePath, $result);
+    return $result;
+}
+
 function fast_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
 {
     $startedAt = microtime(true);
     $sourceStrategy = 'sofascore-primary';
-    try {
+    $fixtures = null;
+    $usesFeeberse = in_array((int)($session['scoreId'] ?? 0), [7, 8], true)
+        || in_array((string)($session['scoring'] ?? ''), ['feeberse', 'feeberse-mixed'], true);
+    if ($usesFeeberse) {
+        try {
+            $fixtures = feeberse_current_fixtures($session, max($timeoutSeconds, 10), $strictTls, $dbDir, $forceRefresh);
+            $sourceStrategy = 'feeberse-primary';
+        } catch (Throwable $feeberseError) {
+            $fixtures = null;
+        }
+    }
+    if (!is_array($fixtures)) try {
         $fixtures = sofascore_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh);
     } catch (Throwable $sofascoreError) {
         try {
@@ -6051,6 +6199,159 @@ function api_football_get_json(string $path, array $query, int $timeoutSeconds, 
     return $response['json'];
 }
 
+function feeberse_headers(): array
+{
+    return [
+        'Accept: text/html,application/json;q=0.9,*/*;q=0.8',
+        'Accept-Language: es-ES,es;q=0.9',
+        'Referer: https://score.feeberse.com/es/',
+        'User-Agent: Mozilla/5.0 RadarFantasy/3 FeeberseIntegration'
+    ];
+}
+
+function feeberse_html_attribute(string $tag, string $attribute): string
+{
+    if (!preg_match('/\\b' . preg_quote($attribute, '/') . '\\s*=\\s*(["\'])(.*?)\\1/is', $tag, $match)) return '';
+    return html_entity_decode((string)$match[2], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+}
+
+function feeberse_json_attribute(string $tag, string $attribute): array
+{
+    $value = feeberse_html_attribute($tag, $attribute);
+    if ($value === '') return [];
+    $decoded = json_decode($value, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function feeberse_absolute_url(string $url): string
+{
+    $url = trim($url);
+    if ($url === '') return '';
+    if (preg_match('~^https?://~i', $url)) return $url;
+    return 'https://score.feeberse.com/' . ltrim($url, '/');
+}
+
+function feeberse_find_player(array $player, int $timeoutSeconds, bool $strictTls): array
+{
+    $name = trim((string)($player['name'] ?? ''));
+    $team = trim((string)($player['team'] ?? $player['clubTeam'] ?? ''));
+    $html = http_get_text(
+        'https://score.feeberse.com/api/search/es/suggest?q=' . rawurlencode($name),
+        $timeoutSeconds,
+        feeberse_headers(),
+        $strictTls
+    );
+    preg_match_all('/<a\\b.*?data-hit-type=["\']player["\'].*?role=["\']option["\']\\s*>/is', $html, $matches);
+    $best = null;
+    $bestScore = 0;
+    foreach ((array)($matches[0] ?? []) as $tag) {
+        $candidateName = feeberse_html_attribute($tag, 'data-hit-name');
+        $candidateTeam = feeberse_html_attribute($tag, 'data-hit-team-name');
+        $url = feeberse_html_attribute($tag, 'href');
+        $id = feeberse_html_attribute($tag, 'data-hit-id');
+        if ($id === '' && preg_match('/-([a-f0-9]{24})(?:[/?#]|$)/i', $url, $idMatch)) $id = (string)$idMatch[1];
+        $score = identity_name_score($candidateName, $name);
+        if ($team !== '' && $candidateTeam !== '') $score += (int)round(identity_name_score($candidateTeam, $team) * 0.2);
+        if ($id !== '' && $score > $bestScore) {
+            $bestScore = $score;
+            $best = [
+                'id' => $id,
+                'name' => $candidateName,
+                'team' => $candidateTeam,
+                'url' => feeberse_absolute_url($url),
+                'image' => feeberse_html_attribute($tag, 'data-hit-image')
+            ];
+        }
+    }
+    if (!$best || $bestScore < 70) throw new RuntimeException('no encuentra una coincidencia fiable para ' . $name);
+    return $best;
+}
+
+function feeberse_date_timestamp(string $label): int
+{
+    $months = ['ene' => 1, 'feb' => 2, 'mar' => 3, 'abr' => 4, 'may' => 5, 'jun' => 6, 'jul' => 7, 'ago' => 8, 'sep' => 9, 'oct' => 10, 'nov' => 11, 'dic' => 12];
+    $normalized = normalize_text($label);
+    if (!preg_match('/(\\d{1,2})\\s+([a-z]{3})\\s+(\\d{4})/', $normalized, $match)) return 0;
+    $month = $months[$match[2]] ?? 0;
+    if ($month <= 0) return 0;
+    $date = DateTimeImmutable::createFromFormat('!Y-n-j', $match[3] . '-' . $month . '-' . $match[1], new DateTimeZone('Europe/Madrid'));
+    return $date ? $date->getTimestamp() : 0;
+}
+
+function feeberse_points_from_rating(?float $rating, int $minutes): int
+{
+    if ($minutes <= 0) return 0;
+    return max(-4, min(18, (int)round(($minutes >= 60 ? 3 : ($minutes >= 30 ? 2 : 1)) + (($rating ?? 6.0) - 6.0) * 4)));
+}
+
+function feeberse_player_recent_details(array $player, string $competition, int $timeoutSeconds, bool $strictTls, string $dbDir): array
+{
+    if (fixture_competition_family($competition) !== 'la-liga' && !preg_match('/liga|club/i', $competition)) {
+        throw new RuntimeException('solo está disponible para LaLiga');
+    }
+    $cacheKey = slugify((string)($player['name'] ?? '') . '-' . (string)($player['team'] ?? $player['clubTeam'] ?? ''));
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-player-recent-' . $cacheKey . '.json';
+    $cached = read_json_file($cachePath, []);
+    if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 21600 && !empty($cached['recentMatches'])) {
+        $cached['cacheStatus'] = 'hit-feeberse-player';
+        return $cached;
+    }
+
+    $candidate = feeberse_find_player($player, $timeoutSeconds, $strictTls);
+    $fragmentUrl = 'https://score.feeberse.com/es/player/' . rawurlencode((string)$candidate['id']) . '/fragments/matches';
+    $html = http_get_text($fragmentUrl, $timeoutSeconds, feeberse_headers(), $strictTls);
+    preg_match_all('/<li\\b.*?data-stats-json\\s*=\\s*(["\']).*?\\1\\s*>/is', $html, $tags);
+    $recent = [];
+    foreach ((array)($tags[0] ?? []) as $tag) {
+        $match = feeberse_json_attribute($tag, 'data-match-json');
+        $stats = feeberse_json_attribute($tag, 'data-stats-json');
+        $matchPlayer = feeberse_json_attribute($tag, 'data-player-json');
+        if (!$match || !$stats) continue;
+        if (!empty($matchPlayer['id']) && (string)$matchPlayer['id'] !== (string)$candidate['id']) continue;
+        $competitionName = (string)($match['competition']['name'] ?? $match['competitionName'] ?? $match['compName'] ?? $match['competition'] ?? '');
+        if ($competitionName !== '' && fixture_competition_family($competitionName) !== 'la-liga') continue;
+        $home = (string)($match['home']['name'] ?? $match['homeTeam']['name'] ?? $match['homeName'] ?? '');
+        $away = (string)($match['away']['name'] ?? $match['awayTeam']['name'] ?? $match['awayName'] ?? '');
+        $candidateTeam = (string)($candidate['team'] ?? '');
+        $isHome = identity_name_score($home, $candidateTeam) >= identity_name_score($away, $candidateTeam);
+        $opponent = $isHome ? $away : $home;
+        $minutes = max(0, (int)round((float)($stats['minutesPlayed'] ?? 0)));
+        $rating = isset($stats['rating']) && is_numeric($stats['rating']) ? (float)$stats['rating'] : null;
+        $score = feeberse_points_from_rating($rating, $minutes);
+        $label = (string)($match['dateLabel'] ?? $match['date'] ?? 'Partido Feeberse');
+        $url = feeberse_absolute_url((string)($match['url'] ?? ''));
+        $recent[] = [
+            'provider' => 'feeberse',
+            'label' => $label,
+            'date' => $label,
+            'timestamp' => feeberse_date_timestamp($label),
+            'opponent' => $opponent,
+            'home' => $isHome,
+            'minutes' => $minutes,
+            'minutesSource' => 'feeberse',
+            'played' => $minutes > 0,
+            'rating' => $rating,
+            'points' => ['feeberse' => $score, 'feeberse-mixed' => $score],
+            'detailUrl' => $url,
+            'feeberseUrl' => $url
+        ];
+        if (count($recent) >= 5) break;
+    }
+    if (!$recent) throw new RuntimeException('no ha devuelto partidos recientes con minutos');
+    $recent = array_reverse($recent);
+    $payload = [
+        'provider' => 'feeberse',
+        'feeberse' => ['playerId' => $candidate['id'], 'playerUrl' => $candidate['url']],
+        'media' => array_filter(['playerImage' => $candidate['image']]),
+        'recentMatches' => $recent,
+        'sourceUrl' => $candidate['url'],
+        'fetchedAtTs' => time(),
+        'cacheStatus' => 'fresh-feeberse-player'
+    ];
+    write_json_file($cachePath, $payload);
+    return $payload;
+}
+
 function api_football_player_recent_details(array $player, array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir): array
 {
     if (api_football_key() === '') throw new RuntimeException('API-Football no configurada');
@@ -6371,14 +6672,14 @@ function api_football_minute_label(int $elapsed, int $extra = 0): string
 
 function api_football_points_from_statistics(array $stat, int $minutes, ?float $rating): array
 {
-    if ($minutes <= 0) return ['apiFootball' => 0, 'mixed' => 0, 'as' => 0, 'sofascore' => 0, 'stats' => 0];
+    if ($minutes <= 0) return ['apiFootball' => 0, 'mixed' => 0, 'as' => 0, 'sofascore' => 0, 'stats' => 0, 'feeberse' => 0, 'feeberse-mixed' => 0];
     $goals = (int)($stat['goals']['total'] ?? 0);
     $assists = (int)($stat['goals']['assists'] ?? 0);
     $cards = (int)($stat['cards']['yellow'] ?? 0) + (int)($stat['cards']['red'] ?? 0) * 3;
     $base = $minutes >= 60 ? 3 : ($minutes >= 30 ? 2 : 1);
     $score = (int)round($base + (($rating ?? 6.0) - 6.0) * 4 + $goals * 3 + $assists * 2 - $cards);
     $score = max(-4, min(18, $score));
-    return ['apiFootball' => $score, 'mixed' => $score, 'as' => $score, 'sofascore' => $score, 'stats' => $score];
+    return ['apiFootball' => $score, 'mixed' => $score, 'as' => $score, 'sofascore' => $score, 'stats' => $score, 'feeberse' => $score, 'feeberse-mixed' => $score];
 }
 
 function api_football_player_health(int $playerId, array $league, int $timeoutSeconds, array $headers, bool $strictTls): array
@@ -6554,6 +6855,7 @@ function merge_fixture_payloads(array $primary, array $fallback): array
             'homeScore' => $existing['homeScore'] ?? $event['homeScore'] ?? null,
             'awayScore' => $existing['awayScore'] ?? $event['awayScore'] ?? null,
             'sofascoreUrl' => $existing['sofascoreUrl'] ?? $event['sofascoreUrl'] ?? null,
+            'feeberseUrl' => $existing['feeberseUrl'] ?? $event['feeberseUrl'] ?? null,
             'detailUrl' => $existing['detailUrl'] ?? $event['detailUrl'] ?? null,
             'videoUrl' => $existing['videoUrl'] ?? $event['videoUrl'] ?? null,
             'round' => $existing['round'] ?? $event['round'] ?? null
@@ -7550,6 +7852,7 @@ function biwenger_normalize_player(array $entry, array $catalog, string $competi
         'competitionPoints' => $points,
         'asScore' => $pointsScore,
         'sofascore' => $pointsScore,
+        'feeberseScore' => $pointsScore,
         'stats' => $pointsScore,
         'valueTrend' => $valueDiff > 0 ? 5 : ($valueDiff < 0 ? -5 : 0),
         'sourceStatus' => 'seed',
@@ -7602,6 +7905,8 @@ function biwenger_recent_matches_from_fitness(array $fitness): array
                 'mixed' => $points,
                 'as' => $points,
                 'sofascore' => $points,
+                'feeberse' => $points,
+                'feeberse-mixed' => $points,
                 'stats' => $points
             ]
         ];
@@ -8372,18 +8677,21 @@ function recent_match_points(array $row): array
     $assists = (int)($incidents['assists'] ?? $incidents['goalAssist'] ?? 0);
     $contributionBonus = $goals * 3 + $assists * 2;
     if ($minutes <= 0) {
-        return ['as' => 0, 'sofascore' => 0, 'stats' => 0, 'mixed' => 0];
+        return ['as' => 0, 'sofascore' => 0, 'stats' => 0, 'mixed' => 0, 'feeberse' => 0, 'feeberse-mixed' => 0];
     }
     $minuteBase = $minutes >= 60 ? 3 : ($minutes >= 30 ? 2 : 1);
     $ratingBase = $rating !== null ? ($rating - 6.0) : -0.3;
     $sofascore = (int)round($minuteBase + ($ratingBase * 4.2) + $contributionBonus);
     $as = (int)round($minuteBase + (($rating !== null ? $rating - 6.1 : -0.4) * 3.2) + $contributionBonus);
     $stats = (int)round($minuteBase + (($rating !== null ? $rating - 6.0 : -0.2) * 3.8) + $contributionBonus + min(2, (int)floor($minutes / 45)));
+    $feeberse = max(-4, min(18, $sofascore));
     return [
         'as' => max(-4, min(16, $as)),
         'sofascore' => max(-4, min(18, $sofascore)),
+        'feeberse' => $feeberse,
         'stats' => max(-4, min(18, $stats)),
-        'mixed' => (int)round(($as + $sofascore) / 2)
+        'mixed' => (int)round(($as + $sofascore) / 2),
+        'feeberse-mixed' => (int)round(($as + $feeberse) / 2)
     ];
 }
 

@@ -86,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=125') || !sw.includes('radar-fantasy-shell-v76')) {
+if (!html.includes('app.js?v=126') || !sw.includes('radar-fantasy-shell-v77')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -322,6 +322,14 @@ if (!js.includes('"Sin fichajes recomendables"') || !js.includes("const firstCan
 
 if (!php.includes("if ($route === '/fixtures'") || !php.includes("fast_current_fixtures") || !php.includes("sofascore-primary") || !php.includes("api-football-fallback") || !php.includes("espn-fallback") || !php.includes("thesportsdb-fallback") || !php.includes("resultados-futbol-fallback")) {
   throw new Error("Fixture sync must use SofaScore first with resilient provider fallbacks");
+}
+
+if (!html.includes('<option value="feeberse-mixed">Media AS/Feeberse</option>')
+  || !html.includes('<option value="feeberse">Feeberse Score</option>')
+  || !php.includes("7 => 'feeberse'") || !php.includes("8 => 'feeberse-mixed'")
+  || !php.includes("function feeberse_current_fixtures") || !php.includes("function feeberse_player_recent_details")
+  || !php.includes("minutesPlayed") || !js.includes('match.provider === "feeberse"')) {
+  throw new Error("Feeberse scoring, calendar, and recent player minutes must remain wired end to end");
 }
 
 if (!js.includes("fixtureUnresolved") || !js.includes("upcomingFixtureCoverage")) {

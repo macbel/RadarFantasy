@@ -1135,6 +1135,7 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
     if ($competition !== '') $sessionState['competition'] = $competition;
     $errors = [];
     $detailPayloads = [];
+    $includeSubstitutions = !empty($payload['includeSubstitutions']);
     $usesFeeberse = in_array((int)($sessionState['scoreId'] ?? 0), [7, 8], true)
         || in_array((string)($sessionState['scoring'] ?? ''), ['feeberse', 'feeberse-mixed'], true);
     if ($usesFeeberse) {
@@ -1146,17 +1147,38 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
                 $strictTls,
                 $dbDir
             );
-            if (!empty($feeberseDetails['recentMatches'])) $detailPayloads[] = $feeberseDetails;
+            if (!empty($feeberseDetails['recentMatches'])) {
+                $detailPayloads[] = $feeberseDetails;
+                if (!$includeSubstitutions) send_json(200, array_merge(['ok' => true], $feeberseDetails));
+            }
         } catch (Throwable $error) {
             $errors[] = 'Feeberse: ' . ($error->getMessage() ?: 'sin datos');
         }
+    }
+    if ($includeSubstitutions || !$detailPayloads) {
+        try {
+            $apiFootballDetails = api_football_player_recent_details(
+                $player,
+                $sessionState,
+                max($sourceTimeoutSeconds, 10),
+                $sourceHeaders,
+                $strictTls,
+                $dbDir
+            );
+            if (!empty($apiFootballDetails['recentMatches'])) $detailPayloads[] = $apiFootballDetails;
+        } catch (Throwable $error) {
+            $errors[] = 'API-Football: ' . ($error->getMessage() ?: 'sin datos');
+        }
+    }
+    if ($detailPayloads && (!$includeSubstitutions || recent_detail_payload_has_lineup_detail(merge_recent_detail_payloads($detailPayloads)))) {
+        send_json(200, array_merge(['ok' => true], merge_recent_detail_payloads($detailPayloads)));
     }
     try {
         $ffDetails = futbol_fantasy_player_recent_details(
             $player,
             $_SESSION['futbolFantasy'] ?? [],
             $competition,
-            max($sourceTimeoutSeconds, 12),
+            max($sourceTimeoutSeconds, 8),
             $futbolFantasyHeaders,
             $strictTls,
             $dbDir
@@ -1165,25 +1187,24 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
     } catch (Throwable $error) {
         $errors[] = 'FutbolFantasy: ' . ($error->getMessage() ?: 'sin datos');
     }
-    try {
-        $details = api_football_player_recent_details(
-            $player,
-            $sessionState,
-            max($sourceTimeoutSeconds, 12),
-            $sourceHeaders,
-            $strictTls,
-            $dbDir
-        );
-        if (!empty($details['recentMatches'])) $detailPayloads[] = $details;
-    } catch (Throwable $error) {
-        $errors[] = 'API-Football: ' . ($error->getMessage() ?: 'sin datos');
-    }
     if ($detailPayloads) send_json(200, array_merge(['ok' => true], merge_recent_detail_payloads($detailPayloads)));
     send_json(502, [
         'ok' => false,
         'provider' => 'cascade',
         'error' => $errors ? implode(' | ', $errors) : 'No se pudieron cargar minutos recientes'
     ]);
+}
+
+function recent_detail_payload_has_lineup_detail(array $payload): bool
+{
+    foreach ((array)($payload['recentMatches'] ?? []) as $match) {
+        if (!is_array($match) || empty($match['played'])) continue;
+        if (!array_key_exists('starter', $match) || !is_bool($match['starter'])) return false;
+        $minutes = isset($match['minutes']) && is_numeric($match['minutes']) ? (int)$match['minutes'] : 0;
+        if ($match['starter'] === false && (int)($match['minuteIn'] ?? 0) <= 0) return false;
+        if ($match['starter'] === true && $minutes > 0 && $minutes < 85 && (int)($match['minuteOut'] ?? 0) <= 0) return false;
+    }
+    return true;
 }
 
 function merge_recent_detail_payloads(array $payloads): array
@@ -6324,7 +6345,7 @@ function feeberse_player_recent_details(array $player, string $competition, int 
         throw new RuntimeException('solo está disponible para LaLiga');
     }
     $cacheKey = slugify((string)($player['name'] ?? '') . '-' . (string)($player['team'] ?? $player['clubTeam'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-player-recent-v2-' . $cacheKey . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-player-recent-v3-' . $cacheKey . '.json';
     $cached = read_json_file($cachePath, []);
     if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 21600 && !empty($cached['recentMatches'])) {
         $cached['cacheStatus'] = 'hit-feeberse-player';
@@ -6352,6 +6373,7 @@ function feeberse_player_recent_details(array $player, string $competition, int 
         $minutes = max(0, (int)round((float)($stats['minutesPlayed'] ?? 0)));
         $starter = $minutes > 0 ? $minutes >= 45 : null;
         $estimatedMinuteIn = $minutes > 0 && $starter === false ? max(1, 90 - $minutes) : null;
+        $estimatedMinuteOut = $minutes > 0 && $starter === true && $minutes < 85 ? $minutes : null;
         $rating = isset($stats['rating']) && is_numeric($stats['rating']) ? (float)$stats['rating'] : null;
         $score = feeberse_points_from_rating($rating, $minutes);
         $label = (string)($match['dateLabel'] ?? $match['date'] ?? 'Partido Feeberse');
@@ -6370,11 +6392,13 @@ function feeberse_player_recent_details(array $player, string $competition, int 
             'opponent' => $opponent,
             'home' => $isHome,
             'minutes' => $minutes,
-            'minutesSource' => $estimatedMinuteIn !== null ? 'estimated' : 'feeberse',
+            'minutesSource' => $estimatedMinuteIn !== null || $estimatedMinuteOut !== null ? 'estimated' : 'feeberse',
             'played' => $minutes > 0,
             'starter' => $starter,
             'minuteIn' => $estimatedMinuteIn,
             'minuteInLabel' => $estimatedMinuteIn !== null ? (string)$estimatedMinuteIn : null,
+            'minuteOut' => $estimatedMinuteOut,
+            'minuteOutLabel' => $estimatedMinuteOut !== null ? (string)$estimatedMinuteOut : null,
             'lineupSource' => 'feeberse-minutes',
             'rating' => $rating,
             'points' => ['feeberse' => $score, 'feeberse-mixed' => $score],

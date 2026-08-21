@@ -210,7 +210,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.11.1";
+const APP_VERSION = "3.11.2";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -5096,10 +5096,16 @@ const recentMatchDetail = (match, score, played) => {
   if (played) {
     rows.push(`${score} pts`);
     if (matchHasMinutes(match)) rows.push(`${Number(match.minutes)} min jugados`);
-    if (match.starter === true) rows.push("Titular");
-    if (match.starter === false && matchHasMinutes(match)) rows.push("Suplente");
-    if (Number.isFinite(Number(match.minuteIn))) rows.push(`↑ Entró en el ${match.minuteInLabel || Number(match.minuteIn)}'`);
-    if (Number.isFinite(Number(match.minuteOut))) rows.push(`↓ Salió en el ${match.minuteOutLabel || Number(match.minuteOut)}'`);
+    const minuteIn = match.minuteIn === null || match.minuteIn === undefined || match.minuteIn === "" ? null : Number(match.minuteIn);
+    const minuteOut = match.minuteOut === null || match.minuteOut === undefined || match.minuteOut === "" ? null : Number(match.minuteOut);
+    if (match.starter === true) {
+      rows.push("Titular");
+      if (Number.isFinite(minuteOut) && minuteOut > 0) rows.push(`↓ Sustituido en el ${match.minuteOutLabel || minuteOut}'`);
+    } else if (match.starter === false && matchHasMinutes(match)) {
+      rows.push("Suplente");
+      if (Number.isFinite(minuteIn) && minuteIn > 0) rows.push(`↑ Entró en el ${match.minuteInLabel || minuteIn}'`);
+      if (Number.isFinite(minuteOut) && minuteOut > 0) rows.push(`↓ Sustituido en el ${match.minuteOutLabel || minuteOut}'`);
+    }
     if (match.minutesSource === "estimated") rows.push("Minutos de cambio estimados");
   } else {
     rows.push("No jugó o puntuó 0");
@@ -5139,7 +5145,13 @@ const renderRecentFormDots = (player) => {
         const played = isBiwenger ? score !== 0 : Boolean(match.played) && matchHasMinutes(match) && Number(match.minutes) > 0;
         const detail = recentMatchDetail(match, score, played);
         const label = recentMatchTitle(detail);
-        const needsHydration = !matchHasMinutes(match) && played;
+        const lacksRoleDetail = played && typeof match.starter !== "boolean";
+        const lacksSubstitutionDetail = played && (
+          match.minutesSource === "estimated"
+          || (match.starter === true && Number(match.minutes) < 85 && !(Number(match.minuteOut) > 0))
+          || (match.starter === false && !(Number(match.minuteIn) > 0))
+        );
+        const needsHydration = played && (!matchHasMinutes(match) || lacksRoleDetail || lacksSubstitutionDetail);
         return `<span class="recent-dot ${recentDotClass(score, played)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" ${playerAttrs} data-recent-index="${index}" data-recent-needs-hydration="${needsHydration ? "true" : "false"}" data-recent-detail="${escapeHtml(encodeURIComponent(JSON.stringify(detail)))}"></span>`;
       }).join("")}
     </span>
@@ -9174,6 +9186,7 @@ const enrichRivalRecentDetails = async (players, options = {}) => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             competition: state.competition,
+            includeSubstitutions: false,
             player: {
               id: player.id,
               biwengerPlayerId: player.biwengerPlayerId,
@@ -9235,6 +9248,7 @@ const hydrateRecentFormButton = async (button) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           competition: state.competition,
+          includeSubstitutions: true,
           player: {
             id: player.id,
             biwengerPlayerId: player.biwengerPlayerId,
@@ -13763,7 +13777,7 @@ const runStartupFullRefreshIfReady = () => {
   }
   if (startupFullRefreshPromise) return startupFullRefreshPromise;
   startupSyncWaitingForLeagueSelection = false;
-  startupFullRefreshPromise = refreshAllSettingsManually({ reason: "startup" })
+  startupFullRefreshPromise = runAutomaticSync({ force: false, reason: "startup" })
     .then((success) => {
       startupSyncCompletedForSession = Boolean(success);
       state.autoSync.status = success ? "ready" : "error";
@@ -13811,9 +13825,11 @@ const refreshStartupDataInBackground = (localPayload) => {
           : ""
       });
       startupRefreshPromise = null;
-      window.setTimeout(() => {
-        void refreshDeferredSourcesInBackground({ enrich: shouldRefreshDeferredSources });
-      }, 0);
+      if (shouldRefreshDeferredSources) {
+        window.setTimeout(() => {
+          void refreshDeferredSourcesInBackground({ enrich: false });
+        }, 1200);
+      }
     }
   });
   return startupRefreshPromise;

@@ -1,8 +1,15 @@
-# Version 3.11.1
+# Version 3.11.2
 
 Fecha de publicación: 2026-08-21
 
 ## Notas de versión
+
+- El popup de minutos no muestra entradas ficticias en el minuto 0.
+- Si el jugador fue titular y salió sustituido, se muestra el minuto de sustitución destacado en rojo.
+- La consulta rápida de racha deja de esperar innecesariamente a tres proveedores deportivos consecutivos.
+- El arranque actualiza primero los datos esenciales de Biwenger y reutiliza caché reciente; las fuentes pesadas quedan reservadas para la interacción o para «Actualizar todo».
+
+## Historial 3.11.1
 
 - La racha muestra exclusivamente partidos disputados en la temporada actual y descarta el histórico anterior del popup.
 - El detalle de minutos indica si el jugador fue titular o, si entró desde el banquillo, el minuto de entrada disponible en las fuentes.

@@ -769,6 +769,22 @@ if (currentSeasonHistory.matches.length !== 1 || currentSeasonHistory.matches[0]
   throw new Error("The recent-form popup must only expose matches from the current season: " + JSON.stringify(currentSeasonHistory));
 }
 
+const starterSubstitutionDetail = recentMatchDetail({
+  provider: "api-football",
+  played: true,
+  starter: true,
+  minutes: 63,
+  minuteIn: 0,
+  minuteOut: 63,
+  minuteOutLabel: "63"
+}, 7, true);
+if (!starterSubstitutionDetail.rows.includes("Titular")
+  || !starterSubstitutionDetail.rows.includes("↓ Sustituido en el 63'")
+  || starterSubstitutionDetail.rows.some((row) => row.includes("Entró en el 0"))
+  || !renderRecentPopoverRow("↓ Sustituido en el 63'").includes("sub-minute out")) {
+  throw new Error("Starter minute popups must show the red substitution minute and never a minute-zero entry: " + JSON.stringify(starterSubstitutionDetail));
+}
+
 const injuredHealthHtml = renderHealthBadge({ health: { status: "injured", detail: "Lesión muscular", expectedReturn: "principios de septiembre", medicalUrl: "https://example.com/parte" } });
 const suspendedHealthHtml = renderHealthBadge({ health: { status: "suspended", detail: "Sancionado jornadas 1 y 2" } });
 if (!injuredHealthHtml.includes("×") || !injuredHealthHtml.includes("Parte médico") || !injuredHealthHtml.includes("Lesión muscular")

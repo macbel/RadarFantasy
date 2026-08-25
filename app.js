@@ -210,7 +210,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.11.2";
+const APP_VERSION = "3.11.3";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -1936,6 +1936,27 @@ const activeIncomingOffers = (offers = state.biwengerOperations?.offers || []) =
   return [...byParty.values()];
 };
 
+const incomingOfferPlayerKey = (offer = {}) => {
+  const playerId = Number(offer.playerId || 0);
+  if (playerId > 0) return `player:${playerId}`;
+  const playerName = normalize(offer.playerName || operationPlayerData(offer).name || "");
+  return playerName && playerName !== "jugador" ? `name:${playerName}` : `offer:${offerIdKey(offer)}`;
+};
+
+const bestIncomingOffersByPlayer = (incoming = []) => {
+  const bestByPlayer = new Map();
+  incoming.forEach((offer) => {
+    const key = incomingOfferPlayerKey(offer);
+    const previous = bestByPlayer.get(key);
+    const amount = moneyAmount(offer.amount);
+    const previousAmount = previous ? moneyAmount(previous.amount) : -1;
+    if (!previous || amount > previousAmount || (amount === previousAmount && incomingOfferRank(offer) > incomingOfferRank(previous))) {
+      bestByPlayer.set(key, offer);
+    }
+  });
+  return [...bestByPlayer.values()];
+};
+
 const currentLiveRoundOwnTeam = () => {
   const teams = state.liveRound?.teams || [];
   if (!Array.isArray(teams) || !teams.length) return null;
@@ -2089,9 +2110,11 @@ const renderRoundRewardDetail = (reward, options = {}) => {
 
 const incomingOfferSummary = (incoming = activeIncomingOffers()) => {
   const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
-  const total = incoming.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
+  const applicable = bestIncomingOffersByPlayer(incoming);
+  const total = applicable.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   return {
     count: incoming.length,
+    applicableCount: applicable.length,
     total,
     balanceAfterAll: Number.isFinite(balance) ? balance + total : null,
     balance
@@ -2277,20 +2300,75 @@ const saleUrgencyForPlayer = (player, context = {}) => {
   };
 };
 
-const assistantSaleRows = (players = assistantTeamPlayers(), context = {}) => players
-  .map((player) => ({ player, sale: saleUrgencyForPlayer(player, context), existingSale: activeSaleForPlayer(player) }))
-  .filter((row) => row.sale.action !== "Mantener" && row.sale.score >= 54 && Number(row.sale.value || 0) > 0)
-  .sort((a, b) => b.sale.score - a.sale.score || b.sale.value - a.sale.value)
-  .slice(0, 6);
+const salePlanKeepsValidLineup = (players, selectedPlayerKeys, nextPlayer) => {
+  const nextKey = String(nextPlayer?.biwengerPlayerId || nextPlayer?.id || "");
+  const removed = new Set([...selectedPlayerKeys, nextKey]);
+  const remaining = players
+    .filter((player) => player.position !== "ENT")
+    .filter((player) => !removed.has(String(player.biwengerPlayerId || player.id || "")));
+  if (remaining.length < 11) return false;
+  const byPosition = remaining.reduce((counts, player) => {
+    counts[player.position] = (counts[player.position] || 0) + 1;
+    return counts;
+  }, {});
+  return FORMATIONS.some((formation) => Object.entries(formation.slots)
+    .every(([position, needed]) => (byPosition[position] || 0) >= needed));
+};
+
+const assistantSaleRows = (players = assistantTeamPlayers(), context = {}) => {
+  const evaluated = players
+    .map((player) => ({ player, sale: saleUrgencyForPlayer(player, context), existingSale: activeSaleForPlayer(player) }))
+    .filter((row) => Number(row.sale.value || 0) > 0);
+  const ordinary = evaluated
+    .filter((row) => row.sale.action !== "Mantener" && row.sale.score >= 54)
+    .sort((a, b) => b.sale.score - a.sale.score || b.sale.value - a.sale.value);
+  const balance = Number.isFinite(Number(context.balanceAfterRoundAndOffers))
+    ? Number(context.balanceAfterRoundAndOffers)
+    : Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
+  const debt = Number.isFinite(balance) ? Math.max(0, -balance) : 0;
+  if (debt <= 0) return ordinary.slice(0, 6);
+
+  const selected = [];
+  const selectedPlayerKeys = new Set();
+  let potential = 0;
+  const addIfSafe = (row, forced = false) => {
+    const playerKey = String(row.player?.biwengerPlayerId || row.player?.id || "");
+    if (!playerKey || selectedPlayerKeys.has(playerKey) || row.existingSale) return;
+    if (row.sale.reason.includes("jornada en curso") || !salePlanKeepsValidLineup(players, selectedPlayerKeys, row.player)) return;
+    const sale = forced ? {
+      ...row.sale,
+      score: Math.max(76, row.sale.score),
+      action: "Vender hoy",
+      reason: `saldo negativo: necesitas cubrir ${formatFinanceMoney(Math.max(0, debt - potential))} · ${row.sale.reason}`
+    } : row.sale;
+    selected.push({ ...row, sale });
+    selectedPlayerKeys.add(playerKey);
+    potential += Number(sale.suggestedPrice || 0);
+  };
+
+  ordinary.forEach((row) => {
+    if (selected.length < 6 && potential < debt) addIfSafe(row);
+  });
+  evaluated
+    .filter((row) => !row.existingSale && !selectedPlayerKeys.has(String(row.player?.biwengerPlayerId || row.player?.id || "")))
+    .sort((a, b) => Number(Boolean(a.sale.recent?.hot)) - Number(Boolean(b.sale.recent?.hot))
+      || a.sale.quality - b.sale.quality
+      || b.sale.value - a.sale.value)
+    .forEach((row) => {
+      if (selected.length < 6 && potential < debt) addIfSafe(row, true);
+    });
+  return selected;
+};
 
 const assistantOfferRows = (incoming, myOffers, futureIncome = 0) => {
   const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
   const committed = myOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const adjustedBalance = Number.isFinite(balance) ? balance + Number(futureIncome || 0) : balance;
   const targetAmount = Number.isFinite(adjustedBalance) ? Math.max(0, -adjustedBalance, -(adjustedBalance - committed)) : 0;
-  const recommended = chooseRecommendedOfferSet(incoming, targetAmount);
+  const applicableIncoming = bestIncomingOffersByPlayer(incoming);
+  const recommended = chooseRecommendedOfferSet(applicableIncoming, targetAmount);
   const recommendedIds = new Set(recommended.map(offerIdKey));
-  return incoming.map((offer) => {
+  return applicableIncoming.map((offer) => {
     const metrics = offerSportCost(offer);
     const value = operationCurrentValue(offer);
     const amount = moneyAmount(offer.amount);
@@ -2331,7 +2409,7 @@ const assistantPlanSnapshot = () => {
   const recommendedOfferAmount = offerRows
     .filter((row) => row.action === "Aceptar")
     .reduce((sum, row) => sum + moneyAmount(row.amount), 0);
-  const allOfferAmount = incoming.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
+  const allOfferAmount = bestIncomingOffersByPlayer(incoming).reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const saleContext = {
     baseBalance: balance,
     roundRewardAmount: roundReward.amount,
@@ -2341,7 +2419,7 @@ const assistantPlanSnapshot = () => {
   };
   const sales = assistantSaleRows(assistantTeamPlayers(), saleContext);
   const salePotential = sales
-    .filter((row) => row.sale.action !== "Mantener")
+    .filter((row) => row.sale.action !== "Mantener" && !row.existingSale)
     .reduce((sum, row) => sum + Number(row.sale.suggestedPrice || 0), 0);
   const bidDelta = bids.reduce((sum, row) => sum + Number(row.delta || 0), 0);
   const bidWinCost = bids.reduce((sum, row) => sum + moneyAmount(row.amount), 0);
@@ -2791,9 +2869,11 @@ const renderBidSaleAssistant = () => {
   const bidBudgetText = Number.isFinite(bidBudgetMeta.budget)
     ? `${formatFinanceMoney(bidBudgetMeta.used || 0)} de ${formatFinanceMoney(bidBudgetMeta.budget)}`
     : "Sin límite Biwenger";
-  const bidHeaderText = bids.length
-    ? `${bidBudgetText}${bidBudgetMeta.skippedByBudget ? ` · ${bidBudgetMeta.skippedByBudget} candidato${bidBudgetMeta.skippedByBudget === 1 ? "" : "s"} fuera por límite` : ""}`
-    : "Sin compras claras ahora mismo.";
+  const bidHeaderText = Number.isFinite(balance) && balance < 0
+    ? `Compras bloqueadas hasta cubrir ${formatFinanceMoney(Math.abs(balance))}.`
+    : bids.length
+      ? `${bidBudgetText}${bidBudgetMeta.skippedByBudget ? ` · ${bidBudgetMeta.skippedByBudget} candidato${bidBudgetMeta.skippedByBudget === 1 ? "" : "s"} fuera por límite` : ""}`
+      : "Sin compras claras ahora mismo.";
 
   target.innerHTML = `
     <div class="assistant-hero">
@@ -2808,8 +2888,8 @@ const renderBidSaleAssistant = () => {
       <div class="assistant-metrics">
         <div><span>Saldo</span><strong class="${balance < 0 ? "negative" : "positive"}">${formatFinanceMoney(balance)}</strong></div>
         <div><span>Pujas nuevas / límite</span><strong>${escapeHtml(bidBudgetText)}</strong></div>
-        <div><span>Ofertas recibidas</span><strong>${incoming.length} · ${formatFinanceMoney(allOfferAmount)}</strong></div>
-        <div><span>Si aceptas todas</span><strong class="${projectedAllOffers < 0 ? "negative" : "positive"}">${formatFinanceMoney(projectedAllOffers)}</strong></div>
+        <div><span>Ofertas recibidas</span><strong>${incoming.length} · máximo aplicable ${formatFinanceMoney(allOfferAmount)}</strong></div>
+        <div><span>Aceptando las mejores</span><strong class="${projectedAllOffers < 0 ? "negative" : "positive"}">${formatFinanceMoney(projectedAllOffers)}</strong></div>
         <div><span>Ofertas recomendadas</span><strong class="${projected < 0 ? "negative" : "positive"}">${formatFinanceMoney(projected)}</strong><small>${formatFinanceMoney(recommendedOfferAmount)}</small></div>
         <div><span>Recompensa jornada</span><strong class="${roundReward.amount > 0 ? "positive" : ""}">${formatFinanceMoney(roundReward.amount)}</strong><small>${escapeHtml(renderRoundRewardDetail(roundReward, { compact: true }))}</small></div>
         <div><span>Saldo fin jornada</span><strong class="${projectedRound < 0 ? "negative" : "positive"}">${formatFinanceMoney(projectedRound)}</strong><small>${escapeHtml(roundReward.source)}</small></div>
@@ -2845,7 +2925,7 @@ const renderBidSaleAssistant = () => {
             <input class="bid-amount-input currency-input" type="text" inputmode="numeric" value="${formatCurrencyInput(row.amount)}" aria-label="Importe recomendado" />
             <button class="primary-button place-bid-button" type="submit" ${!state.biwenger.connected || !row.player.biwengerPlayerId || (!row.plan.hasOwnBid && row.plan.blocked) ? "disabled" : ""}>Enviar</button>
           </form>
-        `).join("") : `<p class="muted-empty compact">El asistente no ve una puja que compense riesgo, precio y encaje.</p>`}
+        `).join("") : `<p class="muted-empty compact">${Number.isFinite(balance) && balance < 0 ? "Las nuevas pujas se activarán cuando las ventas u ofertas aceptadas dejen saldo disponible." : "El asistente no ve una puja que compense riesgo, precio y encaje."}</p>`}
       </section>
       <section class="assistant-card">
         <header><strong>Jugadores a vender</strong><small>${sales.length ? "Precio de salida sugerido." : "Plantilla sin ventas urgentes."}</small></header>
@@ -8383,7 +8463,8 @@ const offerSportCost = (offer) => {
 
 const chooseRecommendedOfferSet = (incoming, targetAmount) => {
   if (!incoming.length || targetAmount <= 0) return [];
-  const decorated = incoming.map((offer) => ({ offer, metrics: offerSportCost(offer), amount: moneyAmount(offer.amount) }));
+  const decorated = bestIncomingOffersByPlayer(incoming)
+    .map((offer) => ({ offer, metrics: offerSportCost(offer), amount: moneyAmount(offer.amount) }));
   if (decorated.length <= 14) {
     let best = null;
     const totalMasks = 1 << decorated.length;
@@ -8423,8 +8504,9 @@ const renderOfferSimulation = (incoming, myOffers) => {
   if (!incoming.length) return "";
   const validIds = new Set(incoming.map(offerIdKey));
   state.offerSimulation.selectedOfferIds = state.offerSimulation.selectedOfferIds.filter((id) => validIds.has(id));
+  const selectedOffers = bestIncomingOffersByPlayer(incoming.filter((offer) => state.offerSimulation.selectedOfferIds.includes(offerIdKey(offer))));
+  state.offerSimulation.selectedOfferIds = selectedOffers.map(offerIdKey);
   const selectedIds = new Set(state.offerSimulation.selectedOfferIds);
-  const selectedOffers = incoming.filter((offer) => selectedIds.has(offerIdKey(offer)));
   const selectedAmount = selectedOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const committed = myOffers.reduce((sum, offer) => sum + moneyAmount(offer.amount), 0);
   const balance = Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
@@ -8461,8 +8543,8 @@ const renderOfferSimulation = (incoming, myOffers) => {
         </div>
       </div>
       <div class="operation-metrics offer-simulation-metrics">
-        <div><span>Total ofertas</span><strong>${incoming.length} · ${formatFinanceMoney(incomingSummary.total)}</strong></div>
-        <div class="${incomingSummary.balanceAfterAll < 0 ? "danger" : ""}"><span>Si aceptas todas</span><strong>${formatFinanceMoney(incomingSummary.balanceAfterAll)}</strong></div>
+        <div><span>Total ofertas</span><strong>${incoming.length} · máximo aplicable ${formatFinanceMoney(incomingSummary.total)}</strong></div>
+        <div class="${incomingSummary.balanceAfterAll < 0 ? "danger" : ""}"><span>Mejor por jugador</span><strong>${formatFinanceMoney(incomingSummary.balanceAfterAll)}</strong></div>
         <div><span>Seleccionado</span><strong>${formatFinanceMoney(selectedAmount)}</strong></div>
         <div class="${simulatedBalance < 0 ? "danger" : ""}"><span>Saldo simulado</span><strong>${formatFinanceMoney(simulatedBalance)}</strong></div>
         <div class="${simulatedProjected < 0 ? "danger" : ""}"><span>Saldo con pujas</span><strong>${formatFinanceMoney(simulatedProjected)}</strong></div>
@@ -8519,12 +8601,12 @@ const renderBiwengerOperations = () => {
     <div class="operation-metrics">
       <div><span>Saldo actual</span><strong>${formatFinanceMoney(balance)}</strong></div>
       <div><span>Pujado</span><strong>${formatFinanceMoney(committed)}</strong></div>
-      <div><span>Ofertas recibidas</span><strong>${incoming.length} · ${formatFinanceMoney(incomingSummary.total)}</strong></div>
-      <div class="${incomingSummary.balanceAfterAll < 0 ? "danger" : ""}"><span>Si aceptas todas</span><strong>${formatFinanceMoney(incomingSummary.balanceAfterAll)}</strong></div>
+      <div><span>Ofertas recibidas</span><strong>${incoming.length} · máximo aplicable ${formatFinanceMoney(incomingSummary.total)}</strong></div>
+      <div class="${incomingSummary.balanceAfterAll < 0 ? "danger" : ""}"><span>Mejor por jugador</span><strong>${formatFinanceMoney(incomingSummary.balanceAfterAll)}</strong></div>
       <div class="${future < 0 ? "danger" : ""}"><span>Saldo si ganas todo</span><strong>${formatFinanceMoney(future)}</strong></div>
       <div><span>Recompensa jornada</span><strong>${formatFinanceMoney(roundReward.amount)}</strong><small>${escapeHtml(renderRoundRewardDetail(roundReward, { compact: true }))}</small></div>
       <div class="${futureWithRound < 0 ? "danger" : ""}"><span>Saldo fin jornada</span><strong>${formatFinanceMoney(futureWithRound)}</strong></div>
-      <div class="${futureWithAllOffersAndRound < 0 ? "danger" : ""}"><span>Ofertas + jornada</span><strong>${formatFinanceMoney(futureWithAllOffersAndRound)}</strong><small>Aceptando todas y ganando pujas</small></div>
+      <div class="${futureWithAllOffersAndRound < 0 ? "danger" : ""}"><span>Ofertas + jornada</span><strong>${formatFinanceMoney(futureWithAllOffersAndRound)}</strong><small>Mejor oferta por jugador y ganando pujas</small></div>
     </div>
     ${myOffers.length ? myOffers.map((offer) => `
       <form class="operation-row bid-edit-form" data-offer-id="${offer.offerId}" data-player-id="${offer.playerId}" data-owner-id="${offer.toId}">
@@ -8626,7 +8708,14 @@ const renderBiwengerOperations = () => {
   }));
   bidsTarget.querySelectorAll(".offer-sim-checkbox").forEach((checkbox) => checkbox.addEventListener("change", () => {
     const selected = new Set(state.offerSimulation.selectedOfferIds);
-    if (checkbox.checked) selected.add(checkbox.value);
+    if (checkbox.checked) {
+      const selectedOffer = incoming.find((offer) => offerIdKey(offer) === checkbox.value);
+      const playerKey = selectedOffer ? incomingOfferPlayerKey(selectedOffer) : "";
+      if (playerKey) incoming.forEach((offer) => {
+        if (incomingOfferPlayerKey(offer) === playerKey) selected.delete(offerIdKey(offer));
+      });
+      selected.add(checkbox.value);
+    }
     else selected.delete(checkbox.value);
     state.offerSimulation.selectedOfferIds = [...selected];
     renderBiwengerOperations();

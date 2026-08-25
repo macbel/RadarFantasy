@@ -617,6 +617,25 @@ const safeIncomingOffers = activeIncomingOffers([
 if (safeIncomingOffers.length !== 2 || !safeIncomingOffers.some((offer) => offer.offerId === 31)) {
   throw new Error("Incoming offers must be deduplicated by player and bidder: " + JSON.stringify(safeIncomingOffers));
 }
+const bestIncomingOffers = bestIncomingOffersByPlayer(safeIncomingOffers);
+if (bestIncomingOffers.length !== 1 || bestIncomingOffers[0].offerId !== 32) {
+  throw new Error("Financial projections must keep only the best mutually exclusive offer per player: " + JSON.stringify(bestIncomingOffers));
+}
+const exclusiveIncomingSummary = incomingOfferSummary(safeIncomingOffers);
+const exclusiveOfferRows = assistantOfferRows(safeIncomingOffers, [], 0);
+if (exclusiveIncomingSummary.count !== 2 || exclusiveIncomingSummary.applicableCount !== 1
+  || exclusiveIncomingSummary.total !== 1200000 || exclusiveOfferRows.length !== 1) {
+  throw new Error("Plan totals and actions must count a player sale only once: " + JSON.stringify({ exclusiveIncomingSummary, exclusiveOfferRows }));
+}
+const exclusiveRecommendedOffers = chooseRecommendedOfferSet([
+  ...safeIncomingOffers,
+  { offerId: 33, playerId: 504, fromId: 90, toId: 77, amount: 900000, isIncoming: true, status: "waiting", timestampTs: nowSeconds }
+], 2000000);
+if (exclusiveRecommendedOffers.length !== 2
+  || new Set(exclusiveRecommendedOffers.map((offer) => offer.playerId)).size !== exclusiveRecommendedOffers.length
+  || exclusiveRecommendedOffers.reduce((sum, offer) => sum + offer.amount, 0) !== 2100000) {
+  throw new Error("Recommended offer sets must never accept two offers for the same player: " + JSON.stringify(exclusiveRecommendedOffers));
+}
 if (roundBidAmount(1000001) !== 1010000) {
   throw new Error("Bid rounding must never reduce the current minimum amount");
 }
@@ -687,6 +706,35 @@ const urgentSale = saleUrgencyForPlayer({
 });
 if (urgentSale.action === "Mantener" || urgentSale.suggestedPrice < urgentSale.value) {
   throw new Error("Urgent sale price must not go below market value: " + JSON.stringify(urgentSale));
+}
+
+state.leagueFixtures = { events: [] };
+state.finance = { balance: -9426050, teamValue: 45000000, maximumBid: 0, activeBids: 0, bidTotal: 0 };
+state.biwengerOperations = { offers: [], sales: [], finance: { balance: -9426050, maximumBid: 0 } };
+const solvencyPositions = ["POR", "POR", "DF", "DF", "DF", "DF", "DF", "MC", "MC", "MC", "MC", "MC", "DL", "DL", "DL"];
+state.teamPlayers = hydrateImportedPlayers(solvencyPositions.map((position, index) => ({
+  id: "solvency-" + (index + 1),
+  biwengerPlayerId: 1000 + index,
+  name: "Jugador solvencia " + (index + 1),
+  team: "Mi equipo",
+  position,
+  price: 3000000,
+  biwengerValue: 3000000,
+  starter: 70,
+  form: 66,
+  sourceStatus: "live",
+  dataConfidence: 78,
+  sourceSummary: { recentMatches: [{ provider: "biwenger", points: { biwenger: 5, mixed: 5 }, minutes: 90 }] }
+})));
+const solvencySales = assistantSaleRows(assistantTeamPlayers(), {
+  baseBalance: -9426050,
+  roundRewardAmount: 0,
+  balanceAfterRoundAndOffers: -9426050
+});
+if (!solvencySales.length
+  || solvencySales.some((row) => row.sale.action === "Mantener" || !row.sale.reason.includes("saldo negativo"))
+  || solvencySales.reduce((sum, row) => sum + row.sale.suggestedPrice, 0) < 9426050) {
+  throw new Error("A negative balance must force a lineup-safe sale plan that covers the deficit: " + JSON.stringify(solvencySales));
 }
 
 state.editableLineup = { formationName: "4-4-2", playerIds: ["alert-injured"] };

@@ -1,8 +1,14 @@
-# Version 3.11.2
+# Version 3.11.3
 
-Fecha de publicación: 2026-08-21
+Fecha de publicación: 2026-08-25
 
 ## Notas de versión
+
+- El Centro de decisión ya no recomienda ni suma dos ofertas incompatibles por el mismo jugador; conserva la mejor oferta para proyectar el saldo.
+- Con saldo negativo, el asistente genera un plan de ventas suficiente para cubrir el déficit siempre que pueda mantener un once válido.
+- El simulador de ofertas impide seleccionar simultáneamente dos compradores para una única venta.
+
+## Historial 3.11.2
 
 - El popup de minutos no muestra entradas ficticias en el minuto 0.
 - Si el jugador fue titular y salió sustituido, se muestra el minuto de sustitución destacado en rojo.

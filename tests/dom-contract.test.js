@@ -86,8 +86,25 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=129') || !html.includes('styles.css?v=71') || !sw.includes('radar-fantasy-shell-v80')) {
+if (!html.includes('app.js?v=130') || !html.includes('styles.css?v=72') || !sw.includes('radar-fantasy-shell-v81')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
+}
+
+if (!html.includes('id="data-sync-progress-bar"') || !html.includes('id="data-sync-progress-label"')
+  || !js.includes("withVisibleBackgroundDataSync") || !js.includes("updateDataSyncProgress")
+  || !js.includes("isNativeRuntime() ? 45 * 60 * 1000")) {
+  throw new Error("Startup loading must stay visible, phased, and lighter when the native app is reopened");
+}
+
+if (!js.includes("visual.iconFallback") || !js.includes("data-fallback-src") || !js.includes("cover: leagueVisual.iconFallback")) {
+  throw new Error("Private league icons must fall back to their available Biwenger cover or initials");
+}
+
+if (!html.includes('data-league-tab="targets"') || !html.includes('data-league-panel="targets"')
+  || !html.includes('id="target-player-one"') || !html.includes('id="target-player-two"')
+  || !js.includes("const targetAcquisitionPlan") || !js.includes("targetPlanKeepsValidLineup")
+  || !php.includes("'targetPlayerIds' => $targetPlayerIds")) {
+  throw new Error("League Center must persist and calculate one or two target-player acquisition plans");
 }
 
 if (!html.includes('id="interaction-wait-popup"') || !js.includes("beginInteractionWait") || !css.includes(".interaction-wait-popup")) {

@@ -69,6 +69,7 @@
   offerSimulation: {
     selectedOfferIds: []
   },
+  targetPlayerIds: [],
   teamAlerts: [],
   teamNews: [],
   teamNewsLoading: false,
@@ -210,7 +211,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.11.3";
+const APP_VERSION = "3.12.0";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -709,7 +710,8 @@ const saveLocalLeagueSnapshot = () => {
     favoritesUpdatedAt: state.favoriteStateUpdatedAt || existing.favoritesUpdatedAt || now,
     leagueOverview: state.leagueOverview,
     leagueFixtures: state.leagueFixtures,
-    leagueFixturesSavedAt: state.leagueFixtures ? now : (existing.leagueFixturesSavedAt || null)
+    leagueFixturesSavedAt: state.leagueFixtures ? now : (existing.leagueFixturesSavedAt || null),
+    targetPlayerIds: state.targetPlayerIds.slice(0, 2)
   };
   db.activeLeagueId = state.activeLeagueId;
   writeLocalLeagueDb(db);
@@ -2842,6 +2844,249 @@ const renderAssistantPlayerRow = (player, meta = "") => {
       </div>
     </div>
   `;
+};
+
+const targetPlayerKey = (player) => favoritePlayerKey(player);
+
+const analyzeTargetPlayerWithoutCurrentCashLimit = (player, marketPlayers) => {
+  const originalFinance = state.finance;
+  const originalOperations = state.biwengerOperations;
+  state.finance = { ...state.finance, balance: 1_000_000_000_000, maximumBid: 1_000_000_000_000 };
+  if (originalOperations) {
+    state.biwengerOperations = {
+      ...originalOperations,
+      finance: { ...(originalOperations.finance || {}), balance: 1_000_000_000_000, maximumBid: 1_000_000_000_000 }
+    };
+  }
+  try {
+    return analyzePlayer(playerForCompetition(player), marketPlayers);
+  } finally {
+    state.finance = originalFinance;
+    state.biwengerOperations = originalOperations;
+  }
+};
+
+const targetMarketPlayers = () => {
+  const competitionPlayers = state.players.map(playerForCompetition);
+  return competitionPlayers
+    .map((player) => analyzeTargetPlayerWithoutCurrentCashLimit(player, competitionPlayers))
+    .filter((player) => !playerIsAlreadyInTeam(player))
+    .sort(compareMarketRecommendations);
+};
+
+const targetBidForPlayer = (player) => {
+  const price = playerCurrentMarketPrice(player);
+  const decision = player.marketDecision || {};
+  const demand = Math.max(0, Number(player.bidCount || 0), Number(player.rivalBidCount || 0));
+  const base = Math.max(price, Number(decision.recommendedBid || 0));
+  const rationalLimit = Math.max(base, Number(decision.reasonableLimit || player.maxBid || base));
+  const contested = demand >= 2 && Number(player.recommendation || 0) >= 76;
+  const target = contested ? roundBidAmount(base * (1 + Math.min(0.06, demand * 0.015))) : base;
+  return {
+    amount: Math.min(Math.max(price, target), rationalLimit || target),
+    limit: rationalLimit,
+    contested
+  };
+};
+
+const targetSaleLiquidity = (player) => {
+  const playerId = Number(player?.biwengerPlayerId || 0);
+  const offers = bestIncomingOffersByPlayer(activeIncomingOffers())
+    .filter((offer) => Number(offer.playerId || 0) === playerId)
+    .sort((left, right) => moneyAmount(right.amount) - moneyAmount(left.amount));
+  const offerAmount = moneyAmount(offers[0]?.amount);
+  const marketValue = teamPlayerBiwengerValue(player);
+  return {
+    amount: Math.max(marketValue, offerAmount),
+    source: offerAmount >= marketValue && offerAmount > 0 ? "oferta recibida" : "valor de mercado"
+  };
+};
+
+const targetPlanKeepsValidLineup = (soldPlayers, targetPlayers) => {
+  const soldKeys = new Set(soldPlayers.map((player) => String(player.biwengerPlayerId || player.id || "")));
+  const remaining = state.teamPlayers
+    .filter((player) => player.position !== "ENT")
+    .filter((player) => !soldKeys.has(String(player.biwengerPlayerId || player.id || "")));
+  const incoming = targetPlayers.filter((player) => player.position !== "ENT");
+  const finalPlayers = [...remaining, ...incoming];
+  if (finalPlayers.length < 11) return false;
+  const byPosition = finalPlayers.reduce((counts, player) => {
+    const position = player.position || "MC";
+    counts[position] = (counts[position] || 0) + 1;
+    return counts;
+  }, {});
+  return FORMATIONS.some((formation) => Object.entries(formation.slots)
+    .every(([position, needed]) => (byPosition[position] || 0) >= needed));
+};
+
+const targetAcquisitionPlan = (selectedIds = state.targetPlayerIds) => {
+  const market = targetMarketPlayers();
+  const selected = [...new Set((selectedIds || []).map(String).filter(Boolean))]
+    .map((id) => market.find((player) => targetPlayerKey(player) === id))
+    .filter(Boolean)
+    .slice(0, 2);
+  if (!selected.length) return { status: "empty", market, selected: [] };
+
+  const targetRows = selected.map((player) => ({ player, bid: targetBidForPlayer(player) }));
+  const rejectedTargets = targetRows.filter(({ player, bid }) => (
+    !["buy", "limited"].includes(player.marketDecision?.type)
+    || Number(player.recommendation || 0) < 64
+    || bid.amount <= 0
+    || player.recentForm?.noRecentMinutes
+    || ["injured", "suspended"].includes(String(player.health?.status || "").toLowerCase())
+  ));
+  const totalCost = targetRows.reduce((sum, row) => sum + Number(row.bid.amount || 0), 0);
+  const rawBalance = state.biwengerOperations?.finance?.balance ?? state.finance.balance;
+  const balance = rawBalance === null || rawBalance === undefined || rawBalance === "" ? null : Number(rawBalance);
+  const selectedOwnBidTotal = targetRows.reduce((sum, row) => sum + Number(playerOwnBidAmount(row.player) || 0), 0);
+  const otherCommitments = Math.max(0, activeBidCommitmentTotal() - selectedOwnBidTotal);
+  const available = Number.isFinite(balance) ? balance - otherCommitments : null;
+  const shortfall = Number.isFinite(available) ? Math.max(0, totalCost - available) : null;
+  if (rejectedTargets.length) {
+    return { status: "not-worth", market, selected, targetRows, rejectedTargets, totalCost, balance, available, shortfall, sales: [] };
+  }
+  if (!Number.isFinite(balance)) {
+    return { status: "no-balance", market, selected, targetRows, totalCost, balance: null, available: null, shortfall: null, sales: [] };
+  }
+  if (shortfall <= 0) {
+    return { status: "cash", market, selected, targetRows, totalCost, balance, available, shortfall: 0, sales: [], projectedBalance: available - totalCost };
+  }
+
+  const team = assistantTeamPlayers();
+  const candidates = team
+    .filter((player) => player.position !== "ENT")
+    .map((player) => {
+      const sale = saleUrgencyForPlayer(player, { baseBalance: balance, balanceAfterRoundAndOffers: balance });
+      const liquidity = targetSaleLiquidity(player);
+      const hotPenalty = sale.recent?.hot ? 18 : 0;
+      const sportingCost = Math.max(1, Number(sale.quality || 50) - Number(sale.score || 0) * 0.35 + hotPenalty);
+      return { player, sale, liquidity, sportingCost };
+    })
+    .filter((row) => row.liquidity.amount > 0 && !row.sale.reason.includes("jornada en curso"))
+    .sort((left, right) => left.sportingCost / left.liquidity.amount - right.sportingCost / right.liquidity.amount)
+    .slice(0, 16);
+
+  let best = null;
+  const totalMasks = 1 << candidates.length;
+  for (let mask = 1; mask < totalMasks; mask += 1) {
+    let count = 0;
+    let proceeds = 0;
+    let sportingCost = 0;
+    const rows = [];
+    for (let index = 0; index < candidates.length; index += 1) {
+      if (!(mask & (1 << index))) continue;
+      count += 1;
+      if (count > 5) break;
+      const row = candidates[index];
+      rows.push(row);
+      proceeds += row.liquidity.amount;
+      sportingCost += row.sportingCost;
+    }
+    if (count > 5 || proceeds < shortfall) continue;
+    if (!targetPlanKeepsValidLineup(rows.map((row) => row.player), selected)) continue;
+    const excess = proceeds - shortfall;
+    const rank = sportingCost * 1_000_000 + count * 180_000 + excess * 0.004;
+    if (!best || rank < best.rank) best = { rows, proceeds, sportingCost, rank };
+  }
+  if (!best) {
+    return { status: "no-safe-sales", market, selected, targetRows, totalCost, balance, available, shortfall, sales: [] };
+  }
+  const targetAverage = targetRows.reduce((sum, row) => sum + Number(row.player.recommendation || 0), 0) / targetRows.length;
+  const saleAverage = best.rows.reduce((sum, row) => sum + Number(row.sale.quality || 0), 0) / best.rows.length;
+  const extraSalePenalty = Math.max(0, best.rows.length - targetRows.length) * 7;
+  const sportingGain = Math.round(targetAverage - saleAverage - extraSalePenalty);
+  const worthIt = sportingGain >= 4 && best.rows.every((row) => !row.sale.recent?.hot || row.sale.score >= 70);
+  return {
+    status: worthIt ? "sell" : "sales-not-worth",
+    market,
+    selected,
+    targetRows,
+    totalCost,
+    balance,
+    available,
+    shortfall,
+    sales: best.rows,
+    saleProceeds: best.proceeds,
+    projectedBalance: available + best.proceeds - totalCost,
+    sportingGain,
+    targetAverage: Math.round(targetAverage),
+    saleAverage: Math.round(saleAverage)
+  };
+};
+
+const renderTargetPlayerSelectors = (market = targetMarketPlayers()) => {
+  const first = qs("#target-player-one");
+  const second = qs("#target-player-two");
+  if (!first || !second) return;
+  const selected = [...new Set(state.targetPlayerIds.map(String).filter(Boolean))].slice(0, 2);
+  const optionMarkup = market.map((player) => `<option value="${escapeHtml(targetPlayerKey(player))}">${escapeHtml(player.name)} · ${escapeHtml(player.position)} · ${escapeHtml(formatFinanceMoney(playerCurrentMarketPrice(player)))}</option>`).join("");
+  first.innerHTML = `<option value="">Selecciona un jugador</option>${optionMarkup}`;
+  second.innerHTML = `<option value="">Ninguno</option>${optionMarkup}`;
+  first.value = selected[0] || "";
+  second.value = selected[1] || "";
+  [...first.options].forEach((option) => { option.disabled = Boolean(option.value && option.value === second.value); });
+  [...second.options].forEach((option) => { option.disabled = Boolean(option.value && option.value === first.value); });
+};
+
+const renderTargetPlayerPlan = () => {
+  const target = qs("#target-player-plan");
+  if (!target) return;
+  const plan = targetAcquisitionPlan();
+  renderTargetPlayerSelectors(plan.market);
+  if (plan.status === "empty") {
+    target.innerHTML = `<p class="muted-empty">Selecciona uno o dos jugadores del mercado para calcular el plan.</p>`;
+    return;
+  }
+  const targetCards = plan.targetRows.map((row) => `
+    <article class="target-player-card">
+      ${renderAssistantPlayerRow(row.player, `${row.player.recommendation}/100 recomendación`)}
+      <div class="target-player-numbers">
+        <span>Puja objetivo <strong>${formatFinanceMoney(row.bid.amount)}</strong></span>
+        <span>Tope racional <strong>${formatFinanceMoney(row.bid.limit)}</strong></span>
+      </div>
+      <small>${escapeHtml(row.player.marketDecision?.summary || "Objetivo analizado por rendimiento, encaje y riesgo.")}</small>
+    </article>
+  `).join("");
+  const summary = `
+    <div class="target-plan-metrics">
+      <div><span>Coste previsto</span><strong>${formatFinanceMoney(plan.totalCost)}</strong></div>
+      <div><span>Saldo utilizable</span><strong class="${plan.available < 0 ? "negative" : "positive"}">${Number.isFinite(plan.available) ? formatFinanceMoney(plan.available) : "S/D"}</strong></div>
+      <div><span>Liquidez necesaria</span><strong class="${plan.shortfall > 0 ? "negative" : "positive"}">${Number.isFinite(plan.shortfall) ? formatFinanceMoney(plan.shortfall) : "S/D"}</strong></div>
+      <div><span>Saldo final estimado</span><strong class="${plan.projectedBalance < 0 ? "negative" : "positive"}">${Number.isFinite(plan.projectedBalance) ? formatFinanceMoney(plan.projectedBalance) : "S/D"}</strong></div>
+    </div>`;
+  let verdict = "";
+  if (plan.status === "not-worth") {
+    const names = plan.rejectedTargets.map((row) => row.player.name).join(" y ");
+    verdict = `<div class="target-verdict warning"><strong>No te aconsejo acometer este fichaje ahora.</strong><p>${escapeHtml(names)} no supera el filtro mínimo de rendimiento, disponibilidad y riesgo. No merece vender jugadores para financiarlo.</p></div>`;
+  } else if (plan.status === "no-balance") {
+    verdict = `<div class="target-verdict warning"><strong>Falta el saldo real.</strong><p>Actualiza Biwenger para calcular si necesitas vender y cuánto.</p></div>`;
+  } else if (plan.status === "cash") {
+    verdict = `<div class="target-verdict success"><strong>Puedes intentarlo sin vender.</strong><p>El saldo disponible cubre las pujas objetivo y respeta las demás pujas activas.</p></div>`;
+  } else if (plan.status === "no-safe-sales") {
+    verdict = `<div class="target-verdict warning"><strong>No hay una venta segura que lo haga viable.</strong><p>Las ventas necesarias dejarían la plantilla corta o sin una formación válida. No te aconsejo forzar el fichaje.</p></div>`;
+  } else if (plan.status === "sales-not-worth") {
+    verdict = `<div class="target-verdict warning"><strong>Financieramente posible, pero deportivamente no compensa.</strong><p>La mejora estimada es ${plan.sportingGain >= 0 ? "+" : ""}${plan.sportingGain} puntos: venderías una parte de la plantilla demasiado valiosa para estos objetivos.</p></div>`;
+  } else {
+    verdict = `<div class="target-verdict success"><strong>El plan sí compensa.</strong><p>La mejora deportiva estimada es +${plan.sportingGain} y las ventas conservan un once válido.</p></div>`;
+  }
+  const saleRows = plan.sales?.length ? `
+    <section class="target-sales-plan">
+      <header><strong>${plan.status === "sell" ? "Ventas aconsejadas" : "Ventas que harían falta (no aconsejadas)"}</strong><small>Ingresos estimados: ${formatFinanceMoney(plan.saleProceeds)}</small></header>
+      ${plan.sales.map((row) => `
+        <div class="target-sale-row">
+          ${renderAssistantPlayerRow(row.player, `${row.sale.quality}/100 nivel de once`)}
+          <div><strong>${formatFinanceMoney(row.liquidity.amount)}</strong><small>${escapeHtml(row.liquidity.source)} · ${escapeHtml(row.sale.reason)}</small></div>
+        </div>
+      `).join("")}
+    </section>` : "";
+  target.innerHTML = `<div class="target-player-selection">${targetCards}</div>${summary}${verdict}${saleRows}<p class="target-plan-note">Las pujas y ventas son estimaciones: comprueba los importes finales en Biwenger antes de ejecutar una operación.</p>`;
+};
+
+const updateTargetPlayerSelection = () => {
+  const selected = [qs("#target-player-one")?.value, qs("#target-player-two")?.value].filter(Boolean);
+  state.targetPlayerIds = [...new Set(selected)].slice(0, 2);
+  renderTargetPlayerPlan();
+  void saveActiveLeague();
 };
 
 const renderBidSaleAssistant = () => {
@@ -6215,7 +6460,10 @@ let dataSyncHideTimer = null;
 let activeDataSyncController = null;
 let dataSyncWasCancelled = false;
 let backgroundDataSyncDepth = 0;
+let visibleBackgroundDataSyncDepth = 0;
 let dataSyncRunsSilently = false;
+let dataSyncProgressStep = 0;
+let dataSyncProgressTotal = 0;
 let interactionWaitToken = 0;
 let interactionWaitShowTimer = null;
 let interactionWaitHideTimer = null;
@@ -6313,11 +6561,39 @@ const updateDataSync = (message, mode = "busy") => {
   if (detail) detail.textContent = message || "Sincronizando la información más reciente...";
 };
 
+const withVisibleBackgroundDataSync = async (callback) => {
+  backgroundDataSyncDepth += 1;
+  visibleBackgroundDataSyncDepth += 1;
+  try {
+    return await callback();
+  } finally {
+    visibleBackgroundDataSyncDepth = Math.max(0, visibleBackgroundDataSyncDepth - 1);
+    backgroundDataSyncDepth = Math.max(0, backgroundDataSyncDepth - 1);
+  }
+};
+
+const updateDataSyncProgress = (step = 0, total = 0, label = "") => {
+  dataSyncProgressStep = Math.max(0, Number(step) || 0);
+  dataSyncProgressTotal = Math.max(0, Number(total) || 0);
+  const bar = qs("#data-sync-progress-bar");
+  const progressLabel = qs("#data-sync-progress-label");
+  const percentage = dataSyncProgressTotal > 0
+    ? Math.round(clamp(dataSyncProgressStep / dataSyncProgressTotal, 0, 1) * 100)
+    : 0;
+  if (bar) bar.style.width = `${percentage}%`;
+  if (progressLabel) {
+    progressLabel.textContent = label || (dataSyncProgressTotal > 0
+      ? `Paso ${Math.min(dataSyncProgressStep, dataSyncProgressTotal)} de ${dataSyncProgressTotal}`
+      : "Preparando actualización…");
+  }
+};
+
 const beginDataSync = (message = "Sincronizando la información más reciente...") => {
   if (dataSyncDepth === 0) {
     activeDataSyncController = new AbortController();
     dataSyncWasCancelled = false;
-    dataSyncRunsSilently = backgroundDataSyncDepth > 0;
+    dataSyncRunsSilently = backgroundDataSyncDepth > visibleBackgroundDataSyncDepth;
+    updateDataSyncProgress(0, 0, "Preparando actualización…");
     const cancelButton = qs("#cancel-data-sync");
     if (cancelButton) cancelButton.disabled = false;
   }
@@ -6346,6 +6622,7 @@ const endDataSync = ({ error = "" } = {}) => {
   dataSyncShowTimer = null;
   const popup = qs("#data-sync-popup");
   activeDataSyncController = null;
+  updateDataSyncProgress(dataSyncProgressTotal || 1, dataSyncProgressTotal || 1, error ? "Actualización incompleta" : "Actualización terminada");
   if (dataSyncRunsSilently) {
     dataSyncRunsSilently = false;
     dataSyncWasCancelled = false;
@@ -6486,10 +6763,12 @@ const entityIconUrl = (entity = {}) => {
 const renderEntityAvatar = (entity = {}, className = "") => {
   const name = String(entity.name || entity.leagueName || "Liga");
   const icon = entityIconUrl(entity);
+  const fallback = safeRemoteImageUrl(entity.cover || entity.fallbackIcon || "");
   const classes = `entity-avatar ${className}`.trim();
   if (icon) {
-    return `<span class="${escapeHtml(classes)}"><img src="${escapeHtml(icon)}" alt="${escapeHtml(name)}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false" /><b hidden>${escapeHtml(initialsFor(name))}</b></span>`;
+    return `<span class="${escapeHtml(classes)}"><img src="${escapeHtml(icon)}" alt="${escapeHtml(name)}" loading="lazy"${fallback && fallback !== icon ? ` data-fallback-src="${escapeHtml(fallback)}"` : ""} onerror="if(this.dataset.fallbackSrc){const next=this.dataset.fallbackSrc;delete this.dataset.fallbackSrc;this.src=next;}else{this.hidden=true;this.nextElementSibling.hidden=false}" /><b hidden>${escapeHtml(initialsFor(name))}</b></span>`;
   }
+  if (fallback) return renderEntityAvatar({ ...entity, icon: fallback, cover: "" }, className);
   return `<span class="${escapeHtml(classes)}"><b>${escapeHtml(initialsFor(name))}</b></span>`;
 };
 
@@ -6507,10 +6786,13 @@ const activeLeagueVisual = () => {
     return name && localName && (name === localName || name.includes(localName) || localName.includes(name));
   });
   const fallbackIcon = biwengerLeagueIconUrl(localBiwengerId || visualMatch?.id || (remoteMatches ? state.biwenger.leagueId : 0));
+  const icon = safeRemoteImageUrl(visualMatch?.icon || state.leagueOverview?.leagueIcon || localLeague.icon || (remoteMatches ? state.biwenger.leagueIcon : "")) || fallbackIcon;
+  const cover = safeRemoteImageUrl(visualMatch?.cover || state.leagueOverview?.leagueCover || localLeague.cover || (remoteMatches ? state.biwenger.leagueCover : "")) || fallbackIcon;
   return {
     name: leagueName,
-    icon: safeRemoteImageUrl(visualMatch?.icon || state.leagueOverview?.leagueIcon || localLeague.icon || (remoteMatches ? state.biwenger.leagueIcon : "")) || fallbackIcon,
-    cover: safeRemoteImageUrl(visualMatch?.cover || state.leagueOverview?.leagueCover || localLeague.cover || (remoteMatches ? state.biwenger.leagueCover : "")) || fallbackIcon,
+    icon,
+    cover,
+    iconFallback: cover && cover !== icon ? cover : "",
     remoteMatches,
     visualMatch
   };
@@ -6527,7 +6809,15 @@ const renderLeagueIdentity = () => {
   iconElements.forEach((iconElement) => {
     iconElement.src = icon || "assets/app-icon.png?v=5";
     iconElement.alt = icon ? `Icono de ${leagueName}` : "";
+    if (visual.iconFallback) iconElement.dataset.fallbackSrc = visual.iconFallback;
+    else delete iconElement.dataset.fallbackSrc;
     iconElement.onerror = () => {
+      const fallback = iconElement.dataset.fallbackSrc;
+      if (fallback && fallback !== iconElement.src) {
+        delete iconElement.dataset.fallbackSrc;
+        iconElement.src = fallback;
+        return;
+      }
       iconElement.onerror = null;
       iconElement.src = "assets/app-icon.png?v=5";
     };
@@ -6825,6 +7115,9 @@ const applyLeague = (league) => {
     bidTotal: 0
   };
   state.selectedPlayerId = null;
+  state.targetPlayerIds = Array.isArray(league.targetPlayerIds)
+    ? league.targetPlayerIds.map(String).filter(Boolean).slice(0, 2)
+    : [];
   state.recommendedLineup = null;
   state.editableLineup = reconcileEditableLineup(league.editableLineup || null, state.teamPlayers);
   state.lineupRequested = Boolean(league.lineupRequested && state.editableLineup?.playerIds?.length);
@@ -6915,6 +7208,7 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
       leagueFixtures: freshest(league.leagueFixtures, remote.leagueFixtures) || null,
       leagueFixturesSavedAt: freshest(league.leagueFixturesSavedAt, remote.leagueFixturesSavedAt) || null,
       leagueOverview: freshest(league.leagueOverview, remote.leagueOverview) || null,
+      targetPlayerIds: freshest(league.targetPlayerIds, remote.targetPlayerIds) || [],
       favorites: (() => {
         const localFavoritesUpdatedAt = Date.parse(league.favoritesUpdatedAt || league.updatedAt || 0) || 0;
         const remoteFavoritesUpdatedAt = Date.parse(remote.favoritesUpdatedAt || remote.updatedAt || 0) || 0;
@@ -7018,7 +7312,8 @@ const saveActiveLeagueNow = async () => {
         editableLineup: state.editableLineup,
         favoritesUpdatedAt: state.favoriteStateUpdatedAt,
         leagueOverview: state.leagueOverview,
-        leagueFixtures: state.leagueFixtures
+        leagueFixtures: state.leagueFixtures,
+        targetPlayerIds: state.targetPlayerIds.slice(0, 2)
       })
     });
     if (!response.ok) throw new Error("No se pudo guardar");
@@ -8091,7 +8386,10 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   state.autoSync.deferredSources = false;
   const previous = autoSyncRecord();
   const previousTime = new Date(previous?.completedAt || 0).getTime();
-  const freshEnough = Number.isFinite(previousTime) && Date.now() - previousTime < 20 * 60 * 1000;
+  // La APK conserva la caché algo más de tiempo: evita repetir toda la cadena
+  // de red cada vez que el WebView vuelve a primer plano.
+  const freshnessWindow = isNativeRuntime() ? 45 * 60 * 1000 : 20 * 60 * 1000;
+  const freshEnough = Number.isFinite(previousTime) && Date.now() - previousTime < freshnessWindow;
   const previousFullSyncTime = new Date(previous?.fullSyncAt || 0).getTime();
   const fullSyncDue = force || !Number.isFinite(previousFullSyncTime) || Date.now() - previousFullSyncTime >= 60 * 60 * 1000;
   const periodicDisabled = reason === "periodic" && !state.preferences.autoSync;
@@ -8104,6 +8402,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
   state.autoSync.running = true;
   state.autoSync.status = "running";
   beginDataSync(reason === "startup" ? "Cargando mercado, equipo, partidos y fuentes..." : "Sincronizando los datos de la liga...");
+  updateDataSyncProgress(1, 4, "1 de 4 · Comprobando plantilla y mercado");
   renderDailyPlanIfVisible();
   let success = false;
   let syncResult = null;
@@ -8121,9 +8420,13 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
       success = Boolean(syncResult?.success);
       throwIfDataSyncCancelled();
       if (success && (!syncResult.unchanged || fullSyncDue)) {
+        updateDataSync("Plantilla y mercado disponibles. Actualizando la jornada…");
+        updateDataSyncProgress(2, 4, "2 de 4 · Actualizando próximos partidos");
         await loadLeagueFixtures(false);
         throwIfDataSyncCancelled();
         if (!fastStartup) {
+          updateDataSync("Actualizando clasificación y contexto financiero…");
+          updateDataSyncProgress(3, 4, "3 de 4 · Actualizando el centro de liga");
           await loadLeagueOverview();
           throwIfDataSyncCancelled();
           await waitForBiwengerSpacing();
@@ -8145,6 +8448,7 @@ const runAutomaticSync = async ({ force = false, reason = "auto" } = {}) => {
     const completedAt = new Date().toISOString();
     state.autoSync.lastAt = completedAt;
     state.autoSync.status = syncResult?.unchanged ? "unchanged" : "ready";
+    updateDataSyncProgress(4, 4, "4 de 4 · Guardando y preparando recomendaciones");
     if (fastStartup && state.biwenger.authenticated && (!syncResult?.unchanged || fullSyncDue)) {
       state.autoSync.deferredSources = Boolean(state.players.length || state.teamPlayers.length);
     }
@@ -8301,6 +8605,7 @@ const applyBiwengerOperations = (payload) => {
   renderFinance();
   renderTable();
   renderBiwengerOperations();
+  if (qs('[data-league-panel="targets"]')?.classList.contains("active")) renderTargetPlayerPlan();
 };
 
 const operationPlayerData = (entry) => {
@@ -8731,7 +9036,7 @@ const renderBiwengerOperations = () => {
     renderBiwengerOperations();
   });
   bidsTarget.querySelector(".offer-sim-clear")?.addEventListener("click", () => {
-    state.offerSimulation.selectedOfferIds = [];
+  state.offerSimulation.selectedOfferIds = [];
     renderBiwengerOperations();
   });
   salesTarget.querySelectorAll(".sale-form").forEach((form) => form.addEventListener("submit", async (event) => {
@@ -8819,7 +9124,7 @@ const renderLeagueOverview = () => {
   if (summary) {
     summary.innerHTML = rows.length ? `
       <div class="league-summary-brand">
-        ${renderEntityAvatar({ name: leagueVisual.name, icon: leagueVisual.icon }, "lg")}
+        ${renderEntityAvatar({ name: leagueVisual.name, icon: leagueVisual.icon, cover: leagueVisual.iconFallback }, "lg")}
         <span>Liga activa</span>
         <strong>${escapeHtml(leagueVisual.name)}</strong>
         <small>${leagueVisual.icon ? "Icono Biwenger" : "Icono local"}</small>
@@ -12149,6 +12454,7 @@ const openLeaguePanel = (panelName) => {
       });
     }
   }
+  if (panelName === "targets") renderTargetPlayerPlan();
   if (panelName === "fixtures" && !state.leagueFixtures) pending = loadLeagueFixtures(false);
   if (panelName === "live-round" && !state.liveRound) pending = loadLiveRound(false);
   window.requestAnimationFrame(() => resetWorkspaceScroll());
@@ -13191,6 +13497,14 @@ const initEvents = () => {
     renderBidSaleAssistant();
     setLeagueOperationStatus("Asistente diario recalculado.", "ready");
   });
+  qs("#target-player-one")?.addEventListener("change", updateTargetPlayerSelection);
+  qs("#target-player-two")?.addEventListener("change", updateTargetPlayerSelection);
+  qs("#refresh-target-plan")?.addEventListener("click", async () => {
+    const waitToken = beginInteractionWait("Recalculando el plan de fichaje…", { delay: 80 });
+    await waitForNextPaint();
+    try { renderTargetPlayerPlan(); }
+    finally { endInteractionWait(waitToken); }
+  });
   qs("#refresh-fixtures").addEventListener("click", () => loadLeagueFixtures(true));
   qs("#refresh-live-round").addEventListener("click", () => loadLiveRound(true));
   qs("#rival-select").addEventListener("change", (event) => loadRivalTeam(event.target.value));
@@ -13880,12 +14194,17 @@ const runStartupFullRefreshIfReady = () => {
 
 const refreshStartupDataInBackground = (localPayload) => {
   if (startupRefreshPromise) return startupRefreshPromise;
-  startupRefreshPromise = withSilentDataSync(async () => {
+  startupRefreshPromise = withVisibleBackgroundDataSync(async () => {
     await waitForInterfaceIdle(1500);
-    beginDataSync("Actualizando en segundo plano. Puedes seguir navegando por la aplicación.");
+    beginDataSync("Carga inicial en curso. Ya puedes usar los datos guardados y seguir navegando.");
+    updateDataSyncProgress(1, 5, "1 de 5 · Recuperando tu sesión");
     try {
       await restoreRememberedBiwengerAccount();
+      updateDataSync("Sesión preparada. Sincronizando tus ligas…");
+      updateDataSyncProgress(2, 5, "2 de 5 · Sincronizando ligas");
       await syncLeaguesFromServer(localPayload);
+      updateDataSync("Ligas disponibles. Comprobando la conexión con Biwenger…");
+      updateDataSyncProgress(3, 5, "3 de 5 · Comprobando Biwenger");
       await refreshBiwengerStatus("", { refreshFixtures: false });
       const shouldRefreshAtStartup = state.preferences.startupSync !== false;
       const hasCachedData = Boolean(state.players.length || state.teamPlayers.length || state.leagueOverview || state.leagueFixtures);
@@ -13893,6 +14212,7 @@ const refreshStartupDataInBackground = (localPayload) => {
         // La caché se pinta primero. La carga completa solo comienza cuando la
         // plataforma está autenticada y existe una liga de Biwenger seleccionada.
         await runStartupFullRefreshIfReady();
+        updateDataSyncProgress(5, 5, "5 de 5 · Carga inicial terminada");
       } else {
         startupSyncWaitingForLeagueSelection = false;
         state.autoSync.status = "startup-skipped";

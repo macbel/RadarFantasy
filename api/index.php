@@ -3620,6 +3620,11 @@ function sanitize_league_payload(array $payload): array
         return $result;
     };
 
+    $targetPlayerIds = array_values(array_unique(array_filter(array_map(static function ($id) {
+        $value = trim((string)$id);
+        return $value !== '' && strlen($value) <= 180 ? $value : null;
+    }, array_slice((array)($payload['targetPlayerIds'] ?? []), 0, 2)))));
+
     return [
         'competition' => ($payload['competition'] ?? '') === 'worldcup' ? 'worldcup' : 'club',
         'fantasyProvider' => sanitize_fantasy_provider($payload['fantasyProvider'] ?? 'local'),
@@ -3637,6 +3642,7 @@ function sanitize_league_payload(array $payload): array
         'editableLineup' => sanitize_editable_lineup($payload['editableLineup'] ?? null),
         'leagueOverview' => is_array($payload['leagueOverview'] ?? null) ? $payload['leagueOverview'] : null,
         'leagueFixtures' => is_array($payload['leagueFixtures'] ?? null) ? $payload['leagueFixtures'] : null,
+        'targetPlayerIds' => $targetPlayerIds,
         'favorites' => $sanitizePlayers(array_slice((array)($payload['favorites'] ?? []), 0, 100)),
         'favoritesUpdatedAt' => (($favoritesUpdatedAt = strtotime((string)($payload['favoritesUpdatedAt'] ?? ''))) !== false)
             ? gmdate('c', $favoritesUpdatedAt)

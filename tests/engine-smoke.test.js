@@ -955,6 +955,56 @@ state.competition = lineupTestCompetition;
 state.editableLineup = lineupTestEditable;
 state.biwenger = lineupTestBiwenger;
 
+const targetPlanPrevious = {
+  players: state.players,
+  teamPlayers: state.teamPlayers,
+  finance: state.finance,
+  operations: state.biwengerOperations,
+  targetPlayerIds: state.targetPlayerIds,
+  fixtures: state.leagueFixtures,
+  competition: state.competition
+};
+state.competition = "club";
+state.leagueFixtures = { events: [] };
+state.finance = { ...state.finance, balance: 1500000, maximumBid: 50000000, bidTotal: 0 };
+state.biwengerOperations = { offers: [], sales: [], finance: { balance: 1500000, maximumBid: 50000000 } };
+const targetSquad = [
+  ...Array.from({ length: 2 }, (_, index) => ({ id: "target-por-" + index, biwengerPlayerId: 4100 + index, name: "Portero " + index, team: "Club", position: "POR", price: index ? 2500000 : 6000000, biwengerValue: index ? 2500000 : 6000000, starter: index ? 28 : 88, form: index ? 35 : 82, sourceStatus: "live" })),
+  ...Array.from({ length: 5 }, (_, index) => ({ id: "target-df-" + index, biwengerPlayerId: 4200 + index, name: "Defensa " + index, team: "Club", position: "DF", price: index === 4 ? 4000000 : 7000000, biwengerValue: index === 4 ? 4000000 : 7000000, starter: index === 4 ? 25 : 82, form: index === 4 ? 30 : 78, sourceStatus: "live" })),
+  ...Array.from({ length: 5 }, (_, index) => ({ id: "target-mc-" + index, biwengerPlayerId: 4300 + index, name: "Medio " + index, team: "Club", position: "MC", price: index === 4 ? 4500000 : 7500000, biwengerValue: index === 4 ? 4500000 : 7500000, starter: index === 4 ? 24 : 84, form: index === 4 ? 28 : 80, sourceStatus: "live" })),
+  ...Array.from({ length: 3 }, (_, index) => ({ id: "target-dl-" + index, biwengerPlayerId: 4400 + index, name: "Delantero " + index, team: "Club", position: "DL", price: index === 2 ? 3500000 : 8000000, biwengerValue: index === 2 ? 3500000 : 8000000, starter: index === 2 ? 22 : 86, form: index === 2 ? 26 : 82, sourceStatus: "live" }))
+];
+state.teamPlayers = hydrateImportedPlayers(targetSquad);
+state.players = hydrateImportedPlayers([{
+  id: "objective-star", biwengerPlayerId: 4991, name: "Objetivo estrella", team: "Rival", position: "DL",
+  price: 9000000, biwengerValue: 9000000, starter: 96, form: 94, asScore: 92, sofascore: 92, stats: 91,
+  valueTrend: 5, risk: "low", sourceStatus: "live", dataConfidence: 90
+}, {
+  id: "objective-risk", biwengerPlayerId: 4992, name: "Objetivo lesionado", team: "Rival", position: "MC",
+  price: 7000000, biwengerValue: 7000000, starter: 30, form: 35, risk: "high", sourceStatus: "live",
+  health: { status: "injured", label: "Lesionado" }
+}]);
+state.targetPlayerIds = [targetPlayerKey(state.players[0])];
+const fundedTargetPlan = targetAcquisitionPlan();
+if (fundedTargetPlan.status !== "sell" || !fundedTargetPlan.sales.length || fundedTargetPlan.projectedBalance < 0) {
+  throw new Error("A valuable target above the current balance must produce a safe sale plan: " + JSON.stringify(fundedTargetPlan));
+}
+if (!targetPlanKeepsValidLineup(fundedTargetPlan.sales.map((row) => row.player), fundedTargetPlan.selected)) {
+  throw new Error("Target sale plan must preserve a valid eleven");
+}
+state.targetPlayerIds = [targetPlayerKey(state.players[1])];
+const rejectedTargetPlan = targetAcquisitionPlan();
+if (rejectedTargetPlan.status !== "not-worth" || rejectedTargetPlan.sales.length) {
+  throw new Error("An injured low-value target must be rejected without recommending sales: " + JSON.stringify(rejectedTargetPlan));
+}
+state.players = targetPlanPrevious.players;
+state.teamPlayers = targetPlanPrevious.teamPlayers;
+state.finance = targetPlanPrevious.finance;
+state.biwengerOperations = targetPlanPrevious.operations;
+state.targetPlayerIds = targetPlanPrevious.targetPlayerIds;
+state.leagueFixtures = targetPlanPrevious.fixtures;
+state.competition = targetPlanPrevious.competition;
+
 if (compareAppVersions("3.2.0", "3.1.9") !== 1 || compareAppVersions("3.2", "3.2.0") !== 0 || compareAppVersions("3.1.9", "3.2.0") !== -1) {
   throw new Error("Mobile release version comparison is not reliable");
 }

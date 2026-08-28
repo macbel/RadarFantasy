@@ -1,8 +1,18 @@
-# Version 3.11.3
+# Version 3.12.0
 
-Fecha de publicación: 2026-08-25
+Fecha de publicación: 2026-08-28
 
 ## Notas de versión
+
+- La carga inicial ahora informa de cada fase, muestra progreso y permite seguir usando los datos guardados mientras sincroniza.
+- La APK reutiliza durante más tiempo una sincronización reciente para evitar repetir toda la cadena de red al volver a abrirla.
+- Los iconos privados de Biwenger usan la portada válida como respaldo y nunca quedan como imagen rota.
+- El Centro de liga incorpora «Jugador objetivo» para planificar uno o dos fichajes y calcular las ventas necesarias.
+- El planificador rechaza objetivos de riesgo o bajo rendimiento y protege el once, las piezas en racha y el valor deportivo de la plantilla.
+
+## Historial 3.11.3
+
+Fecha de publicación: 2026-08-25
 
 - El Centro de decisión ya no recomienda ni suma dos ofertas incompatibles por el mismo jugador; conserva la mejor oferta para proyectar el saldo.
 - Con saldo negativo, el asistente genera un plan de ventas suficiente para cubrir el déficit siempre que pueda mantener un once válido.

@@ -211,7 +211,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.12.0";
+const APP_VERSION = "3.12.2";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -1011,12 +1011,12 @@ const hasUpcomingFixtureEvents = (fixtures = state.leagueFixtures) => {
 const fixtureDataNeedsRefresh = (fixtures = state.leagueFixtures) => {
   const fetchedAtMs = Number(fixtures?.fetchedAtTs || 0) * 1000;
   const stale = !Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0 || Date.now() - fetchedAtMs > 45 * 60 * 1000;
-  return Number(fixtures?.schemaVersion || 0) < 7 || stale || !hasUpcomingFixtureEvents(fixtures);
+  return Number(fixtures?.schemaVersion || 0) < 8 || stale || !hasUpcomingFixtureEvents(fixtures);
 };
 
 const fixtureCompetitionFamily = (value) => {
   const normalized = normalize(value).replace(/-/g, " ");
-  if (/world cup|copa del mundo|mundial/.test(normalized)) return "world-cup";
+  if (/worldcup|world cup|copa del mundo|mundial/.test(normalized)) return "world-cup";
   if (/champions/.test(normalized)) return "champions-league";
   if (/bundesliga/.test(normalized)) return "bundesliga";
   if (/premier league|english premier/.test(normalized)) return "premier-league";
@@ -1025,14 +1025,40 @@ const fixtureCompetitionFamily = (value) => {
   if (/eredivisie/.test(normalized)) return "eredivisie";
   if (/copa del rey/.test(normalized)) return "copa-del-rey";
   if (/supercopa/.test(normalized)) return "supercopa";
-  if (/(^| )(laliga|la liga|primera division|liga ea sports)( |$)/.test(normalized)) return "la-liga";
+  if (/laliga 2|la liga 2|laliga hy(?:per)?motion|la liga hy(?:per)?motion|segunda division|liga adelante|liga smartbank/.test(normalized)) return "la-liga-2";
+  if (/liga profesional(?: de futbol)?|liga profesional argentina|primera division argentina|argentina primera division|primera nacional/.test(normalized)) return "argentina-primera";
+  if (/(^| )(laliga|la liga|spanish la liga|liga ea sports|laliga ea sports|primera division de espana|primera division espanola)( |$)/.test(normalized)) return "la-liga";
   return "";
 };
 
-const fixturePayloadMatchesCompetition = (fixtures, competition = state.competition) => {
+const selectedFixtureCompetition = () => String(state.biwenger.competition || state.competition || "");
+
+const fixturePayloadMatchesCompetition = (fixtures, competition = selectedFixtureCompetition()) => {
   const expected = fixtureCompetitionFamily(competition);
   const received = fixtureCompetitionFamily(fixtures?.competition || "");
-  return !expected || !received || expected === received;
+  if (!expected) return true;
+  return received !== "" && expected === received;
+};
+
+const fixtureEventMatchesCompetition = (event, competition = selectedFixtureCompetition()) => {
+  const expected = fixtureCompetitionFamily(competition);
+  if (!expected) return true;
+  const label = event?.competition || event?.competitionName || event?.competitionLabel || "";
+  const received = fixtureCompetitionFamily(label);
+  return !received || received === expected;
+};
+
+const filterFixturePayloadByCompetition = (fixtures, competition = selectedFixtureCompetition()) => {
+  if (!fixtures || typeof fixtures !== "object") return fixtures;
+  const events = Array.isArray(fixtures.events) ? fixtures.events : [];
+  const expected = fixtureCompetitionFamily(competition);
+  if (expected && Number(fixtures.schemaVersion || 0) < 8) {
+    return { ...fixtures, events: [] };
+  }
+  return {
+    ...fixtures,
+    events: events.filter((event) => fixtureEventMatchesCompetition(event, competition))
+  };
 };
 
 const playerIsEliminatedFromCompetition = (player) => {
@@ -4030,9 +4056,10 @@ const renderPlayerMedia = (player, size = "sm", options = {}) => {
   const emblem = media.emblemImage
       ? `<img class="player-emblem-img" src="${escapeHtml(media.emblemImage)}" alt="${media.emblemKind === "selection" ? "Bandera o escudo de seleccion" : "Escudo de club"} de ${escapeHtml(teamName)}" loading="lazy" onerror="this.hidden=true;this.nextElementSibling.hidden=false" /><span class="player-emblem-fallback" hidden>${escapeHtml(teamName.slice(0, 2).toUpperCase())}</span>`
       : `<span class="player-emblem-fallback">${escapeHtml(teamName.slice(0, 2).toUpperCase())}</span>`;
+  const pointsClass = String(options.pointsClass || "").trim();
   const pointsBadge = options.showPoints === false
     ? ""
-    : `<span class="player-points-overlay" title="${escapeHtml(options.pointsTitle || "Puntos acumulados en Biwenger")}">${escapeHtml(points)}</span>`;
+    : `<span class="player-points-overlay${pointsClass ? ` ${escapeHtml(pointsClass)}` : ""}" title="${escapeHtml(options.pointsTitle || "Puntos acumulados en Biwenger")}">${escapeHtml(points)}</span>`;
 
   return `
     <span class="player-media ${size}">
@@ -9198,7 +9225,7 @@ const renderLeagueOverview = () => {
 const renderLeagueFixtures = () => {
   const target = qs("#league-fixtures");
   if (!target) return;
-  const payload = state.leagueFixtures;
+  const payload = filterFixturePayloadByCompetition(state.leagueFixtures);
   const events = payload?.events || [];
   if (!events.length) {
     target.innerHTML = `<p class="muted-empty">No hay partidos disponibles para la jornada actual.</p>`;
@@ -9740,13 +9767,14 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
     const response = await apiFetch(endpoint);
     let payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "No se pudo cargar la jornada actual");
+    payload = filterFixturePayloadByCompetition(payload);
     let coverage = fixturePlayerCoverage(payload);
     if (state.biwenger.authenticated && (!fixturePayloadMatchesCompetition(payload)
       || !hasUpcomingFixtureEvents(payload)
       || (coverage.total > 0 && coverage.covered === 0))) {
       const competition = String(state.biwenger.competition || payload.competition || activeLeagueName() || "la-liga");
       const fallbackResponse = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(competition)}${forceRefresh ? "&refresh=1" : ""}`);
-      const fallbackPayload = await fallbackResponse.json().catch(() => ({}));
+      const fallbackPayload = filterFixturePayloadByCompetition(await fallbackResponse.json().catch(() => ({})));
       const fallbackCoverage = fixturePlayerCoverage(fallbackPayload);
       if (fallbackResponse.ok && fixturePayloadMatchesCompetition(fallbackPayload) && hasUpcomingFixtureEvents(fallbackPayload)
         && (fallbackCoverage.covered > coverage.covered || !fixturePayloadMatchesCompetition(payload) || !hasUpcomingFixtureEvents(payload))) {
@@ -12355,7 +12383,8 @@ const distributePitchLine = (players, y) => {
 };
 
 const liveRoundScoreClass = (value) => {
-  const score = Number(value || 0);
+  if (value === null || value === undefined || value === "" || !Number.isFinite(Number(value))) return "pending";
+  const score = Number(value);
   if (score <= 0) return score < 0 ? "negative" : "zero";
   if (score <= 5) return "low";
   if (score <= 9) return "good";
@@ -12403,7 +12432,14 @@ const renderLineupPitch = (groups, options = {}) => {
               ${player.isStriker || String(player.id) === String(options.strikerId || "") ? `<b class="pitch-role-badge striker" title="Ariete" aria-label="Ariete">👟</b>` : ""}
             </span>
           ` : ""}
-          ${renderPlayerMedia(player, "sm", { pointsValue: latestRoundPointsForPlayer(player, scoreKey), pointsTitle: currentRoundPointsTitle(player) })}
+          ${(() => {
+            const roundPoints = latestRoundPointsForPlayer(player, scoreKey);
+            return renderPlayerMedia(player, "sm", {
+              pointsValue: roundPoints,
+              pointsTitle: currentRoundPointsTitle(player),
+              pointsClass: `round-score ${liveRoundScoreClass(roundPoints)}`
+            });
+          })()}
           <strong>${escapeHtml(player.name)}</strong>
           <div class="pitch-player-meta">${renderPositionBadge(player.lineupPosition || player.position)}</div>
           ${renderRecentFormDots(player)}

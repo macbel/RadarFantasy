@@ -1,8 +1,18 @@
-# Version 3.12.1
+# Version 3.12.2
 
-Fecha de publicación: 2026-08-29
+Fecha de publicación: 2026-08-30
 
 ## Notas de versión
+
+- La alineación muestra los puntos reales de la jornada actual según el sistema de puntuación configurado en la liga de Biwenger, incluida Media AS/Feeberse Score.
+- Los indicadores de puntos del campo son más grandes y usan el mismo código de color que la racha para distinguir el rendimiento de un vistazo.
+- El modo día mejora el contraste de las valoraciones del mercado y de los resultados de Jornada.
+- Jornada y La liga en vivo filtran exclusivamente la competición vinculada a la liga seleccionada, sin mezclar LaLiga con LaLiga 2 ni con ligas de otros países.
+- Se invalidan las cachés antiguas de calendarios y puntuaciones para que las correcciones aparezcan desde la primera actualización.
+
+## Historial 3.12.1
+
+Fecha de publicación: 2026-08-29
 
 - «Mi equipo» importa y muestra inicialmente la alineación activa de Biwenger, incluidos formación, titulares, capitán, ariete y banquillo.
 - La alineación real se conserva al recargar y puede modificarse después desde el editor habitual.

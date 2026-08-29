@@ -86,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=131') || !html.includes('styles.css?v=72') || !sw.includes('radar-fantasy-shell-v82')) {
+if (!html.includes('app.js?v=132') || !html.includes('styles.css?v=73') || !sw.includes('radar-fantasy-shell-v83')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -353,12 +353,22 @@ if (!js.includes("fixtureUnresolved") || !js.includes("upcomingFixtureCoverage")
   throw new Error("An unresolved fixture link must be distinct from a confirmed missing next match");
 }
 
-if (!php.includes("$fixtures['schemaVersion'] = 7") || !php.includes("fixtures-v5-") || !php.includes("eliminatedTeams")
+if (!css.includes('html[data-theme="day"] .market-card .score-meter strong')
+  || !css.includes('html[data-theme="day"] .fixture-score strong')
+  || !css.includes('background: #d9f2ef;')
+  || !css.includes('color: #063f45;')) {
+  throw new Error("Day mode must keep market ratings and matchday results readable on light cards");
+}
+
+if (!php.includes("$fixtures['schemaVersion'] = 8") || !php.includes("fixtures-v6-") || !php.includes("eliminatedTeams")
   || !php.includes("$queries[] = 'La Liga'") || !js.includes("45 * 60 * 1000") || !js.includes("invalidateMarketAnalysisCache();\n    saveLocalLeagueSnapshot();")) {
   throw new Error("Old incomplete fixture snapshots must be invalidated after the calendar fix");
 }
 
 if (!php.includes("function fixture_competition_family") || !php.includes("$queryFamily === $labelFamily ? 100 : 0")
+  || !php.includes("function filter_fixture_payload_to_competition")
+  || !php.includes("'la-liga-2'") || !php.includes("'argentina-primera'")
+  || !js.includes("filterFixturePayloadByCompetition")
   || !js.includes("fixturePayloadMatchesCompetition") || !js.includes("reconcileEditableLineup(league.editableLineup || null")) {
   throw new Error("LaLiga fixtures must reject Bundesliga matches and incomplete saved lineups must be repaired");
 }
@@ -366,10 +376,14 @@ if (!php.includes("function fixture_competition_family") || !php.includes("$quer
 if (!php.includes("lineup(*,playersID,reservesID)")
   || !php.includes("function biwenger_lineup_starter_count")
   || !php.includes("function biwenger_fetch_current_round_player_points")
+  || !php.includes("$url .= '&v=' . rawurlencode")
   || !php.includes("'lineupRequested' => !empty($payload['lineupRequested'])")
   || !php.includes("/api/v2/rounds/")
   || !js.includes("roundPointsRoundName")
-  || !js.includes("Puntos en la jornada actual")) {
+  || !js.includes("Puntos en la jornada actual")
+  || !js.includes("pointsClass: `round-score ${liveRoundScoreClass(roundPoints)}`")
+  || !css.includes(".player-points-overlay.round-score.good")
+  || !css.includes("font-size: 12px")) {
   throw new Error("My Team must import the active Biwenger lineup and current-round player points");
 }
 

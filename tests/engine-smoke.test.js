@@ -233,8 +233,8 @@ const worldCupAliasPairs = [
 if (worldCupAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(biwengerName, fixtureName) < 88)) {
   throw new Error("World Cup team translations must match SofaScore fixture names: " + JSON.stringify(worldCupAliasPairs));
 }
-if (!fixtureDataNeedsRefresh({ schemaVersion: 6, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
-  || fixtureDataNeedsRefresh({ schemaVersion: 7, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
+if (!fixtureDataNeedsRefresh({ schemaVersion: 7, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
+  || fixtureDataNeedsRefresh({ schemaVersion: 8, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
   throw new Error("Fixture cache freshness must invalidate old schemas without refetching a current complete snapshot");
 }
 if (fixturePayloadMatchesCompetition({ competition: "Bundesliga" }, "la-liga")
@@ -1044,8 +1044,37 @@ if (hydratedCurrentRound[0].roundPoints !== 7 || hydratedCurrentRound[1].roundPo
   throw new Error("Imported current-round points, including zero, must survive hydration");
 }
 const pitchHtml = renderLineupPitch({ POR: [hydratedCurrentRound[0]], DF: [], MC: [], DL: [] });
-if (!pitchHtml.includes("Puntos en Jornada 3") || !pitchHtml.includes(">7</span>") || pitchHtml.includes("scoring-badge")) {
-  throw new Error("Pitch cards must show only the current-round score circle, without accumulated points below");
+if (!pitchHtml.includes("Puntos en Jornada 3") || !pitchHtml.includes('round-score good') || !pitchHtml.includes(">7</span>") || pitchHtml.includes("scoring-badge")) {
+  throw new Error("Pitch cards must show the current-round score circle with the recent-form color scale, without accumulated points below");
+}
+const pendingPitchHtml = renderLineupPitch({ POR: [{ ...hydratedCurrentRound[0], roundPoints: null }], DF: [], MC: [], DL: [] });
+if (!pendingPitchHtml.includes('round-score pending') || !pendingPitchHtml.includes(">–</span>")) {
+  throw new Error("A player without a published current-round score must look pending instead of showing a false zero");
+}
+if (fixtureCompetitionFamily("LaLiga") !== "la-liga"
+  || fixtureCompetitionFamily("LaLiga 2") !== "la-liga-2"
+  || fixtureCompetitionFamily("La Liga Profesional de Fútbol") !== "argentina-primera") {
+  throw new Error("Fixture competition families must keep LaLiga, LaLiga 2, and Argentina separate");
+}
+state.biwenger.competition = "la-liga";
+if (fixturePayloadMatchesCompetition({ competition: "LaLiga 2" })
+  || fixturePayloadMatchesCompetition({ competition: "Liga Profesional de Fútbol" })) {
+  throw new Error("A fixture payload from a different competition must be rejected for the selected Biwenger league");
+}
+const filteredCompetitionFixtures = filterFixturePayloadByCompetition({
+  schemaVersion: 8,
+  competition: "LaLiga",
+  events: [
+    { id: 1, competition: "LaLiga" },
+    { id: 2, competition: "LaLiga 2" },
+    { id: 3, competition: "Liga Profesional de Fútbol" }
+  ]
+});
+if (filteredCompetitionFixtures.events.length !== 1 || filteredCompetitionFixtures.events[0].id !== 1) {
+  throw new Error("Matchday and live views must remove events outside the exact selected competition");
+}
+if (filterFixturePayloadByCompetition({ schemaVersion: 7, competition: "LaLiga", events: [{ id: 1 }] }).events.length !== 0) {
+  throw new Error("Old fixture caches without per-event competition metadata must stay hidden until refreshed");
 }
 const signatureRound7 = biwengerImportSignature("team", { players: [hydratedCurrentRound[0]], lineup: { type: "4-4-2", playersID: [1] } });
 const signatureRound8 = biwengerImportSignature("team", { players: [{ ...hydratedCurrentRound[0], roundPoints: 8 }], lineup: { type: "4-4-2", playersID: [1] } });

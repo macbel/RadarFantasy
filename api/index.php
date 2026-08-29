@@ -2086,7 +2086,8 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
                 (int)($session['scoreId'] ?? 2),
                 $timeoutSeconds,
                 $headers,
-                $strictTls
+                $strictTls,
+                (string)($session['xVersion'] ?? '')
             );
         } catch (Throwable $error) {
             // La plantilla y el once siguen siendo utilizables si la jornada aun no publica puntuaciones.
@@ -2268,11 +2269,16 @@ function biwenger_fetch_competition_catalog(string $competition, int $timeoutSec
     ];
 }
 
-function biwenger_fetch_current_round_player_points(string $competition, int $scoreId, int $timeoutSeconds, array $headers, bool $strictTls): array
+function biwenger_fetch_current_round_player_points(string $competition, int $scoreId, int $timeoutSeconds, array $headers, bool $strictTls, string $version = ''): array
 {
     $slug = biwenger_competition_slug($competition);
     $url = 'https://cf.biwenger.com/api/v2/rounds/' . rawurlencode($slug)
         . '?lang=es&score=' . max(1, $scoreId);
+    if (trim($version) !== '') {
+        // Biwenger versiona las revisiones de puntuacion en su CDN. Sin este valor
+        // puede responder una copia anterior aunque la app oficial ya muestre el dato corregido.
+        $url .= '&v=' . rawurlencode(ltrim(trim($version), 'vV'));
+    }
     $response = http_request('GET', $url, $timeoutSeconds, $headers, $strictTls);
     if ($response['status'] < 200 || $response['status'] >= 300) {
         throw new RuntimeException('No se pudo descargar la puntuacion de la jornada actual de Biwenger');
@@ -5027,7 +5033,8 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
             (int)($session['scoreId'] ?? 2),
             $timeoutSeconds,
             $headers,
-            $strictTls
+            $strictTls,
+            (string)($session['xVersion'] ?? '')
         );
     } catch (Throwable $error) {
         // Los totales de liga siguen siendo utiles aunque la fuente publica no tenga el detalle individual.
@@ -5577,7 +5584,7 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
 {
     $competition = trim((string)($session['competition'] ?? ''));
     $leagueName = trim((string)($session['leagueName'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v5-' . slugify($competition ?: $leagueName) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v6-' . slugify($competition ?: $leagueName) . '.json';
     $cached = read_json_file($cachePath, []);
     if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit';
@@ -5683,6 +5690,8 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
         $eventId = (int)($event['id'] ?? 0);
         return [
             'id' => $eventId,
+            'competition' => (string)($tournament['name'] ?? ''),
+            'competitionId' => (int)($tournament['id'] ?? 0),
             'timestamp' => (int)($event['startTimestamp'] ?? 0),
             'status' => (string)($event['status']['type'] ?? 'notstarted'),
             'statusText' => (string)($event['status']['description'] ?? ''),
@@ -5786,6 +5795,10 @@ function resultados_futbol_current_fixtures(array $session, int $timeoutSeconds,
         }
     }
     if (!$events) throw new RuntimeException('Resultados-Futbol no ha devuelto partidos reconocibles');
+    $expectedFamily = fixture_competition_family((string)($session['competition'] ?? ''));
+    if ($expectedFamily !== '' && !$matchedCompetitionEvents) {
+        throw new RuntimeException('Resultados-Futbol no ha devuelto partidos de la competicion seleccionada');
+    }
     $events = $matchedCompetitionEvents ?: $events;
     usort($events, static fn($a, $b) => $a['timestamp'] <=> $b['timestamp']);
     return [
@@ -5793,6 +5806,7 @@ function resultados_futbol_current_fixtures(array $session, int $timeoutSeconds,
         'competition' => (string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? 'Partidos')),
         'round' => 'actual',
         'events' => array_values(array_map(static function ($event) {
+            $event['competition'] = (string)($event['competitionLabel'] ?? '');
             unset($event['competitionLabel']);
             return $event;
         }, array_slice($events, 0, 40))),
@@ -5864,10 +5878,10 @@ function resultados_futbol_calendar_urls(array $session): array
 function feeberse_current_fixtures(array $session, int $timeoutSeconds, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
 {
     $competition = (string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? ''));
-    if (fixture_competition_family($competition) !== 'la-liga' && !preg_match('/liga/i', $competition)) {
+    if (fixture_competition_family($competition) !== 'la-liga') {
         throw new RuntimeException('Feeberse calendario solo está mapeado para LaLiga');
     }
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-fixtures-la-liga.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-fixtures-la-liga-v2.json';
     $cached = read_json_file($cachePath, []);
     if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit-feeberse-fixtures';
@@ -5902,6 +5916,8 @@ function feeberse_current_fixtures(array $session, int $timeoutSeconds, bool $st
                     . '-' . rawurlencode((string)$match['id']);
                 $events[(string)$match['id']] = [
                     'id' => (string)$match['id'],
+                    'competition' => (string)($groupCompetition['name'] ?? 'LaLiga'),
+                    'competitionId' => (string)($groupCompetition['id'] ?? ''),
                     'timestamp' => $timestamp,
                     'status' => $finished ? 'finished' : ($live ? 'inprogress' : 'notstarted'),
                     'statusText' => $live ? ((int)($match['minute'] ?? 0) . "'") : ($finished ? 'Finalizado' : 'Próximo'),
@@ -5996,8 +6012,9 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
             $fixtures['refreshMergeError'] = $mergeError->getMessage();
         }
     }
+    $fixtures = filter_fixture_payload_to_competition($fixtures, $session);
     $fixtures = decorate_fixture_competition_state($fixtures, $session);
-    $fixtures['schemaVersion'] = 7;
+    $fixtures['schemaVersion'] = 8;
     $fixtures['fetchedAtTs'] = (int)($fixtures['fetchedAtTs'] ?? time());
     $fixtures['sourceStrategy'] = $sourceStrategy;
     $fixtures['durationMs'] = (int)round((microtime(true) - $startedAt) * 1000);
@@ -6036,6 +6053,31 @@ function decorate_fixture_competition_state(array $fixtures, array $session): ar
     $fixtures['tournamentStage'] = $isKnockout ? 'knockout' : 'league';
     $fixtures['activeTeams'] = array_values($active);
     $fixtures['eliminatedTeams'] = array_values($eliminated);
+    return $fixtures;
+}
+
+function filter_fixture_payload_to_competition(array $fixtures, array $session): array
+{
+    $expectedLabel = (string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? ''));
+    $expectedFamily = fixture_competition_family($expectedLabel);
+    if ($expectedFamily === '') return $fixtures;
+
+    $payloadFamily = fixture_competition_family((string)($fixtures['competition'] ?? ''));
+    if ($payloadFamily !== '' && $payloadFamily !== $expectedFamily) {
+        throw new RuntimeException('El proveedor ha devuelto una competicion distinta de la liga seleccionada');
+    }
+
+    $fixtures['events'] = array_values(array_filter((array)($fixtures['events'] ?? []), static function ($event) use ($expectedFamily) {
+        if (!is_array($event)) return false;
+        $eventLabel = (string)($event['competition'] ?? $event['competitionName'] ?? $event['competitionLabel'] ?? '');
+        $eventFamily = fixture_competition_family($eventLabel);
+        return $eventFamily === '' || $eventFamily === $expectedFamily;
+    }));
+    if (!$fixtures['events']) {
+        throw new RuntimeException('No hay partidos de la competicion exacta asociada a la liga seleccionada');
+    }
+    $fixtures['expectedCompetition'] = $expectedLabel;
+    $fixtures['competitionFamily'] = $expectedFamily;
     return $fixtures;
 }
 
@@ -6130,6 +6172,7 @@ function espn_current_fixtures(array $session, int $timeoutSeconds, array $heade
         $awayScore = $away['score'] ?? null;
         $events[] = [
             'id' => (string)($event['id'] ?? md5((string)($event['name'] ?? '') . $timestamp)),
+            'competition' => (string)($payload['leagues'][0]['name'] ?? ($session['competition'] ?? '')),
             'timestamp' => $timestamp,
             'round' => (string)($event['season']['slug'] ?? $event['week']['text'] ?? ''),
             'status' => !empty($statusType['completed']) ? 'finished' : (string)($statusType['state'] ?? 'notstarted'),
@@ -6202,6 +6245,8 @@ function thesportsdb_current_fixtures(array $session, int $timeoutSeconds, array
         if ($id <= 0) continue;
         $rows[$id] = [
             'id' => $id,
+            'competition' => (string)($league['name'] ?? ''),
+            'competitionId' => (int)($league['id'] ?? 0),
             'timestamp' => thesportsdb_event_timestamp($event),
             'status' => (string)($event['strStatus'] ?? 'notstarted'),
             'statusText' => (string)($event['strStatus'] ?? ''),
@@ -6279,6 +6324,8 @@ function api_football_current_fixtures(array $session, int $timeoutSeconds, arra
         if ($timestamp <= 0) continue;
         $rows[] = [
             'id' => (int)($fixture['id'] ?? 0),
+            'competition' => (string)($leagueInfo['name'] ?? $league['name'] ?? ''),
+            'competitionId' => (int)($leagueInfo['id'] ?? $league['id'] ?? 0),
             'timestamp' => $timestamp,
             'round' => (string)($leagueInfo['round'] ?? 'Jornada'),
             'status' => (string)($fixture['status']['short'] ?? 'NS'),
@@ -6970,7 +7017,7 @@ function fixture_competition_family(string $value): string
 {
     $value = normalize_text($value);
     if ($value === '') return '';
-    if (preg_match('/world cup|copa del mundo|mundial/', $value)) return 'world-cup';
+    if (preg_match('/worldcup|world cup|copa del mundo|mundial/', $value)) return 'world-cup';
     if (preg_match('/champions/', $value)) return 'champions-league';
     if (preg_match('/bundesliga/', $value)) return 'bundesliga';
     if (preg_match('/premier league|english premier/', $value)) return 'premier-league';
@@ -6979,7 +7026,9 @@ function fixture_competition_family(string $value): string
     if (preg_match('/eredivisie/', $value)) return 'eredivisie';
     if (preg_match('/copa del rey/', $value)) return 'copa-del-rey';
     if (preg_match('/supercopa/', $value)) return 'supercopa';
-    if (preg_match('/(^| )(laliga|la liga|primera division|liga ea sports)( |$)/', $value)) return 'la-liga';
+    if (preg_match('/laliga 2|la liga 2|laliga hy(?:per)?motion|la liga hy(?:per)?motion|segunda division|liga adelante|liga smartbank/', $value)) return 'la-liga-2';
+    if (preg_match('/liga profesional(?: de futbol)?|liga profesional argentina|primera division argentina|argentina primera division|primera nacional/', $value)) return 'argentina-primera';
+    if (preg_match('/(^| )(laliga|la liga|spanish la liga|liga ea sports|laliga ea sports|primera division de espana|primera division espanola)( |$)/', $value)) return 'la-liga';
     return '';
 }
 
@@ -7029,6 +7078,8 @@ function merge_fixture_payloads(array $primary, array $fallback): array
             'feeberseUrl' => $existing['feeberseUrl'] ?? $event['feeberseUrl'] ?? null,
             'detailUrl' => $existing['detailUrl'] ?? $event['detailUrl'] ?? null,
             'videoUrl' => $existing['videoUrl'] ?? $event['videoUrl'] ?? null,
+            'competition' => $existing['competition'] ?? $event['competition'] ?? null,
+            'competitionId' => $existing['competitionId'] ?? $event['competitionId'] ?? null,
             'round' => $existing['round'] ?? $event['round'] ?? null
         ];
     }

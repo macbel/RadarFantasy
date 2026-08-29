@@ -1142,6 +1142,31 @@ html[data-theme="day"] tr.selected td {
   color: var(--ink);
 }
 
+html[data-theme="day"] .market-card-score {
+  padding: 7px 10px;
+  border: 1px solid #78a9c8;
+  border-radius: 8px;
+  background: #e1f0ff;
+}
+
+html[data-theme="day"] .market-card-score-label {
+  color: #31566e;
+}
+
+html[data-theme="day"] .market-card-score strong,
+html[data-theme="day"] .market-card .score-meter strong {
+  color: #083f73;
+  text-shadow: none;
+}
+
+html[data-theme="day"] .market-card .bar {
+  background: #c9d9df;
+}
+
+html[data-theme="day"] .market-card .bar span {
+  background: #087f87;
+}
+
 html[data-theme="day"] .favorite-player-row,
 html[data-theme="day"] .favorite-alert-row,
 html[data-theme="day"] .favorite-news-item,
@@ -1403,6 +1428,51 @@ html[data-theme="day"] .rival-metric strong,
 html[data-theme="day"] .lineup-player-select strong,
 html[data-theme="day"] .live-team-card strong {
   color: #0a2f34;
+}
+
+html[data-theme="day"] .fixture-round-group h4 {
+  border-left-color: #b57612;
+  background: #075f66;
+  color: #ffffff;
+}
+
+html[data-theme="day"] .fixture-row {
+  border-color: #91b2ad;
+  background: #ffffff;
+  color: #13272b;
+}
+
+html[data-theme="day"] .fixture-row.finished {
+  border-color: #55a786;
+  background: #f1faf5;
+}
+
+html[data-theme="day"] .fixture-date span,
+html[data-theme="day"] .fixtures-heading {
+  color: #415d61;
+}
+
+html[data-theme="day"] .fixture-score strong {
+  display: inline-grid;
+  min-width: 58px;
+  min-height: 34px;
+  place-items: center;
+  padding: 5px 9px;
+  border: 1px solid #087f87;
+  border-radius: 8px;
+  background: #d9f2ef;
+  color: #063f45;
+  font-size: 16px;
+  font-weight: 950;
+  text-shadow: none;
+}
+
+html[data-theme="day"] .fixture-link.video,
+html[data-theme="day"] .fixture-link.video.pending,
+html[data-theme="day"] .fixture-link.live-search {
+  border-color: #087f87;
+  background: #e1f4f1;
+  color: #064e52;
 }
 
 html[data-theme="day"] .team-finance-summary strong.finance-positive,
@@ -3036,13 +3106,36 @@ input[type="range"] {
 }
 
 .pitch-player .player-points-overlay {
-  left: -4px;
-  bottom: -2px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 3px;
+  left: -12px;
+  bottom: 5px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 5px;
   border-color: rgba(255, 255, 255, 0.9);
-  font-size: 7px;
+  font-size: 12px;
+  font-weight: 1000;
+  letter-spacing: -0.02em;
+}
+
+.player-points-overlay.round-score.pending,
+.player-points-overlay.round-score.zero {
+  background: #9aa3a7;
+}
+
+.player-points-overlay.round-score.negative {
+  background: #ef4444;
+}
+
+.player-points-overlay.round-score.low {
+  background: #f59e0b;
+}
+
+.player-points-overlay.round-score.good {
+  background: #22c55e;
+}
+
+.player-points-overlay.round-score.elite {
+  background: #38bdf8;
 }
 
 .pitch-role-badges {
@@ -8617,6 +8710,15 @@ tr.has-rival-bids.has-rival-sale {
   .pitch-player .player-media.sm {
     width: 32px;
     height: 32px;
+  }
+
+  .pitch-player .player-points-overlay {
+    left: -11px;
+    bottom: 4px;
+    min-width: 25px;
+    height: 25px;
+    padding: 0 4px;
+    font-size: 11px;
   }
 
   .pitch-player {

@@ -3118,23 +3118,29 @@ input[type="range"] {
 }
 
 .player-points-overlay.round-score.pending,
-.player-points-overlay.round-score.zero {
+.player-points-overlay.round-score.zero,
+.pitch-player-round-points.round-score.pending,
+.pitch-player-round-points.round-score.zero {
   background: #9aa3a7;
 }
 
-.player-points-overlay.round-score.negative {
+.player-points-overlay.round-score.negative,
+.pitch-player-round-points.round-score.negative {
   background: #ef4444;
 }
 
-.player-points-overlay.round-score.low {
+.player-points-overlay.round-score.low,
+.pitch-player-round-points.round-score.low {
   background: #f59e0b;
 }
 
-.player-points-overlay.round-score.good {
+.player-points-overlay.round-score.good,
+.pitch-player-round-points.round-score.good {
   background: #22c55e;
 }
 
-.player-points-overlay.round-score.elite {
+.player-points-overlay.round-score.elite,
+.pitch-player-round-points.round-score.elite {
   background: #38bdf8;
 }
 
@@ -3186,6 +3192,39 @@ input[type="range"] {
   line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pitch-player-name {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 98px;
+  margin-top: 3px;
+  gap: 4px;
+}
+
+.pitch-player .pitch-player-name > strong {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 68px;
+  margin-top: 0;
+}
+
+.pitch-player-round-points {
+  z-index: 2;
+  display: inline-grid;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 1000;
+  line-height: 1;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.34);
 }
 
 .pitch-player-meta {
@@ -8712,12 +8751,19 @@ tr.has-rival-bids.has-rival-sale {
     height: 32px;
   }
 
-  .pitch-player .player-points-overlay {
-    left: -11px;
-    bottom: 4px;
-    min-width: 25px;
-    height: 25px;
-    padding: 0 4px;
+  .pitch-player-name {
+    max-width: 74px;
+    gap: 3px;
+  }
+
+  .pitch-player .pitch-player-name > strong {
+    max-width: 49px;
+  }
+
+  .pitch-player-round-points {
+    flex-basis: 22px;
+    width: 22px;
+    height: 22px;
     font-size: 11px;
   }
 

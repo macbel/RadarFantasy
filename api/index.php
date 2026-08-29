@@ -263,14 +263,30 @@ if ($route === '/player-catalog' && $requestMethod === 'GET') {
 }
 
 if ($route === '/biwenger/status' && $requestMethod === 'GET') {
+    $storedBiwengerVersion = trim((string)($_SESSION['biwenger']['xVersion'] ?? ''));
+    $resolvedBiwengerVersion = $storedBiwengerVersion;
+    if (!empty($_SESSION['biwenger']['token'])) {
+        try {
+            $resolvedBiwengerVersion = resolve_biwenger_version(
+                $biwengerVersionPath,
+                $sourceTimeoutSeconds,
+                $biwengerHtmlHeaders,
+                $strictTls
+            );
+        } catch (Throwable $error) {
+            // The stored revision remains usable if Biwenger's landing page is unavailable.
+        }
+    }
     if (!empty($_SESSION['biwenger']['token'])
         && (empty($_SESSION['biwenger']['scoreId'])
             || empty($_SESSION['biwenger']['leagueIcon'])
-            || empty($_SESSION['biwenger']['availableLeagues']))) {
+            || empty($_SESSION['biwenger']['availableLeagues'])
+            || $storedBiwengerVersion === ''
+            || ($resolvedBiwengerVersion !== '' && $resolvedBiwengerVersion !== $storedBiwengerVersion))) {
         try {
             $freshSession = biwenger_build_session(
                 (string)$_SESSION['biwenger']['token'],
-                (string)($_SESSION['biwenger']['xVersion'] ?? ''),
+                $resolvedBiwengerVersion,
                 (string)($_SESSION['biwenger']['leagueName'] ?? ''),
                 $sourceTimeoutSeconds,
                 $biwengerJsonHeaders,
@@ -299,6 +315,41 @@ if ($route === '/biwenger/status' && $requestMethod === 'GET') {
     }
     $sessionState = biwenger_session_state($_SESSION['biwenger'] ?? []);
     send_json(200, $sessionState);
+}
+
+if ($route === '/biwenger/round-points' && $requestMethod === 'GET') {
+    $currentSession = require_biwenger_session();
+    try {
+        $resolvedVersion = trim((string)($currentSession['xVersion'] ?? ''));
+        if ($resolvedVersion === '') {
+            $resolvedVersion = resolve_biwenger_version(
+                $biwengerVersionPath,
+                $sourceTimeoutSeconds,
+                $biwengerHtmlHeaders,
+                $strictTls
+            );
+            $_SESSION['biwenger']['xVersion'] = $resolvedVersion;
+            persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $_SESSION['biwenger']);
+        }
+        $round = biwenger_fetch_current_round_player_points(
+            (string)($currentSession['competition'] ?? ''),
+            (int)($currentSession['scoreId'] ?? 2),
+            $sourceTimeoutSeconds,
+            $biwengerJsonHeaders,
+            $strictTls,
+            $resolvedVersion
+        );
+        send_json(200, [
+            'ok' => true,
+            'id' => $round['id'] ?? null,
+            'name' => (string)($round['name'] ?? ''),
+            'scoreId' => (int)($currentSession['scoreId'] ?? 2),
+            'scoreName' => (string)($currentSession['scoreName'] ?? biwenger_score_name((int)($currentSession['scoreId'] ?? 2))),
+            'pointsByPlayer' => (array)($round['pointsByPlayer'] ?? [])
+        ]);
+    } catch (Throwable $error) {
+        send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar la puntuacion actual de Biwenger']);
+    }
 }
 
 if ($route === '/biwenger/login' && $requestMethod === 'POST') {
@@ -2103,6 +2154,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
                 : null;
             $player['roundPointsRoundId'] = $currentRound['id'] ?? null;
             $player['roundPointsRoundName'] = (string)($currentRound['name'] ?? '');
+            $player['roundPointsScoreId'] = (int)($session['scoreId'] ?? 2);
             $players[] = $player;
         }
         $currentPlayerIds = array_fill_keys(array_values(array_filter(array_map(static function ($player) {
@@ -2274,11 +2326,11 @@ function biwenger_fetch_current_round_player_points(string $competition, int $sc
     $slug = biwenger_competition_slug($competition);
     $url = 'https://cf.biwenger.com/api/v2/rounds/' . rawurlencode($slug)
         . '?lang=es&score=' . max(1, $scoreId);
-    if (trim($version) !== '') {
-        // Biwenger versiona las revisiones de puntuacion en su CDN. Sin este valor
-        // puede responder una copia anterior aunque la app oficial ya muestre el dato corregido.
-        $url .= '&v=' . rawurlencode(ltrim(trim($version), 'vV'));
-    }
+    // Biwenger versiona las revisiones de puntuacion en su CDN. Sin este valor
+    // devuelve a menudo una copia provisional distinta de la que muestra la app.
+    $roundVersion = ltrim(trim($version), 'vV');
+    if ($roundVersion === '') $roundVersion = (string)(getenv('FMS_BIWENGER_VERSION') ?: '630');
+    $url .= '&v=' . rawurlencode($roundVersion);
     $response = http_request('GET', $url, $timeoutSeconds, $headers, $strictTls);
     if ($response['status'] < 200 || $response['status'] >= 300) {
         throw new RuntimeException('No se pudo descargar la puntuacion de la jornada actual de Biwenger');
@@ -2295,7 +2347,7 @@ function biwenger_fetch_current_round_player_points(string $competition, int $sc
                 $playerId = (int)(is_array($player)
                     ? ($player['id'] ?? 0)
                     : ($report['playerID'] ?? $report['playerId'] ?? $player ?? 0));
-                $points = $report['points'] ?? $report['score'] ?? null;
+                $points = biwenger_round_report_points($report, $scoreId);
                 if ($playerId > 0 && is_numeric($points)) $pointsByPlayer[$playerId] = (float)$points;
             }
         }
@@ -2305,6 +2357,21 @@ function biwenger_fetch_current_round_player_points(string $competition, int $sc
         'name' => (string)($data['name'] ?? $data['short'] ?? ''),
         'pointsByPlayer' => $pointsByPlayer
     ];
+}
+
+function biwenger_round_report_points(array $report, int $scoreId): ?float
+{
+    // In combined systems the last "Media" row is the exact value displayed by
+    // Biwenger. Reading it also protects against provisional top-level totals.
+    if (in_array($scoreId, [5, 8], true)) {
+        foreach (array_reverse((array)($report['breakdown'] ?? [])) as $row) {
+            if (!is_array($row) || !preg_match('/media/i', (string)($row[0] ?? ''))) continue;
+            $label = str_replace(',', '.', (string)($row[1] ?? ''));
+            if (preg_match('/-?\d+(?:\.\d+)?/', $label, $match)) return (float)$match[0];
+        }
+    }
+    $value = $report['points'] ?? $report['score'] ?? null;
+    return is_numeric($value) ? (float)$value : null;
 }
 
 function biwenger_public_competition_slug(string $competition): string
@@ -5123,6 +5190,7 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
                 : (array_key_exists($playerId, $lineupPoints) ? (float)$lineupPoints[$playerId] : null);
             $player['roundPointsRoundId'] = $currentRound['id'] ?? null;
             $player['roundPointsRoundName'] = (string)($currentRound['name'] ?? '');
+            $player['roundPointsScoreId'] = (int)($session['scoreId'] ?? 2);
             $player['isCaptain'] = $playerId === $captainId;
             $player['isStriker'] = $playerId === $strikerId;
             $player['roundGoals'] = biwenger_player_round_goals($merged);

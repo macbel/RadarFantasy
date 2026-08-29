@@ -61,6 +61,9 @@
   liveRoundDebug: null,
   liveRoundFetchedAt: 0,
   liveRoundLoading: null,
+  currentRoundPoints: null,
+  currentRoundPointsFetchedAt: 0,
+  currentRoundPointsLoading: null,
   selectedLiveRoundUserId: null,
   rivalTeam: null,
   rivalProfiles: {},
@@ -211,7 +214,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.12.2";
+const APP_VERSION = "3.12.3";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -6290,6 +6293,7 @@ const hydrateImportedPlayers = (players) => (players || []).map((player, index) 
     : null,
   roundPointsRoundId: player.roundPointsRoundId ?? null,
   roundPointsRoundName: player.roundPointsRoundName || "",
+  roundPointsScoreId: Number(player.roundPointsScoreId || 0) || null,
   status: player.status || "ok",
   statusText: player.statusText || "",
   outOfCompetition: player.outOfCompetition === true,
@@ -7046,6 +7050,7 @@ const refreshBiwengerStatus = async (preferredMessage = "", options = {}) => {
         state.competition = localCompetition;
         qs("#competition-select").value = state.competition;
       }
+      if (state.teamPlayers.length) await loadCurrentRoundPoints(false);
       setBiwengerStatus(
         preferredMessage || `Conectado como ${payload.userName || "usuario"} en ${payload.leagueName || "tu liga"}.`,
         "ready"
@@ -7158,6 +7163,9 @@ const applyLeague = (league) => {
   state.leagueFixtures = league.leagueFixtures || (previousLeagueId === league.id ? previousLeagueFixtures : null);
   state.liveRound = null;
   state.liveRoundDebug = null;
+  state.currentRoundPoints = null;
+  state.currentRoundPointsFetchedAt = 0;
+  state.currentRoundPointsLoading = null;
   state.selectedLiveRoundUserId = null;
   state.rivalTeam = null;
   state.rivalProfiles = {};
@@ -12392,9 +12400,19 @@ const liveRoundScoreClass = (value) => {
 };
 
 const latestRoundPointsForPlayer = (player, scoreKey = "roundPoints") => {
-  const direct = player?.[scoreKey];
-  if (direct !== null && direct !== undefined && Number.isFinite(Number(direct))) return Number(direct);
   const playerId = Number(player?.biwengerPlayerId || player?.playerId || 0);
+  const officialSnapshot = state.currentRoundPoints;
+  const officialScoreId = Number(officialSnapshot?.scoreId || 0);
+  const leagueScoreId = Number(state.biwenger.scoreId || 0);
+  const officialValue = playerId > 0 ? officialSnapshot?.pointsByPlayer?.[String(playerId)] : null;
+  if ((!officialScoreId || !leagueScoreId || officialScoreId === leagueScoreId)
+    && officialValue !== null && officialValue !== undefined && Number.isFinite(Number(officialValue))) {
+    return Number(officialValue);
+  }
+  const direct = player?.[scoreKey];
+  const directScoreId = Number(player?.roundPointsScoreId || 0);
+  if ((!leagueScoreId || directScoreId === leagueScoreId)
+    && direct !== null && direct !== undefined && Number.isFinite(Number(direct))) return Number(direct);
   if (playerId <= 0) return null;
   const ownTeam = currentLiveRoundOwnTeam();
   const roundPlayer = (ownTeam?.players || []).find((item) => Number(item.biwengerPlayerId || item.playerId || 0) === playerId);
@@ -12404,9 +12422,61 @@ const latestRoundPointsForPlayer = (player, scoreKey = "roundPoints") => {
     : null;
 };
 
+const applyCurrentRoundPoints = (payload = {}) => {
+  const pointsByPlayer = payload.pointsByPlayer && typeof payload.pointsByPlayer === "object"
+    ? payload.pointsByPlayer
+    : {};
+  state.currentRoundPoints = {
+    id: payload.id ?? null,
+    name: String(payload.name || ""),
+    scoreId: Number(payload.scoreId || state.biwenger.scoreId || 0),
+    scoreName: String(payload.scoreName || state.biwenger.scoreName || ""),
+    pointsByPlayer
+  };
+  state.currentRoundPointsFetchedAt = Date.now();
+  state.teamPlayers = state.teamPlayers.map((player) => {
+    const playerId = Number(player.biwengerPlayerId || player.playerId || 0);
+    if (playerId <= 0) return player;
+    const hasOfficialValue = Object.prototype.hasOwnProperty.call(pointsByPlayer, String(playerId));
+    return {
+      ...player,
+      roundPoints: hasOfficialValue && Number.isFinite(Number(pointsByPlayer[String(playerId)]))
+        ? Number(pointsByPlayer[String(playerId)])
+        : null,
+      roundPointsRoundId: payload.id ?? null,
+      roundPointsRoundName: String(payload.name || ""),
+      roundPointsScoreId: Number(payload.scoreId || state.biwenger.scoreId || 0)
+    };
+  });
+  saveLocalLeagueSnapshot();
+  return state.currentRoundPoints;
+};
+
+const loadCurrentRoundPoints = async (forceRefresh = false) => {
+  if (!state.biwenger.connected || !state.teamPlayers.length) return null;
+  if (!forceRefresh && state.currentRoundPoints
+    && Date.now() - Number(state.currentRoundPointsFetchedAt || 0) < 60 * 1000) {
+    return state.currentRoundPoints;
+  }
+  if (state.currentRoundPointsLoading) return state.currentRoundPointsLoading;
+  state.currentRoundPointsLoading = (async () => {
+    const response = await apiFetch("/api/biwenger/round-points");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "No se pudieron actualizar los puntos de la jornada.");
+    const snapshot = applyCurrentRoundPoints(payload);
+    renderLineup();
+    return snapshot;
+  })().catch(() => null).finally(() => {
+    state.currentRoundPointsLoading = null;
+  });
+  return state.currentRoundPointsLoading;
+};
+
 const currentRoundPointsTitle = (player) => {
-  const roundName = String(player?.roundPointsRoundName || "").trim();
-  return roundName ? `Puntos en ${roundName}` : "Puntos en la jornada actual";
+  const roundName = String(state.currentRoundPoints?.name || player?.roundPointsRoundName || "").trim();
+  const scoreName = String(state.currentRoundPoints?.scoreName || state.biwenger.scoreName || "").trim();
+  const title = roundName ? `Puntos en ${roundName}` : "Puntos en la jornada actual";
+  return scoreName ? `${title} · ${scoreName}` : title;
 };
 
 const renderLineupPitch = (groups, options = {}) => {
@@ -12424,7 +12494,12 @@ const renderLineupPitch = (groups, options = {}) => {
       <div class="pitch-mark box top" aria-hidden="true"></div>
       <div class="pitch-mark box bottom" aria-hidden="true"></div>
       <div class="pitch-mark halfway" aria-hidden="true"></div>
-      ${positions.map(({ player, x, y }) => `
+      ${positions.map(({ player, x, y }) => {
+        const roundPoints = latestRoundPointsForPlayer(player, scoreKey);
+        const pointsText = roundPoints !== null && roundPoints !== undefined && Number.isFinite(Number(roundPoints))
+          ? Number(roundPoints).toLocaleString("es-ES")
+          : "–";
+        return `
         <div class="pitch-player ${player.health?.status === "injured" || player.health?.status === "doubtful" ? "alert" : ""}" style="--x: ${x}%; --y: ${y}%">
           ${(player.isCaptain || String(player.id) === String(options.captainId || "")) || (player.isStriker || String(player.id) === String(options.strikerId || "")) ? `
             <span class="pitch-role-badges">
@@ -12432,19 +12507,16 @@ const renderLineupPitch = (groups, options = {}) => {
               ${player.isStriker || String(player.id) === String(options.strikerId || "") ? `<b class="pitch-role-badge striker" title="Ariete" aria-label="Ariete">👟</b>` : ""}
             </span>
           ` : ""}
-          ${(() => {
-            const roundPoints = latestRoundPointsForPlayer(player, scoreKey);
-            return renderPlayerMedia(player, "sm", {
-              pointsValue: roundPoints,
-              pointsTitle: currentRoundPointsTitle(player),
-              pointsClass: `round-score ${liveRoundScoreClass(roundPoints)}`
-            });
-          })()}
-          <strong>${escapeHtml(player.name)}</strong>
+          ${renderPlayerMedia(player, "sm", { showPoints: false })}
+          <span class="pitch-player-name">
+            <strong>${escapeHtml(player.name)}</strong>
+            <span class="pitch-player-round-points round-score ${liveRoundScoreClass(roundPoints)}" title="${escapeHtml(currentRoundPointsTitle(player))}">${escapeHtml(pointsText)}</span>
+          </span>
           <div class="pitch-player-meta">${renderPositionBadge(player.lineupPosition || player.position)}</div>
           ${renderRecentFormDots(player)}
         </div>
-      `).join("")}
+      `;
+      }).join("")}
     </div>
   `;
 };
@@ -12461,6 +12533,7 @@ const openView = (viewName) => {
   if (viewName === "team") {
     if (!renderedComponents.has("team")) renderTeam();
     if (!renderedComponents.has("lineup")) renderLineup();
+    if (state.biwenger.connected) void loadCurrentRoundPoints(false);
     if (state.teamPlayers.length && !state.teamNews.length && !state.teamNewsLoading) void refreshTeamNews({ silent: true });
   } else if (viewName === "market") {
     if (!renderedComponents.has("market")) renderTable();

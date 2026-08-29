@@ -1,8 +1,16 @@
-# Version 3.12.2
+# Version 3.12.3
 
 Fecha de publicación: 2026-08-30
 
 ## Notas de versión
+
+- Las puntuaciones de la jornada se obtienen de la revisión oficial vigente de Biwenger y sustituyen cualquier dato provisional o antiguo guardado en el dispositivo.
+- Los sistemas combinados, como Media AS/Feeberse, muestran exactamente la media publicada por Biwenger; Sivera y Kang-in Lee aparecen con 8 puntos y Grimaldo con 3 en la jornada comprobada.
+- El indicador de puntos se sitúa a la derecha del nombre del jugador y deja libre su fotografía tanto en web como en la APK.
+
+## Historial 3.12.2
+
+Fecha de publicación: 2026-08-30
 
 - La alineación muestra los puntos reales de la jornada actual según el sistema de puntuación configurado en la liga de Biwenger, incluida Media AS/Feeberse Score.
 - Los indicadores de puntos del campo son más grandes y usan el mismo código de color que la racha para distinguir el rendimiento de un vistazo.

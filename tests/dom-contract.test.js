@@ -86,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=132') || !html.includes('styles.css?v=73') || !sw.includes('radar-fantasy-shell-v83')) {
+if (!html.includes('app.js?v=133') || !html.includes('styles.css?v=74') || !sw.includes('radar-fantasy-shell-v84')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -379,10 +379,16 @@ if (!php.includes("lineup(*,playersID,reservesID)")
   || !php.includes("$url .= '&v=' . rawurlencode")
   || !php.includes("'lineupRequested' => !empty($payload['lineupRequested'])")
   || !php.includes("/api/v2/rounds/")
+  || !php.includes("/biwenger/round-points")
+  || !php.includes("function biwenger_round_report_points")
+  || !php.includes("getenv('FMS_BIWENGER_VERSION') ?: '630'")
   || !js.includes("roundPointsRoundName")
   || !js.includes("Puntos en la jornada actual")
-  || !js.includes("pointsClass: `round-score ${liveRoundScoreClass(roundPoints)}`")
-  || !css.includes(".player-points-overlay.round-score.good")
+  || !js.includes("loadCurrentRoundPoints(false)")
+  || !js.includes("pitch-player-round-points round-score")
+  || !js.includes('renderPlayerMedia(player, "sm", { showPoints: false })')
+  || !css.includes(".pitch-player-round-points.round-score.good")
+  || !css.includes(".pitch-player-name")
   || !css.includes("font-size: 12px")) {
   throw new Error("My Team must import the active Biwenger lineup and current-round player points");
 }

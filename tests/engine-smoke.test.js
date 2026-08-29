@@ -1037,16 +1037,24 @@ if (rewardEstimate.amount !== 1315000 || rewardEstimate.source !== "Ajustes de l
   throw new Error("Round reward must combine the explicit Biwenger fields without guessing unrelated amounts: " + JSON.stringify(rewardEstimate));
 }
 const hydratedCurrentRound = hydrateImportedPlayers([
-  { id: "p1", biwengerPlayerId: 1, name: "Portero", position: "POR", roundPoints: 7, roundPointsRoundId: 4901, roundPointsRoundName: "Jornada 3", media: {} },
-  { id: "p2", biwengerPlayerId: 2, name: "Defensa", position: "DF", roundPoints: 0, roundPointsRoundId: 4901, roundPointsRoundName: "Jornada 3", media: {} }
+  { id: "p1", biwengerPlayerId: 1, name: "Portero", position: "POR", roundPoints: 7, roundPointsRoundId: 4901, roundPointsRoundName: "Jornada 3", roundPointsScoreId: 8, media: {} },
+  { id: "p2", biwengerPlayerId: 2, name: "Defensa", position: "DF", roundPoints: 0, roundPointsRoundId: 4901, roundPointsRoundName: "Jornada 3", roundPointsScoreId: 8, media: {} }
 ]);
 if (hydratedCurrentRound[0].roundPoints !== 7 || hydratedCurrentRound[1].roundPoints !== 0) {
   throw new Error("Imported current-round points, including zero, must survive hydration");
 }
 const pitchHtml = renderLineupPitch({ POR: [hydratedCurrentRound[0]], DF: [], MC: [], DL: [] });
-if (!pitchHtml.includes("Puntos en Jornada 3") || !pitchHtml.includes('round-score good') || !pitchHtml.includes(">7</span>") || pitchHtml.includes("scoring-badge")) {
+if (!pitchHtml.includes("Puntos en Jornada 3") || !pitchHtml.includes('round-score good') || !pitchHtml.includes(">7</span>")
+  || !pitchHtml.includes('class="pitch-player-name"') || pitchHtml.includes("player-points-overlay") || pitchHtml.includes("scoring-badge")) {
   throw new Error("Pitch cards must show the current-round score circle with the recent-form color scale, without accumulated points below");
 }
+state.biwenger.scoreId = 8;
+state.currentRoundPoints = { id: 4901, name: "Jornada 3", scoreId: 8, pointsByPlayer: { "1": 8 } };
+const correctedOfficialPitchHtml = renderLineupPitch({ POR: [{ ...hydratedCurrentRound[0], roundPoints: 12 }], DF: [], MC: [], DL: [] });
+if (!correctedOfficialPitchHtml.includes(">8</span>") || correctedOfficialPitchHtml.includes(">12</span>")) {
+  throw new Error("The lightweight official round snapshot must override stale saved player points");
+}
+state.currentRoundPoints = null;
 const pendingPitchHtml = renderLineupPitch({ POR: [{ ...hydratedCurrentRound[0], roundPoints: null }], DF: [], MC: [], DL: [] });
 if (!pendingPitchHtml.includes('round-score pending') || !pendingPitchHtml.includes(">–</span>")) {
   throw new Error("A player without a published current-round score must look pending instead of showing a false zero");

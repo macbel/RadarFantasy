@@ -1,8 +1,17 @@
-# Version 3.12.0
+# Version 3.12.1
 
-Fecha de publicación: 2026-08-28
+Fecha de publicación: 2026-08-29
 
 ## Notas de versión
+
+- «Mi equipo» importa y muestra inicialmente la alineación activa de Biwenger, incluidos formación, titulares, capitán, ariete y banquillo.
+- La alineación real se conserva al recargar y puede modificarse después desde el editor habitual.
+- Los puntos sobre el campo corresponden a la jornada actual; los jugadores aún sin nota publicada aparecen con un guion.
+- Los cambios de puntuación invalidan la caché incremental aunque la composición de la plantilla siga siendo la misma.
+
+## Historial 3.12.0
+
+Fecha de publicación: 2026-08-28
 
 - La carga inicial ahora informa de cada fase, muestra progreso y permite seguir usando los datos guardados mientras sincroniza.
 - La APK reutiliza durante más tiempo una sincronización reciente para evitar repetir toda la cadena de red al volver a abrirla.

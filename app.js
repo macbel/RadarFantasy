@@ -6258,6 +6258,11 @@ const hydrateImportedPlayers = (players) => (players || []).map((player, index) 
   feeberseScore: Number.isFinite(player.feeberseScore) ? player.feeberseScore : (Number.isFinite(player.sofascore) ? player.sofascore : 55),
   stats: Number.isFinite(player.stats) ? player.stats : 54,
   competitionPoints: Number(player.competitionPoints || 0),
+  roundPoints: player.roundPoints !== null && player.roundPoints !== undefined && Number.isFinite(Number(player.roundPoints))
+    ? Number(player.roundPoints)
+    : null,
+  roundPointsRoundId: player.roundPointsRoundId ?? null,
+  roundPointsRoundName: player.roundPointsRoundName || "",
   status: player.status || "ok",
   statusText: player.statusText || "",
   outOfCompetition: player.outOfCompetition === true,
@@ -7516,6 +7521,9 @@ const mergeSourcePlayer = (localPlayer, sourcePlayer) => {
     position: localPlayer.biwengerPosition || sourcePlayer.position || localPlayer.position,
     biwengerPosition: localPlayer.biwengerPosition || null,
     competitionPoints: Number(localPlayer.competitionPoints || 0),
+    roundPoints: localPlayer.roundPoints ?? sourcePlayer.roundPoints ?? null,
+    roundPointsRoundId: localPlayer.roundPointsRoundId ?? sourcePlayer.roundPointsRoundId ?? null,
+    roundPointsRoundName: localPlayer.roundPointsRoundName || sourcePlayer.roundPointsRoundName || "",
     price: localPlayer.price || sourcePlayer.price || 0,
     salePrice: localPlayer.salePrice || localPlayer.price || 0,
     biwengerPlayerId: localPlayer.biwengerPlayerId || sourcePlayer.biwengerPlayerId || null,
@@ -8044,7 +8052,11 @@ const biwengerImportSignature = (kind, payload = {}) => {
     bidCount: Number(player.bidCount || player.rivalBidCount || 0),
     ownBid: Number(player.myBidAmount || player.ownBidAmount || 0),
     team: String(player.team || player.teamId || ""),
-    position: String(player.position || player.biwengerPosition || "")
+    position: String(player.position || player.biwengerPosition || ""),
+    roundPoints: player.roundPoints !== null && player.roundPoints !== undefined && Number.isFinite(Number(player.roundPoints))
+      ? Number(player.roundPoints)
+      : null,
+    roundPointsRoundId: player.roundPointsRoundId ?? null
   })).sort((left, right) => left.id - right.id || left.price - right.price);
   const lineup = kind === "team" ? {
     type: String(payload.lineup?.type || ""),
@@ -8172,7 +8184,7 @@ const importFromBiwenger = async (kind, options = {}) => {
       if (state.lineupRequested) renderLineup();
       else renderLineupPlaceholder("Plantilla importada. Pulsa \"Once ideal\" si quieres generar la alineación recomendada.");
       renderTable();
-      setTeamStatus(`Plantilla importada desde Biwenger: ${importedPlayers.length} jugadores.`, importedPlayers.length ? "ready" : "error");
+      setTeamStatus(`Plantilla y alineación actual importadas desde Biwenger: ${importedPlayers.length} jugadores.`, importedPlayers.length ? "ready" : "error");
       if (importedPlayers.length && canUseApi() && !options.skipEnrichment) {
         const { players: enriched } = await enrichPlayerListBatched(importedPlayers, false, (done, total) => {
           updateDataSync(`Enriqueciendo plantilla: ${done}/${total} jugadores...`);
@@ -12363,6 +12375,11 @@ const latestRoundPointsForPlayer = (player, scoreKey = "roundPoints") => {
     : null;
 };
 
+const currentRoundPointsTitle = (player) => {
+  const roundName = String(player?.roundPointsRoundName || "").trim();
+  return roundName ? `Puntos en ${roundName}` : "Puntos en la jornada actual";
+};
+
 const renderLineupPitch = (groups, options = {}) => {
   const scoreKey = options.scoreKey || "roundPoints";
   const positions = [
@@ -12386,7 +12403,7 @@ const renderLineupPitch = (groups, options = {}) => {
               ${player.isStriker || String(player.id) === String(options.strikerId || "") ? `<b class="pitch-role-badge striker" title="Ariete" aria-label="Ariete">👟</b>` : ""}
             </span>
           ` : ""}
-          ${renderPlayerMedia(player, "sm", { pointsValue: latestRoundPointsForPlayer(player, scoreKey), pointsTitle: "Puntos en la ultima jornada cerrada" })}
+          ${renderPlayerMedia(player, "sm", { pointsValue: latestRoundPointsForPlayer(player, scoreKey), pointsTitle: currentRoundPointsTitle(player) })}
           <strong>${escapeHtml(player.name)}</strong>
           <div class="pitch-player-meta">${renderPositionBadge(player.lineupPosition || player.position)}</div>
           ${renderRecentFormDots(player)}

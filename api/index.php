@@ -2045,7 +2045,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
     if ($kind === 'team') {
         try {
             $response = biwenger_private_get_json(
-                'https://biwenger.as.com/api/v2/user?fields=*,lineup(*),players(*,fitness,team,owner),market(*,-userID),offers,-trophies',
+                'https://biwenger.as.com/api/v2/user?fields=*,lineup(*,playersID,reservesID),players(*,fitness,team,owner),market(*,-userID),offers,-trophies',
                 $session,
                 $timeoutSeconds,
                 $headers,
@@ -2053,7 +2053,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
             );
         } catch (Throwable $error) {
             $response = biwenger_private_get_json(
-                'https://biwenger.as.com/api/v2/user/' . $userId . '?fields=*,account(id),players(id,owner),lineups(round,points,count,position),league(id,name,competition,mode,scoreID),market,seasons,offers,lastPositions',
+                'https://biwenger.as.com/api/v2/user/' . $userId . '?fields=*,account(id),players(id,owner),lineup(*,playersID,reservesID),lineups(round,points,count,position),league(id,name,competition,mode,scoreID),market,seasons,offers,lastPositions',
                 $session,
                 $timeoutSeconds,
                 $headers,
@@ -2067,7 +2067,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
         }
         if (empty($userData['players'])) {
             $fallbackResponse = biwenger_private_get_json(
-                'https://biwenger.as.com/api/v2/user/' . $userId . '?fields=*,account(id),players(id,owner),lineups(round,points,count,position),league(id,name,competition,mode,scoreID),market,seasons,offers,lastPositions',
+                'https://biwenger.as.com/api/v2/user/' . $userId . '?fields=*,account(id),players(id,owner),lineup(*,playersID,reservesID),lineups(round,points,count,position),league(id,name,competition,mode,scoreID),market,seasons,offers,lastPositions',
                 $session,
                 $timeoutSeconds,
                 $headers,
@@ -2079,12 +2079,30 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
             }
             if (!empty($fallbackData['players'])) $userData = $fallbackData;
         }
+        $currentRound = ['id' => null, 'name' => '', 'pointsByPlayer' => []];
+        try {
+            $currentRound = biwenger_fetch_current_round_player_points(
+                $competition,
+                (int)($session['scoreId'] ?? 2),
+                $timeoutSeconds,
+                $headers,
+                $strictTls
+            );
+        } catch (Throwable $error) {
+            // La plantilla y el once siguen siendo utilizables si la jornada aun no publica puntuaciones.
+        }
         foreach ((array)($userData['players'] ?? []) as $entry) {
             if (!is_array($entry)) continue;
             $playerId = (int)($entry['id'] ?? 0);
             $catalogEntry = is_array($catalog['playersById'][$playerId] ?? null) ? $catalog['playersById'][$playerId] : [];
             $merged = array_merge($catalogEntry, $entry);
-            $players[] = biwenger_normalize_player($merged, $catalog, $competition, true);
+            $player = biwenger_normalize_player($merged, $catalog, $competition, true);
+            $player['roundPoints'] = array_key_exists($playerId, (array)$currentRound['pointsByPlayer'])
+                ? (float)$currentRound['pointsByPlayer'][$playerId]
+                : null;
+            $player['roundPointsRoundId'] = $currentRound['id'] ?? null;
+            $player['roundPointsRoundName'] = (string)($currentRound['name'] ?? '');
+            $players[] = $player;
         }
         $currentPlayerIds = array_fill_keys(array_values(array_filter(array_map(static function ($player) {
             return (int)($player['biwengerPlayerId'] ?? $player['id'] ?? 0);
@@ -2196,7 +2214,12 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
         'finance' => $finance,
         'players' => array_values(array_filter($players)),
         'departedPlayers' => $kind === 'team' ? $departedPlayers : [],
-        'lineup' => $kind === 'team' ? $lineupPayload : null
+        'lineup' => $kind === 'team' ? $lineupPayload : null,
+        'currentRound' => $kind === 'team' ? [
+            'id' => $currentRound['id'] ?? null,
+            'name' => (string)($currentRound['name'] ?? ''),
+            'playersWithPoints' => count((array)($currentRound['pointsByPlayer'] ?? []))
+        ] : null
     ];
 }
 
@@ -2242,6 +2265,39 @@ function biwenger_fetch_competition_catalog(string $competition, int $timeoutSec
         'competition' => $slug,
         'playersById' => $playersById,
         'teamsById' => $teamsById
+    ];
+}
+
+function biwenger_fetch_current_round_player_points(string $competition, int $scoreId, int $timeoutSeconds, array $headers, bool $strictTls): array
+{
+    $slug = biwenger_competition_slug($competition);
+    $url = 'https://cf.biwenger.com/api/v2/rounds/' . rawurlencode($slug)
+        . '?lang=es&score=' . max(1, $scoreId);
+    $response = http_request('GET', $url, $timeoutSeconds, $headers, $strictTls);
+    if ($response['status'] < 200 || $response['status'] >= 300) {
+        throw new RuntimeException('No se pudo descargar la puntuacion de la jornada actual de Biwenger');
+    }
+    $data = is_array($response['json']['data'] ?? null) ? $response['json']['data'] : [];
+    $pointsByPlayer = [];
+    foreach ((array)($data['games'] ?? []) as $game) {
+        if (!is_array($game)) continue;
+        foreach (['home', 'away'] as $side) {
+            $team = is_array($game[$side] ?? null) ? $game[$side] : [];
+            foreach ((array)($team['reports'] ?? []) as $report) {
+                if (!is_array($report)) continue;
+                $player = $report['player'] ?? null;
+                $playerId = (int)(is_array($player)
+                    ? ($player['id'] ?? 0)
+                    : ($report['playerID'] ?? $report['playerId'] ?? $player ?? 0));
+                $points = $report['points'] ?? $report['score'] ?? null;
+                if ($playerId > 0 && is_numeric($points)) $pointsByPlayer[$playerId] = (float)$points;
+            }
+        }
+    }
+    return [
+        'id' => $data['id'] ?? null,
+        'name' => (string)($data['name'] ?? $data['short'] ?? ''),
+        'pointsByPlayer' => $pointsByPlayer
     ];
 }
 
@@ -3599,7 +3655,8 @@ function sanitize_league_payload(array $payload): array
             'squadFitScore', 'overBudget', 'salePrice', 'bidAmount', 'bidCount', 'bidStatus',
             'hasBid', 'biwengerPlayerId', 'marketOwnerId', 'marketOwnerName', 'marketSellerType', 'marketSellerLabel',
             'myBidAmount', 'myBidStatus', 'offerId', 'rivalBids',
-            'rivalBidCount', 'highestRivalBid', 'rivalBidVisibility', 'bidCountSource', 'competitionPoints'
+            'rivalBidCount', 'highestRivalBid', 'rivalBidVisibility', 'bidCountSource', 'competitionPoints',
+            'roundPoints', 'roundPointsRoundId', 'roundPointsRoundName'
         ];
         $result = [];
         if (!is_array($players)) {
@@ -3624,6 +3681,7 @@ function sanitize_league_payload(array $payload): array
         $value = trim((string)$id);
         return $value !== '' && strlen($value) <= 180 ? $value : null;
     }, array_slice((array)($payload['targetPlayerIds'] ?? []), 0, 2)))));
+    $editableLineup = sanitize_editable_lineup($payload['editableLineup'] ?? null);
 
     return [
         'competition' => ($payload['competition'] ?? '') === 'worldcup' ? 'worldcup' : 'club',
@@ -3639,7 +3697,8 @@ function sanitize_league_payload(array $payload): array
         'icon' => sanitize_media_url($payload['icon'] ?? null),
         'cover' => sanitize_media_url($payload['cover'] ?? null),
         'biwengerLeagueId' => isset($payload['biwengerLeagueId']) ? (int)$payload['biwengerLeagueId'] : null,
-        'editableLineup' => sanitize_editable_lineup($payload['editableLineup'] ?? null),
+        'editableLineup' => $editableLineup,
+        'lineupRequested' => !empty($payload['lineupRequested']) && $editableLineup !== null,
         'leagueOverview' => is_array($payload['leagueOverview'] ?? null) ? $payload['leagueOverview'] : null,
         'leagueFixtures' => is_array($payload['leagueFixtures'] ?? null) ? $payload['leagueFixtures'] : null,
         'targetPlayerIds' => $targetPlayerIds,
@@ -4961,6 +5020,18 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
     $standings = (array)($overview['standings'] ?? []);
     if (!$standings) $standings = biwenger_league_users($session, $timeoutSeconds, $headers, $strictTls);
     $catalog = biwenger_fetch_competition_catalog((string)($session['competition'] ?? ''), $timeoutSeconds, $headers, $strictTls, (int)($session['scoreId'] ?? 2));
+    $currentRound = ['id' => null, 'name' => '', 'pointsByPlayer' => []];
+    try {
+        $currentRound = biwenger_fetch_current_round_player_points(
+            (string)($session['competition'] ?? ''),
+            (int)($session['scoreId'] ?? 2),
+            $timeoutSeconds,
+            $headers,
+            $strictTls
+        );
+    } catch (Throwable $error) {
+        // Los totales de liga siguen siendo utiles aunque la fuente publica no tenga el detalle individual.
+    }
     $entriesByUser = [];
     foreach ($roundEntries as $entry) {
         $user = is_array($entry['user'] ?? null) ? $entry['user'] : $entry;
@@ -5039,7 +5110,12 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
             $merged = array_merge((array)($catalog['playersById'][$playerId] ?? []), (array)($playersById[$playerId] ?? []));
             if (!$merged) continue;
             $player = biwenger_normalize_player($merged, $catalog, (string)($session['competition'] ?? ''), true);
-            $player['roundPoints'] = (float)($lineupPoints[$playerId] ?? 0);
+            $publicRoundPoints = (array)($currentRound['pointsByPlayer'] ?? []);
+            $player['roundPoints'] = array_key_exists($playerId, $publicRoundPoints)
+                ? (float)$publicRoundPoints[$playerId]
+                : (array_key_exists($playerId, $lineupPoints) ? (float)$lineupPoints[$playerId] : null);
+            $player['roundPointsRoundId'] = $currentRound['id'] ?? null;
+            $player['roundPointsRoundName'] = (string)($currentRound['name'] ?? '');
             $player['isCaptain'] = $playerId === $captainId;
             $player['isStriker'] = $playerId === $strikerId;
             $player['roundGoals'] = biwenger_player_round_goals($merged);
@@ -5304,20 +5380,39 @@ function biwenger_current_round_points(array $data, int $fallback): int
 
 function biwenger_pick_active_lineup(array $data): array
 {
+    $direct = is_array($data['lineup'] ?? null) ? $data['lineup'] : [];
+    if (biwenger_lineup_starter_count($direct) === 11) return $direct;
+
+    $currentRound = is_array($data['currentRound'] ?? null) ? $data['currentRound'] : [];
+    if (biwenger_lineup_starter_count($currentRound) === 11) return $currentRound;
+
     $candidates = [];
-    foreach (['lineup', 'currentRound'] as $key) {
-        if (is_array($data[$key] ?? null)) $candidates[] = $data[$key];
-    }
     foreach (['lineups', 'rounds'] as $key) {
         foreach (array_values(array_filter((array)($data[$key] ?? []), 'is_array')) as $entry) {
-            $candidates[] = $entry;
+            if (biwenger_lineup_starter_count($entry) === 11) $candidates[] = $entry;
         }
     }
+    if ($direct) $candidates[] = $direct;
+    if ($currentRound) $candidates[] = $currentRound;
     if (!$candidates) return [];
     usort($candidates, static function ($left, $right) {
+        $starterDiff = biwenger_lineup_starter_count($right) <=> biwenger_lineup_starter_count($left);
+        if ($starterDiff !== 0) return $starterDiff;
+        $roundDiff = biwenger_lineup_round_number($right) <=> biwenger_lineup_round_number($left);
+        if ($roundDiff !== 0) return $roundDiff;
+        $timeDiff = biwenger_lineup_timestamp($right) <=> biwenger_lineup_timestamp($left);
+        if ($timeDiff !== 0) return $timeDiff;
         return biwenger_lineup_payload_score($right) <=> biwenger_lineup_payload_score($left);
     });
     return $candidates[0] ?? [];
+}
+
+function biwenger_lineup_starter_count(array $lineup): int
+{
+    if (!$lineup) return 0;
+    $ids = [];
+    biwenger_collect_lineup_ids($lineup, $ids);
+    return count($ids);
 }
 
 function biwenger_lineup_direct_role_id(array $lineup, array $data, string $role): int

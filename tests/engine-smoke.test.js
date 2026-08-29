@@ -1036,9 +1036,21 @@ const rewardEstimate = estimatedRoundReward();
 if (rewardEstimate.amount !== 1315000 || rewardEstimate.source !== "Ajustes de liga Biwenger") {
   throw new Error("Round reward must combine the explicit Biwenger fields without guessing unrelated amounts: " + JSON.stringify(rewardEstimate));
 }
-const pitchHtml = renderLineupPitch({ POR: [{ id: "p1", biwengerPlayerId: 1, name: "Portero", position: "POR", roundPoints: 7, media: {} }], DF: [], MC: [], DL: [] });
-if (!pitchHtml.includes("Puntos en la ultima jornada cerrada") || pitchHtml.includes("scoring-badge")) {
-  throw new Error("Pitch cards must show only the round score circle, without accumulated points below");
+const hydratedCurrentRound = hydrateImportedPlayers([
+  { id: "p1", biwengerPlayerId: 1, name: "Portero", position: "POR", roundPoints: 7, roundPointsRoundId: 4901, roundPointsRoundName: "Jornada 3", media: {} },
+  { id: "p2", biwengerPlayerId: 2, name: "Defensa", position: "DF", roundPoints: 0, roundPointsRoundId: 4901, roundPointsRoundName: "Jornada 3", media: {} }
+]);
+if (hydratedCurrentRound[0].roundPoints !== 7 || hydratedCurrentRound[1].roundPoints !== 0) {
+  throw new Error("Imported current-round points, including zero, must survive hydration");
+}
+const pitchHtml = renderLineupPitch({ POR: [hydratedCurrentRound[0]], DF: [], MC: [], DL: [] });
+if (!pitchHtml.includes("Puntos en Jornada 3") || !pitchHtml.includes(">7</span>") || pitchHtml.includes("scoring-badge")) {
+  throw new Error("Pitch cards must show only the current-round score circle, without accumulated points below");
+}
+const signatureRound7 = biwengerImportSignature("team", { players: [hydratedCurrentRound[0]], lineup: { type: "4-4-2", playersID: [1] } });
+const signatureRound8 = biwengerImportSignature("team", { players: [{ ...hydratedCurrentRound[0], roundPoints: 8 }], lineup: { type: "4-4-2", playersID: [1] } });
+if (signatureRound7 === signatureRound8) {
+  throw new Error("A current-round score change must invalidate the incremental Biwenger snapshot");
 }
 
 console.log(JSON.stringify({

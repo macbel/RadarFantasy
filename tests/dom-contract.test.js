@@ -86,7 +86,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=130') || !html.includes('styles.css?v=72') || !sw.includes('radar-fantasy-shell-v81')) {
+if (!html.includes('app.js?v=131') || !html.includes('styles.css?v=72') || !sw.includes('radar-fantasy-shell-v82')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -361,6 +361,16 @@ if (!php.includes("$fixtures['schemaVersion'] = 7") || !php.includes("fixtures-v
 if (!php.includes("function fixture_competition_family") || !php.includes("$queryFamily === $labelFamily ? 100 : 0")
   || !js.includes("fixturePayloadMatchesCompetition") || !js.includes("reconcileEditableLineup(league.editableLineup || null")) {
   throw new Error("LaLiga fixtures must reject Bundesliga matches and incomplete saved lineups must be repaired");
+}
+
+if (!php.includes("lineup(*,playersID,reservesID)")
+  || !php.includes("function biwenger_lineup_starter_count")
+  || !php.includes("function biwenger_fetch_current_round_player_points")
+  || !php.includes("'lineupRequested' => !empty($payload['lineupRequested'])")
+  || !php.includes("/api/v2/rounds/")
+  || !js.includes("roundPointsRoundName")
+  || !js.includes("Puntos en la jornada actual")) {
+  throw new Error("My Team must import the active Biwenger lineup and current-round player points");
 }
 
 if (!php.includes("if ($primaryMapped === 'ENT') return ['ENT'];")

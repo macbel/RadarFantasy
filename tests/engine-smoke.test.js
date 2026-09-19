@@ -17,7 +17,7 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync("data.js", "utf8"), context);
 
 const appCode = fs.readFileSync("app.js", "utf8").replace(
-  /\ninit\(\);\s*$/,
+  /\n(?:void\s+)?init\(\);\s*$/,
   `
 const sample = [
   "Oihan Sancet - Athletic - MC - 12.300.000",

@@ -29,6 +29,7 @@ $biwengerRateLimitPath = $dbDir . DIRECTORY_SEPARATOR . 'biwenger-rate-limit.jso
 $sofaDiagnosticsPath = $dbDir . DIRECTORY_SEPARATOR . 'sofascore-status.json';
 $apiSportsKeyPath = $dbDir . DIRECTORY_SEPARATOR . 'api-sports.key';
 $scorebatKeyPath = $dbDir . DIRECTORY_SEPARATOR . 'scorebat.key';
+
 $sourceCacheMs = 1000 * 60 * 20;
 $playerCacheMs = 1000 * 60 * 60 * 24;
 $sourceCriteriaVersion = 11;
@@ -61,6 +62,41 @@ $futbolFantasyHeaders = [
     'Origin: https://www.futbolfantasy.com',
     'Referer: https://www.futbolfantasy.com/login'
 ];
+
+/* Mobile gateway routes are resolved before account files are opened. The APK
+ * owns functional snapshots, so a gateway request must never initialise or
+ * write leagues/team-tracking files from the web account store. */
+auth_apply_mobile_cors();
+$requestMethod = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$route = request_path();
+if ($requestMethod === 'OPTIONS') send_empty(204);
+auth_bootstrap_from_environment($usersDbPath);
+auth_handle_public_routes($route, $requestMethod, $usersDbPath, $passwordResetsPath);
+if (strpos($route, '/mobile/') === 0) {
+    if ($route === '/mobile/healthz' && $requestMethod === 'GET') send_json(200, ['ok' => true, 'mode' => 'gateway']);
+    $mobileUser = auth_require_user($usersDbPath);
+    if ($route === '/mobile/permission' && $requestMethod === 'GET') {
+        $entitlement = auth_offline_entitlement($mobileUser);
+        if ($entitlement === null) send_json(503, ['error' => 'La pasarela móvil no tiene configurada la clave de firma']);
+        send_json(200, ['authenticated' => true, 'user' => auth_public_user($mobileUser), 'entitlement' => $entitlement]);
+    }
+    if ($route === '/mobile/team-tracking/feed' && in_array($requestMethod, ['GET', 'POST'], true)) {
+        $input = $requestMethod === 'POST' ? read_json_body() : $_GET;
+        $teams = array_values(array_filter(array_map(static function ($team) {
+            return sanitize_tracked_team_name($team);
+        }, array_slice((array)($input['teams'] ?? []), 0, 30))));
+        $competition = ($input['competition'] ?? '') === 'worldcup' ? 'worldcup' : 'club';
+        $forceRefresh = (string)($input['force'] ?? '') === '1' || !empty($input['force']);
+        $ephemeralTracking = ['version' => 1, 'teams' => $teams, 'articles' => [], 'updatedAt' => null, 'refreshedAtTs' => 0];
+        try {
+            $payload = team_tracking_refresh_feed($ephemeralTracking, null, $forceRefresh, $sourceTimeoutSeconds, $sourceHeaders, $futbolFantasyHeaders, $strictTls, $competition);
+            send_json(200, $payload);
+        } catch (Throwable $error) {
+            send_json(502, ['error' => $error->getMessage() ?: 'No se pudieron refrescar las noticias de equipos']);
+        }
+    }
+    send_json(404, ['error' => 'Endpoint móvil no encontrado']);
+}
 
 $nationalTeamSlugOverrides = [
     'noruega' => 'noruega',
@@ -263,6 +299,7 @@ if ($route === '/player-catalog' && $requestMethod === 'GET') {
 }
 
 if ($route === '/biwenger/status' && $requestMethod === 'GET') {
+    if (auth_mobile_request() && empty($_SESSION['biwenger']['token'])) require_biwenger_session();
     $storedBiwengerVersion = trim((string)($_SESSION['biwenger']['xVersion'] ?? ''));
     $resolvedBiwengerVersion = $storedBiwengerVersion;
     if (!empty($_SESSION['biwenger']['token'])) {
@@ -293,7 +330,7 @@ if ($route === '/biwenger/status' && $requestMethod === 'GET') {
                 $strictTls
             );
             $_SESSION['biwenger'] = array_merge($_SESSION['biwenger'], $freshSession);
-            persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $_SESSION['biwenger']);
+            if (!auth_mobile_request()) persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $_SESSION['biwenger']);
         } catch (Throwable $error) {
             // Keep the remembered session usable even if the score system cannot be refreshed.
         }
@@ -329,7 +366,7 @@ if ($route === '/biwenger/round-points' && $requestMethod === 'GET') {
                 $strictTls
             );
             $_SESSION['biwenger']['xVersion'] = $resolvedVersion;
-            persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $_SESSION['biwenger']);
+            if (!auth_mobile_request()) persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $_SESSION['biwenger']);
         }
         $round = biwenger_fetch_current_round_player_points(
             (string)($currentSession['competition'] ?? ''),
@@ -366,8 +403,15 @@ if ($route === '/biwenger/login' && $requestMethod === 'POST') {
         $token = biwenger_login($email, $password, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls);
         $sessionState = biwenger_build_session($token, $version, $preferredLeagueName, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls, $preferredLeagueName !== '');
         $_SESSION['biwenger'] = $sessionState;
-        persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $sessionState);
-        send_json(200, biwenger_session_state($sessionState));
+        if (!auth_mobile_request()) persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $sessionState);
+        $response = biwenger_session_state($sessionState);
+        if (auth_mobile_request()) {
+            $response['mobileCredential'] = [
+                'token' => (string)$sessionState['token'], 'xVersion' => (string)($sessionState['xVersion'] ?? ''),
+                'leagueId' => (int)($sessionState['leagueId'] ?? 0), 'issuedAt' => gmdate('c')
+            ];
+        }
+        send_json(200, $response);
     } catch (Throwable $error) {
         send_json(502, ['error' => $error->getMessage() ?: 'No se pudo conectar con Biwenger']);
     }
@@ -393,7 +437,7 @@ if ($route === '/biwenger/switch-league' && $requestMethod === 'POST') {
             $preferredLeagueId
         );
         $_SESSION['biwenger'] = array_merge($currentSession, $sessionState);
-        persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $_SESSION['biwenger']);
+        if (!auth_mobile_request()) persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $_SESSION['biwenger']);
         send_json(200, biwenger_session_state($_SESSION['biwenger']));
     } catch (Throwable $error) {
         send_json(404, ['error' => $error->getMessage() ?: 'No se encontro una liga coincidente en Biwenger']);
@@ -428,8 +472,10 @@ if ($route === '/futbolfantasy/login' && $requestMethod === 'POST') {
             $strictTls
         );
         $_SESSION['futbolFantasy'] = $sessionState;
-        persist_futbol_fantasy_device_session($futbolFantasySessionsDb, $futbolFantasySessionsPath, $sessionState);
-        send_json(200, futbol_fantasy_session_state($sessionState, $futbolFantasyCooldownPath));
+        if (!auth_mobile_request()) persist_futbol_fantasy_device_session($futbolFantasySessionsDb, $futbolFantasySessionsPath, $sessionState);
+        $response = futbol_fantasy_session_state($sessionState, $futbolFantasyCooldownPath);
+        if (auth_mobile_request()) $response['mobileSession'] = ['issuedAt' => gmdate('c'), 'device' => 'keystore-required'];
+        send_json(200, $response);
     } catch (Throwable $error) {
         send_json(502, ['error' => $error->getMessage() ?: 'No se pudo conectar con Futbol Fantasy']);
     }
@@ -451,7 +497,7 @@ if ($route === '/futbolfantasy/session-cookie' && $requestMethod === 'POST') {
             $strictTls
         );
         $_SESSION['futbolFantasy'] = $sessionState;
-        persist_futbol_fantasy_device_session($futbolFantasySessionsDb, $futbolFantasySessionsPath, $sessionState);
+        if (!auth_mobile_request()) persist_futbol_fantasy_device_session($futbolFantasySessionsDb, $futbolFantasySessionsPath, $sessionState);
         send_json(200, futbol_fantasy_session_state($sessionState, $futbolFantasyCooldownPath));
     } catch (Throwable $error) {
         send_json(502, ['error' => $error->getMessage() ?: 'No se pudo validar la cookie de Futbol Fantasy']);
@@ -1344,7 +1390,7 @@ function apply_cors_headers(): void
         header('Access-Control-Allow-Origin: *');
     }
     header('Access-Control-Allow-Methods: GET,POST,OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, X-FMS-Device-Key');
+    header('Access-Control-Allow-Headers: Content-Type, X-FMS-Device-Key, X-FMS-Local-First, Authorization, X-FMS-Biwenger-League, X-FMS-Biwenger-Version');
 }
 
 function biwenger_device_key(): string
@@ -1356,6 +1402,7 @@ function biwenger_device_key(): string
 
 function restore_biwenger_device_session(array $db): void
 {
+    if (auth_mobile_request()) return;
     if (!empty($_SESSION['biwenger']['token'])) return;
     $key = biwenger_device_key();
     $saved = $key !== '' ? ($db['sessions'][$key] ?? null) : null;
@@ -1384,6 +1431,20 @@ function forget_biwenger_device_session(array &$db, string $path): void
 function require_biwenger_session(): array
 {
     $session = $_SESSION['biwenger'] ?? null;
+    if ((!is_array($session) || empty($session['token'])) && auth_mobile_request()) {
+        $authorization = trim((string)($_SERVER['HTTP_AUTHORIZATION'] ?? ''));
+        if (preg_match('/^Bearer\s+(.+)$/i', $authorization, $match)) {
+            $token = trim($match[1]);
+            if ($token !== '' && strlen($token) <= 4096) {
+                $session = [
+                    'token' => $token,
+                    'xVersion' => trim((string)($_SERVER['HTTP_X_FMS_BIWENGER_VERSION'] ?? '')),
+                    'leagueId' => (int)($_SERVER['HTTP_X_FMS_BIWENGER_LEAGUE'] ?? 0)
+                ];
+                $_SESSION['biwenger'] = $session;
+            }
+        }
+    }
     if (!is_array($session) || empty($session['token'])) {
         send_json(401, ['error' => 'No hay una sesion de Biwenger abierta']);
     }
@@ -2980,7 +3041,7 @@ function team_tracking_parse_rss_items(string $xml, string $teamName): array
     return $articles;
 }
 
-function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh, int $timeoutSeconds, array $headers, array $futbolFantasyHeaders, bool $strictTls, string $competition = 'club'): array
+function team_tracking_refresh_feed(array &$db, ?string $path, bool $forceRefresh, int $timeoutSeconds, array $headers, array $futbolFantasyHeaders, bool $strictTls, string $competition = 'club'): array
 {
     $teams = array_values(array_filter(array_map(static function ($team) {
         return sanitize_tracked_team_name($team);
@@ -2996,7 +3057,7 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
     if (!$teams) {
         $db['articles'] = [];
         $db['refreshedAtTs'] = time();
-        write_json_file($path, $db);
+        if ($path !== null) write_json_file($path, $db);
         return team_tracking_payload($db);
     }
     $urls = [];
@@ -3117,7 +3178,7 @@ function team_tracking_refresh_feed(array &$db, string $path, bool $forceRefresh
     }
     $db['articles'] = array_slice($limitedArticles, 0, 25);
     $db['refreshedAtTs'] = time();
-    write_json_file($path, $db);
+    if ($path !== null) write_json_file($path, $db);
     return team_tracking_payload($db);
 }
 

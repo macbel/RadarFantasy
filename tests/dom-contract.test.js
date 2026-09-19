@@ -8,6 +8,8 @@ const authPhp = normalizeEol(fs.readFileSync("api/auth.php", "utf8"));
 const css = normalizeEol(fs.readFileSync("styles.css", "utf8"));
 const sw = normalizeEol(fs.readFileSync("sw.js", "utf8"));
 const androidUpdater = fs.readFileSync("android/app/src/main/java/com/fantasymarketscout/app/AppUpdaterPlugin.java", "utf8");
+const androidLocalData = fs.readFileSync("android/app/src/main/java/com/fantasymarketscout/app/LocalDataPlugin.java", "utf8");
+const androidMainActivity = fs.readFileSync("android/app/src/main/java/com/fantasymarketscout/app/MainActivity.java", "utf8");
 const androidManifest = fs.readFileSync("android/app/src/main/AndroidManifest.xml", "utf8");
 
 const ids = new Set(
@@ -28,12 +30,12 @@ if (!js.includes("const connectBiwenger") || !js.includes("!hasUpcomingFixtureEv
   throw new Error("Biwenger connection must refresh selected data and recover missing future fixtures");
 }
 
-if (html.indexOf('data-view="team"') > html.indexOf('data-view="market"')) {
-  throw new Error("Mi equipo must be the first menu option, followed by Mercado");
+if (html.indexOf('data-view="home"') > html.indexOf('data-view="team"') || html.indexOf('data-view="team"') > html.indexOf('data-view="market"')) {
+  throw new Error("Inicio must lead the menu, followed by Mi equipo and Mercado");
 }
 
-if (!html.includes('data-view="team"') || !html.includes('class="view active" id="team-view"')) {
-  throw new Error("Mi equipo must be the active view when the application opens");
+if (!html.includes('data-view="home"') || !html.includes('class="view active" id="home-view"') || !js.includes("const renderHome")) {
+  throw new Error("The lightweight daily home must be the active view when the application opens");
 }
 
 if (!css.includes(".top-five-list") || !css.includes("grid-template-columns: repeat(2, minmax(0, 1fr))") || !css.includes(".decision-lanes")) {
@@ -77,7 +79,7 @@ if (rewardInputBlock.includes("renderBidSaleAssistant") || rewardInputBlock.incl
   throw new Error("Typing reward settings must not trigger analysis or rebuild operational panels");
 }
 
-const initBlock = js.slice(js.indexOf("const init = () =>"), js.indexOf("init();"));
+const initBlock = js.slice(js.indexOf("const init = async () =>"), js.indexOf("void init();"));
 if (initBlock.includes("setInterval") || !js.includes("refreshStartupDataInBackground(") || initBlock.includes("syncTeamTrackingFromServer()")) {
   throw new Error("Startup must refresh the active league once while avoiding periodic polling and unrelated remote work");
 }
@@ -141,6 +143,18 @@ if (!js.includes("AppUpdater") || !js.includes("downloadAndInstall") || !js.incl
 
 if (!androidUpdater.includes("DownloadManager") || !androidUpdater.includes("FileProvider") || !androidManifest.includes("REQUEST_INSTALL_PACKAGES")) {
   throw new Error("The Android updater must finish a managed APK download before requesting installation");
+}
+
+if (!androidLocalData.includes("SQLiteOpenHelper") || !androidLocalData.includes("AndroidKeyStore")
+  || !androidLocalData.includes('CREATE TABLE app_records') || !androidLocalData.includes('CREATE TABLE secure_records')
+  || !androidMainActivity.includes("registerPlugin(LocalDataPlugin.class)")) {
+  throw new Error("The APK must use SQLite for local app data and Android Keystore for cached access data");
+}
+
+if (!js.includes("initializeLocalDatabase") || !js.includes("checkpointLocalDatabase")
+  || !js.includes("readOfflineEntitlement") || !js.includes("OFFLINE_ENTITLEMENT_MAX_AGE_MS")
+  || !js.includes("!canUseApi() || isNativeRuntime()")) {
+  throw new Error("The native app must restore its SQLite state, support bounded offline access, and avoid the web business database");
 }
 
 if (!js.includes("nativePreferences") || !js.includes("REMEMBERED_BIWENGER_EMAIL_KEY") || !js.includes("await rememberBiwengerAccount(email)")) {

@@ -40,7 +40,7 @@ function auth_bootstrap_from_environment(string $usersPath): bool
     $db['users'][$id] = [
         'id' => $id, 'name' => auth_text_limit($name, 80), 'email' => $email,
         'passwordHash' => password_hash($password, PASSWORD_DEFAULT), 'role' => 'admin',
-        'permissions' => auth_permissions(), 'blocked' => false,
+        'permissions' => auth_permissions(), 'blocked' => false, 'authorizationVersion' => 1,
         'createdAt' => $now, 'updatedAt' => $now, 'lastLoginAt' => null
     ];
     auth_write_db($usersPath, $db);
@@ -82,6 +82,66 @@ function auth_public_user(array $user): array
         'updatedAt' => $user['updatedAt'] ?? null,
         'lastLoginAt' => $user['lastLoginAt'] ?? null
     ];
+}
+
+function auth_mobile_request(): bool
+{
+    return (string)($_SERVER['HTTP_X_FMS_LOCAL_FIRST'] ?? '') === '1'
+        || strpos((string)($_SERVER['REQUEST_URI'] ?? ''), '/mobile/') !== false;
+}
+
+function auth_apply_mobile_cors(): void
+{
+    $origin = trim((string)($_SERVER['HTTP_ORIGIN'] ?? ''));
+    $allowlist = array_values(array_filter(array_map('trim', explode(',', (string)getenv('FMS_MOBILE_CORS_ORIGINS')))));
+    if ($origin !== '' && (!$allowlist || in_array($origin, $allowlist, true))) {
+        header('Access-Control-Allow-Origin: ' . $origin);
+        header('Access-Control-Allow-Credentials: true');
+        header('Vary: Origin');
+    }
+    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type, X-FMS-Device-Key, X-FMS-Local-First, Authorization');
+    header('Access-Control-Max-Age: 600');
+}
+
+function auth_base64url(string $value): string
+{
+    return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+}
+
+function auth_offline_entitlement(array $user): ?string
+{
+    if (!auth_mobile_request()) return null;
+    $private = trim((string)getenv('FMS_OFFLINE_AUTH_PRIVATE_KEY'));
+    if ($private === '') return null;
+    $private = str_replace('\\n', "\n", $private);
+    $device = trim((string)($_SERVER['HTTP_X_FMS_DEVICE_KEY'] ?? ''));
+    if ($device === '' || strlen($device) > 256) return null;
+    $ttl = (int)getenv('FMS_OFFLINE_AUTH_TTL_SECONDS');
+    $ttl = $ttl > 0 ? min($ttl, 7 * 86400) : 7 * 86400;
+    $now = time();
+    $header = ['typ' => 'JWT', 'alg' => 'RS256', 'kid' => (string)(getenv('FMS_OFFLINE_AUTH_KEY_ID') ?: 'v1')];
+    $claims = [
+        'iss' => (string)(getenv('FMS_OFFLINE_AUTH_ISSUER') ?: 'radar-fantasy'),
+        'aud' => (string)(getenv('FMS_OFFLINE_AUTH_AUDIENCE') ?: 'radar-fantasy-android'),
+        'sub' => (string)($user['id'] ?? ''), 'device' => hash('sha256', $device),
+        'iat' => $now, 'exp' => $now + $ttl, 'authz' => (int)($user['authorizationVersion'] ?? 1),
+        'role' => ($user['role'] ?? '') === 'admin' ? 'admin' : 'user',
+        'permissions' => auth_public_user($user)['permissions']
+    ];
+    $encoded = auth_base64url((string)json_encode($header, JSON_UNESCAPED_SLASHES)) . '.'
+        . auth_base64url((string)json_encode($claims, JSON_UNESCAPED_SLASHES));
+    $signature = '';
+    if (!function_exists('openssl_sign') || !openssl_sign($encoded, $signature, $private, OPENSSL_ALGO_SHA256)) return null;
+    return $encoded . '.' . auth_base64url($signature);
+}
+
+function auth_response_for_user(array $user, int $status = 200): void
+{
+    $payload = ['authenticated' => true, 'user' => auth_public_user($user)];
+    $entitlement = auth_offline_entitlement($user);
+    if ($entitlement !== null) $payload['entitlement'] = $entitlement;
+    send_json($status, $payload);
 }
 
 function auth_find_user(array $db, string $id): ?array
@@ -158,12 +218,17 @@ function auth_handle_public_routes(string $route, string $method, string $usersP
 
     if ($route === '/auth/status' && $method === 'GET') {
         $user = auth_current_user($db);
-        send_json(200, [
+        $response = [
             'authenticated' => $user !== null,
             'bootstrapRequired' => count($db['users']) === 0 && auth_bootstrap_allowed(),
             'administratorConfigured' => count($db['users']) > 0,
             'user' => $user ? auth_public_user($user) : null
-        ]);
+        ];
+        if ($user) {
+            $entitlement = auth_offline_entitlement($user);
+            if ($entitlement !== null) $response['entitlement'] = $entitlement;
+        }
+        send_json(200, $response);
     }
 
     if ($route === '/auth/bootstrap' && $method === 'POST') {
@@ -180,7 +245,7 @@ function auth_handle_public_routes(string $route, string $method, string $usersP
         $user = [
             'id' => $id, 'name' => auth_text_limit($name, 80), 'email' => $email,
             'passwordHash' => password_hash($password, PASSWORD_DEFAULT), 'role' => 'admin',
-            'permissions' => auth_permissions(), 'blocked' => false,
+            'permissions' => auth_permissions(), 'blocked' => false, 'authorizationVersion' => 1,
             'createdAt' => $now, 'updatedAt' => $now, 'lastLoginAt' => $now
         ];
         $db['users'][$id] = $user;
@@ -195,7 +260,7 @@ function auth_handle_public_routes(string $route, string $method, string $usersP
         }
         session_regenerate_id(true);
         $_SESSION['radarUserId'] = $id;
-        send_json(201, ['authenticated' => true, 'user' => auth_public_user($user)]);
+        auth_response_for_user($user, 201);
     }
 
     if ($route === '/auth/login' && $method === 'POST') {
@@ -212,7 +277,7 @@ function auth_handle_public_routes(string $route, string $method, string $usersP
         auth_write_db($usersPath, $db);
         session_regenerate_id(true);
         $_SESSION['radarUserId'] = $id;
-        send_json(200, ['authenticated' => true, 'user' => auth_public_user($db['users'][$id])]);
+        auth_response_for_user($db['users'][$id]);
     }
 
     if ($route === '/auth/logout' && $method === 'POST') {
@@ -318,6 +383,12 @@ function auth_handle_admin_routes(string $route, string $method, string $usersPa
             'blocked' => $willBeBlocked,
             'createdAt' => $existing['createdAt'] ?? $now, 'updatedAt' => $now
         ]);
+        $previousAuthorization = json_encode([
+            $existing['role'] ?? null, $existing['permissions'] ?? [], !empty($existing['blocked'])
+        ]);
+        $nextAuthorization = json_encode([$user['role'], $user['permissions'], $user['blocked']]);
+        $user['authorizationVersion'] = (int)($existing['authorizationVersion'] ?? 0)
+            + (($existing && $previousAuthorization !== $nextAuthorization) ? 1 : 1);
         if ($password !== '') $user['passwordHash'] = password_hash($password, PASSWORD_DEFAULT);
         $db['users'][$id] = $user;
         auth_write_db($usersPath, $db);

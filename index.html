@@ -145,7 +145,11 @@
         </div>
 
         <nav class="nav-list" aria-label="Vistas">
-          <button class="nav-item nav-primary active" type="button" data-view="team">
+          <button class="nav-item nav-primary active" type="button" data-view="home">
+            <span class="icon icon-home" aria-hidden="true"></span>
+            Inicio
+          </button>
+          <button class="nav-item nav-primary" type="button" data-view="team">
             <span class="icon icon-team" aria-hidden="true"></span>
             Mi equipo
           </button>
@@ -251,6 +255,9 @@
             <h2 id="topbar-title">Ranking de fichajes</h2>
             <p class="topbar-subtitle" id="topbar-subtitle">Mi liga · Local / manual</p>
           </div>
+          <button class="icon-button global-mobile-refresh" type="button" id="global-mobile-refresh" aria-label="Actualizar todos los datos" title="Actualizar todos los datos">
+            <span class="icon icon-refresh" aria-hidden="true"></span>
+          </button>
           <div class="topbar-actions">
             <button class="icon-button team-alerts-button" type="button" id="team-alerts-button" aria-label="Abrir alertas de mi equipo" title="Alertas de mi equipo" aria-haspopup="dialog" aria-controls="team-alerts-modal">
               <span class="icon icon-bell" aria-hidden="true"></span>
@@ -270,6 +277,50 @@
             </button>
           </div>
         </header>
+
+        <section class="view active" id="home-view" aria-label="Resumen diario">
+          <div class="home-mobile-shell">
+            <section class="home-welcome">
+              <div>
+                <p class="eyebrow" id="home-date-label">Resumen diario</p>
+                <h3>Tu día fantasy</h3>
+                <span id="home-sync-label">Datos guardados en este dispositivo</span>
+              </div>
+              <button class="icon-button home-refresh-button" type="button" id="home-refresh" aria-label="Actualizar todos los datos" title="Actualizar todos los datos">
+                <span class="icon icon-refresh" aria-hidden="true"></span>
+              </button>
+            </section>
+
+            <section class="home-primary-action" id="home-primary-action">
+              <p class="eyebrow">Acción recomendada</p>
+              <h3 id="home-action-title">Preparando tu recomendación</h3>
+              <p id="home-action-copy">Usaremos el mercado y tu plantilla guardados para destacar una sola decisión.</p>
+              <button class="primary-button" type="button" id="home-action-button">Revisar mercado</button>
+            </section>
+
+            <section class="home-metrics" aria-label="Resumen de liga">
+              <article><span>Saldo</span><strong id="home-balance">—</strong></article>
+              <article><span>Plantilla</span><strong id="home-squad-count">0</strong></article>
+              <article><span>Puesto</span><strong id="home-position">—</strong></article>
+            </section>
+
+            <section class="home-section">
+              <div class="home-section-heading">
+                <h3>Oportunidades</h3>
+                <button type="button" class="auth-link" id="home-open-market">Ver mercado</button>
+              </div>
+              <div class="home-opportunity-list" id="home-opportunity-list">
+                <p class="muted-empty compact">Actualiza el mercado para ver oportunidades.</p>
+              </div>
+            </section>
+
+            <section class="home-alert-summary" id="home-alert-summary" hidden>
+              <span class="icon icon-bell" aria-hidden="true"></span>
+              <span id="home-alert-copy">Tu plantilla no tiene avisos pendientes.</span>
+              <button type="button" class="auth-link" id="home-open-team">Ver equipo</button>
+            </section>
+          </div>
+        </section>
 
         <section class="view" id="market-view" aria-label="Analisis de mercado">
           <section class="daily-command-center" id="daily-command-center" aria-label="Plan diario del director deportivo">
@@ -577,7 +628,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
           </div>
         </section>
 
-        <section class="view active" id="team-view" aria-label="Mi equipo y alineacion ideal">
+        <section class="view" id="team-view" aria-label="Mi equipo y alineacion ideal">
           <section class="team-layout">
             <div class="team-primary-column">
             <div class="market-input optional-manual-entry" id="team-manual-entry" hidden>
@@ -1185,6 +1236,24 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 </section>
               </div>
               <div class="settings-section-label"><p class="eyebrow">Aplicaci&oacute;n y sistema</p><h3>Configuraci&oacute;n general</h3></div>
+              <div class="device-backup-card integration-card" id="device-backup-card">
+                <div class="section-heading compact-heading">
+                  <div>
+                    <p class="eyebrow">Datos del dispositivo</p>
+                    <h3>Copia cifrada</h3>
+                  </div>
+                </div>
+                <p class="settings-help">Exporta tus ligas y preferencias con cifrado AES-GCM. La copia no incluye contraseñas, sesiones, permisos ni tokens de proveedores.</p>
+                <div class="biwenger-form">
+                  <label>Contraseña de la copia<input id="device-backup-password" type="password" minlength="8" autocomplete="new-password" /></label>
+                </div>
+                <input id="device-backup-file" type="file" accept="application/json,.json" hidden />
+                <div class="biwenger-actions">
+                  <button class="ghost-button" type="button" id="device-backup-export">Exportar copia</button>
+                  <button class="ghost-button" type="button" id="device-backup-import">Importar copia</button>
+                </div>
+                <div class="ocr-status" id="device-backup-status" role="status" aria-live="polite"><span class="status-dot"></span><span>Guarda una copia antes de cambiar de teléfono o desinstalar.</span></div>
+              </div>
               <div class="app-update-card integration-card">
                 <div class="section-heading compact-heading">
                   <div>
@@ -1411,17 +1480,17 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <button class="mobile-sidebar-backdrop" type="button" id="mobile-sidebar-backdrop" aria-label="Cerrar menú móvil" hidden></button>
 
     <nav class="mobile-nav-bar" aria-label="Navegacion móvil principal">
-      <button class="mobile-nav-item active" type="button" data-view="team">
-        <span class="icon icon-team" aria-hidden="true"></span>
-        Equipo
+      <button class="mobile-nav-item active" type="button" data-view="home">
+        <span class="icon icon-home" aria-hidden="true"></span>
+        Inicio
       </button>
       <button class="mobile-nav-item" type="button" data-view="market">
         <span class="icon icon-market" aria-hidden="true"></span>
         Mercado
       </button>
-      <button class="mobile-nav-item" type="button" data-view="league">
+      <button class="mobile-nav-item" type="button" data-view="team">
         <span class="icon icon-team" aria-hidden="true"></span>
-        Liga
+        Plantilla
       </button>
       <button class="mobile-nav-item mobile-nav-more" type="button" id="open-mobile-sidebar">
         <span class="icon icon-settings" aria-hidden="true"></span>
@@ -1539,6 +1608,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
 
     <script src="app-config.js?v=11"></script>
     <script src="data.js?v=15"></script>
+    <script src="mobile-local-first.js?v=1"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
     <script src="app.js?v=133"></script>

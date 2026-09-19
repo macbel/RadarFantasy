@@ -39,7 +39,8 @@
     marketMode: "",
     lineupMultiPos: null,
     rewardSettings: {},
-    importing: false
+    importing: false,
+    contextGeneration: 0
   },
   futbolFantasy: {
     connected: false,
@@ -179,7 +180,7 @@ const DEFAULT_LEAGUE_PREFERENCES = {
 const qs = (selector) => document.querySelector(selector);
 const qsa = (selector) => Array.from(document.querySelectorAll(selector));
 const yieldToInterface = () => new Promise((resolve) => window.setTimeout(resolve, 0));
-const activeViewName = () => String(qs(".view.active")?.id || "team-view").replace(/-view$/, "");
+const activeViewName = () => String(qs(".view.active")?.id || "home-view").replace(/-view$/, "");
 const isViewActive = (viewName) => activeViewName() === viewName;
 const isMobileNavigationLayout = () => window.matchMedia("(max-width: 720px)").matches;
 const openMobileSidebar = () => {
@@ -214,7 +215,7 @@ const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.12.3";
+const APP_VERSION = "3.13.0";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -228,6 +229,8 @@ const LEAGUE_FAVORITES_CACHE_KEY = "radar-fantasy.league-favorites.v1";
 const TEAM_TRACKING_KEY = "radar-fantasy.team-tracking.v1";
 const APP_THEME_MODE_KEY = "radar-fantasy.theme-mode.v1";
 const APP_THEME_LOCATION_KEY = "radar-fantasy.theme-location.v1";
+const OFFLINE_ENTITLEMENT_KEY = "radar-fantasy.offline-entitlement.v1";
+const OFFLINE_ENTITLEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const APP_THEME_MODES = new Set(["auto", "day", "night"]);
 let lastDecisionHistorySignature = "";
 const trimTrailingSlash = (value) => String(value || "").replace(/\/+$/, "");
@@ -258,22 +261,10 @@ const assetUrl = (path) => {
 };
 const isNativeRuntime = () => Boolean(window.Capacitor?.isNativePlatform?.() || ["capacitor:", "app:"].includes(currentProtocol));
 const readStoredApiBase = () => {
-  try {
-    return trimTrailingSlash(window.localStorage.getItem(LOCAL_API_BASE_KEY) || "");
-  } catch (error) {
-    return "";
-  }
+  return trimTrailingSlash(readLocalValue(LOCAL_API_BASE_KEY));
 };
 const writeStoredApiBase = (value) => {
-  try {
-    if (value) {
-      window.localStorage.setItem(LOCAL_API_BASE_KEY, trimTrailingSlash(value));
-    } else {
-      window.localStorage.removeItem(LOCAL_API_BASE_KEY);
-    }
-  } catch (error) {
-    // Ignore storage failures; the app can still work with in-memory config.
-  }
+  writeLocalValue(LOCAL_API_BASE_KEY, value ? trimTrailingSlash(value) : "");
 };
 const normalizeApiBase = (value) => {
   const base = trimTrailingSlash(value || "");
@@ -293,35 +284,162 @@ const apiUrl = (path) => {
   return configuredApiBase() ? `${configuredApiBase()}${cleanPath}` : relativeApiUrl(cleanPath);
 };
 const nativePreferences = () => window.Capacitor?.Plugins?.Preferences || null;
-const readLocalValue = (key) => {
+const nativeLocalDatabase = () => window.Capacitor?.Plugins?.LocalData || null;
+const isManagedLocalDataKey = (key) => /^(fantasy-market-scout|radar-fantasy)\./.test(String(key || ""));
+let localDatabaseReady = false;
+let localDatabaseCheckpointTimer = null;
+const localDatabaseEntries = () => {
+  const entries = [];
   try {
-    return window.localStorage.getItem(key) || "";
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!isManagedLocalDataKey(key)) continue;
+      entries.push({ key, value: window.localStorage.getItem(key) || "" });
+    }
   } catch (error) {
-    return "";
+    // The native database still works when the WebView cache cannot be enumerated.
+  }
+  return entries;
+};
+const checkpointLocalDatabase = async () => {
+  if (!localDatabaseReady) return false;
+  if (window.RadarLocalFirst) return window.RadarLocalFirst.flush();
+  const database = nativeLocalDatabase();
+  if (!database) return true;
+  const entries = localDatabaseEntries();
+  await database.setMany({ entries });
+  return true;
+};
+const scheduleLocalDatabaseCheckpoint = (delay = 180) => {
+  if (!isNativeRuntime() || !nativeLocalDatabase()) return;
+  window.clearTimeout(localDatabaseCheckpointTimer);
+  localDatabaseCheckpointTimer = window.setTimeout(() => {
+    void checkpointLocalDatabase().catch(() => null);
+  }, delay);
+};
+const initializeLocalDatabase = async () => {
+  if (window.RadarLocalFirst) {
+    const result = await window.RadarLocalFirst.initialize();
+    localDatabaseReady = true;
+    return result;
+  }
+  const database = nativeLocalDatabase();
+  if (!isNativeRuntime() || !database) {
+    localDatabaseReady = true;
+    return { engine: "web-storage", restored: 0 };
+  }
+  const result = await database.getAll({ scope: "guest" });
+  const entries = Array.isArray(result?.entries) ? result.entries : [];
+  localDatabaseReady = true;
+  return { engine: "sqlite", restored: entries.length };
+};
+const decodeOfflineEntitlement = (token) => {
+  try {
+    const [encodedHeader, encodedClaims, encodedSignature] = String(token || "").split(".");
+    if (!encodedHeader || !encodedClaims || !encodedSignature) return null;
+    const decodeBytes = (part) => {
+      const normalized = part.replace(/-/g, "+").replace(/_/g, "/");
+      return Uint8Array.from(atob(normalized + "=".repeat((4 - (normalized.length % 4)) % 4)), (char) => char.charCodeAt(0));
+    };
+    const decode = (part) => JSON.parse(new TextDecoder().decode(decodeBytes(part)));
+    return { encodedHeader, encodedClaims, encodedSignature, header: decode(encodedHeader), claims: decode(encodedClaims) };
+  } catch (_) {
+    return null;
   }
 };
-const writeLocalValue = (key, value) => {
+const verifyOfflineEntitlement = async (token, user) => {
+  const decoded = decodeOfflineEntitlement(token);
+  const publicKey = String(APP_CONFIG.offlineAuthPublicKey || "").trim();
+  if (!decoded || decoded.header?.alg !== "RS256" || !publicKey || !user?.id) return false;
+  const claims = decoded.claims || {};
+  const expectedAudience = String(APP_CONFIG.offlineAuthAudience || "radar-fantasy-android");
+  const expectedIssuer = String(APP_CONFIG.offlineAuthIssuer || "radar-fantasy");
+  if (String(claims.sub || "") !== String(user.id) || String(claims.aud || "") !== expectedAudience || String(claims.iss || "") !== expectedIssuer) return false;
+  if (Number(claims.exp || 0) * 1000 <= Date.now() || Number(claims.iat || 0) * 1000 > Date.now() + 120000) return false;
   try {
-    if (value) window.localStorage.setItem(key, value);
-    else window.localStorage.removeItem(key);
-  } catch (error) {
-    // Native Preferences remains authoritative when WebView storage is unavailable.
+    const body = `${decoded.encodedHeader}.${decoded.encodedClaims}`;
+    const normalize = publicKey.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+/g, "");
+    const der = Uint8Array.from(atob(normalize), (char) => char.charCodeAt(0));
+    const key = await crypto.subtle.importKey("spki", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+    const signatureNormalized = decoded.encodedSignature.replace(/-/g, "+").replace(/_/g, "/");
+    const signature = Uint8Array.from(atob(signatureNormalized + "=".repeat((4 - (signatureNormalized.length % 4)) % 4)), (char) => char.charCodeAt(0));
+    const validSignature = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, new TextEncoder().encode(body));
+    if (!validSignature || claims.device) {
+      const deviceBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(await ensureDeviceKey()));
+      const deviceHash = Array.from(new Uint8Array(deviceBytes), (value) => value.toString(16).padStart(2, "0")).join("");
+      if (String(claims.device || "") !== deviceHash) return false;
+    }
+    return validSignature;
+  } catch (_) {
+    return false;
   }
+};
+const cacheOfflineEntitlement = async (user, token) => {
+  const database = nativeLocalDatabase();
+  if (!isNativeRuntime() || !database || !user?.id) return false;
+  token = String(token || "");
+  if (!token || !(await verifyOfflineEntitlement(token, user))) return false;
+  const payload = { token, user, validatedAt: Date.now(), wallClock: Date.now() };
+  if (window.RadarLocalFirst) await window.RadarLocalFirst.setSecure(OFFLINE_ENTITLEMENT_KEY, payload, "device");
+  else await database.setSecure({ key: OFFLINE_ENTITLEMENT_KEY, value: JSON.stringify(payload) });
+  return true;
+};
+const readOfflineEntitlement = async () => {
+  const database = nativeLocalDatabase();
+  if (!isNativeRuntime() || !database) return null;
+  try {
+    const payload = window.RadarLocalFirst
+      ? await window.RadarLocalFirst.getSecure(OFFLINE_ENTITLEMENT_KEY, "device")
+      : JSON.parse((await database.getSecure({ key: OFFLINE_ENTITLEMENT_KEY }))?.value || "null");
+    if (!payload?.user?.id || !payload.token || !(await verifyOfflineEntitlement(payload.token, payload.user))) return null;
+    if (Date.now() + 60 * 1000 < Number(payload.wallClock || 0)) return null;
+    const claims = decodeOfflineEntitlement(payload.token)?.claims;
+    if (!claims || Number(claims.exp || 0) * 1000 <= Date.now()) return null;
+    return payload;
+  } catch (error) {
+    return null;
+  }
+};
+const clearOfflineEntitlement = async () => {
+  const database = nativeLocalDatabase();
+  if (!database) return;
+  if (window.RadarLocalFirst) await window.RadarLocalFirst.removeSecure(OFFLINE_ENTITLEMENT_KEY, "device");
+  else await database.removeSecure({ key: OFFLINE_ENTITLEMENT_KEY });
+};
+const readLocalValue = (key) => {
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored) return stored;
+  } catch (error) {
+    // Fall through to the durable repository.
+  }
+  return window.RadarLocalFirst?.get(key, "") || "";
+};
+const writeLocalValue = (key, value) => {
+  const normalizedKey = String(key || "");
+  try {
+    if (value) window.localStorage.setItem(normalizedKey, value);
+    else window.localStorage.removeItem(normalizedKey);
+  } catch (error) {
+    // Native SQLite remains authoritative when WebView storage is unavailable.
+  }
+  if (window.RadarLocalFirst && isNativeRuntime() && isManagedLocalDataKey(normalizedKey)) {
+    void (value ? window.RadarLocalFirst.set(normalizedKey, value) : window.RadarLocalFirst.remove(normalizedKey)).catch(() => null);
+  }
+  scheduleLocalDatabaseCheckpoint();
 };
 const readJsonLocalValue = (key, fallback = null) => {
   try {
     const raw = window.localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
+    if (raw) return JSON.parse(raw);
   } catch (error) {
-    return fallback;
+    // Fall through to SQLite.
   }
+  return window.RadarLocalFirst?.getJSON(key, fallback) ?? fallback;
 };
 const writeJsonLocalValue = (key, value) => {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch (error) {
-    // Theme location is only a convenience cache.
-  }
+  writeLocalValue(key, JSON.stringify(value));
+  scheduleLocalDatabaseCheckpoint();
 };
 const readAppThemeMode = () => {
   const mode = readLocalValue(APP_THEME_MODE_KEY) || "night";
@@ -477,6 +595,19 @@ const apiFetch = async (path, options = {}) => {
   const method = String(requestOptions.method || "GET").toUpperCase();
   const retryableRead = method === "GET" || method === "HEAD";
   const deviceKey = await ensureDeviceKey();
+  let providerHeaders = {};
+  if (isNativeRuntime() && window.RadarLocalFirst) {
+    try {
+      const providerSession = await window.RadarLocalFirst.getSecure("biwenger-session");
+      if (providerSession?.token) {
+        providerHeaders.Authorization = `Bearer ${providerSession.token}`;
+        if (providerSession.leagueId) providerHeaders["X-FMS-Biwenger-League"] = String(providerSession.leagueId);
+        if (providerSession.xVersion) providerHeaders["X-FMS-Biwenger-Version"] = String(providerSession.xVersion);
+      }
+    } catch (_) {
+      // A missing provider credential is handled by the endpoint as onboarding.
+    }
+  }
   for (let attempt = 0; attempt < (retryableRead ? 2 : 1); attempt += 1) {
     const response = await fetch(apiUrl(path), {
       credentials: "include",
@@ -485,6 +616,8 @@ const apiFetch = async (path, options = {}) => {
       signal: signal || activeDataSyncController?.signal,
       headers: {
         "X-FMS-Device-Key": deviceKey,
+        ...(isNativeRuntime() ? { "X-FMS-Local-First": "1" } : {}),
+        ...providerHeaders,
         ...headers
       }
     });
@@ -532,23 +665,32 @@ const describeApiError = (status, path = "/api") => {
 };
 
 const readLocalLeagueDb = () => {
+  const scopedKey = platformStorageKey(LOCAL_LEAGUES_KEY);
   try {
-    const raw = window.localStorage.getItem(platformStorageKey(LOCAL_LEAGUES_KEY));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || !parsed.leagues) return null;
-    return parsed;
+    const raw = window.localStorage.getItem(scopedKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && parsed.leagues) return parsed;
+    }
   } catch (error) {
-    return null;
+    // Fall through to SQLite.
   }
+  const parsed = window.RadarLocalFirst?.getJSON(scopedKey, null);
+  return parsed && typeof parsed === "object" && parsed.leagues ? parsed : null;
 };
 
 const writeLocalLeagueDb = (db) => {
+  const scopedKey = platformStorageKey(LOCAL_LEAGUES_KEY);
+  const serialized = JSON.stringify(db);
   try {
-    window.localStorage.setItem(platformStorageKey(LOCAL_LEAGUES_KEY), JSON.stringify(db));
+    window.localStorage.setItem(scopedKey, serialized);
   } catch (error) {
-    // Ignore quota or storage errors; the app can still work in memory.
+    // SQLite remains authoritative when WebView storage cannot be written.
   }
+  if (window.RadarLocalFirst && isNativeRuntime() && isManagedLocalDataKey(scopedKey)) {
+    void window.RadarLocalFirst.set(scopedKey, serialized).catch(() => null);
+  }
+  scheduleLocalDatabaseCheckpoint();
 };
 
 const buildLocalLeaguePayload = (db) => ({
@@ -718,6 +860,7 @@ const saveLocalLeagueSnapshot = () => {
   };
   db.activeLeagueId = state.activeLeagueId;
   writeLocalLeagueDb(db);
+  scheduleLocalDatabaseCheckpoint();
   return buildLocalLeaguePayload(db);
 };
 
@@ -904,20 +1047,28 @@ const normalize = (text) =>
     .trim();
 
 const readJsonStorage = (key, fallback) => {
+  const scopedKey = platformStorageKey(key);
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(platformStorageKey(key)) || "null");
-    return parsed === null ? fallback : parsed;
+    const parsed = JSON.parse(window.localStorage.getItem(scopedKey) || "null");
+    if (parsed !== null) return parsed;
   } catch (error) {
-    return fallback;
+    // Fall through to SQLite.
   }
+  return window.RadarLocalFirst?.getJSON(scopedKey, fallback) ?? fallback;
 };
 
 const writeJsonStorage = (key, value) => {
+  const scopedKey = platformStorageKey(key);
+  const serialized = JSON.stringify(value);
   try {
-    window.localStorage.setItem(platformStorageKey(key), JSON.stringify(value));
+    window.localStorage.setItem(scopedKey, serialized);
   } catch (error) {
-    // Private browsing can block storage; decisions still work in memory.
+    // SQLite is authoritative in the native runtime.
   }
+  if (window.RadarLocalFirst && isNativeRuntime() && isManagedLocalDataKey(scopedKey)) {
+    void window.RadarLocalFirst.set(scopedKey, serialized).catch(() => null);
+  }
+  scheduleLocalDatabaseCheckpoint();
 };
 
 const dailyFeedbackRows = () => {
@@ -1796,7 +1947,7 @@ const activateMarketAnalysisTab = (tabName, persist = true) => {
   qsa("[data-analysis-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.analysisPanel !== selected;
   });
-  if (persist) window.localStorage.setItem(platformStorageKey(MARKET_ANALYSIS_TAB_KEY), selected);
+  if (persist) writeLocalValue(platformStorageKey(MARKET_ANALYSIS_TAB_KEY), selected);
 };
 
 const setMarketAnalysisCollapsed = (collapsed, persist = true) => {
@@ -1806,12 +1957,12 @@ const setMarketAnalysisCollapsed = (collapsed, persist = true) => {
   body.hidden = Boolean(collapsed);
   button.setAttribute("aria-expanded", String(!collapsed));
   button.textContent = collapsed ? "Mostrar" : "Ocultar";
-  if (persist) window.localStorage.setItem(platformStorageKey(MARKET_ANALYSIS_COLLAPSED_KEY), collapsed ? "1" : "0");
+  if (persist) writeLocalValue(platformStorageKey(MARKET_ANALYSIS_COLLAPSED_KEY), collapsed ? "1" : "0");
 };
 
 const initMarketAnalysisCenter = () => {
-  activateMarketAnalysisTab(window.localStorage.getItem(platformStorageKey(MARKET_ANALYSIS_TAB_KEY)) || "plan", false);
-  setMarketAnalysisCollapsed(window.localStorage.getItem(platformStorageKey(MARKET_ANALYSIS_COLLAPSED_KEY)) === "1", false);
+  activateMarketAnalysisTab(readLocalValue(platformStorageKey(MARKET_ANALYSIS_TAB_KEY)) || "plan", false);
+  setMarketAnalysisCollapsed(readLocalValue(platformStorageKey(MARKET_ANALYSIS_COLLAPSED_KEY)) === "1", false);
   qsa("[data-analysis-tab]").forEach((button) => button.addEventListener("click", () => {
     activateMarketAnalysisTab(button.dataset.analysisTab);
   }));
@@ -3413,7 +3564,7 @@ const bindAssistantActions = (target) => {
 
 const readDecisionHistory = () => {
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(platformStorageKey(DECISION_HISTORY_KEY)) || "[]");
+    const parsed = JSON.parse(readLocalValue(platformStorageKey(DECISION_HISTORY_KEY)) || "[]");
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     return [];
@@ -3422,7 +3573,7 @@ const readDecisionHistory = () => {
 
 const writeDecisionHistory = (items) => {
   try {
-    window.localStorage.setItem(platformStorageKey(DECISION_HISTORY_KEY), JSON.stringify(items.slice(0, 120)));
+    writeLocalValue(platformStorageKey(DECISION_HISTORY_KEY), JSON.stringify(items.slice(0, 120)));
   } catch (error) {
     // Ignore storage quota issues; the app can keep working without history.
   }
@@ -4653,7 +4804,7 @@ const toggleFavoritePlayer = async (player) => {
 const trackedTeamKey = (name) => normalize(String(name || "")).replace(/\s+/g, " ").trim();
 const sanitizeTrackedTeamName = (value) => String(value || "").replace(/\s+/g, " ").trim().slice(0, 60);
 
-const applyTeamTrackingPayload = (payload = {}) => {
+const applyTeamTrackingPayload = (payload = {}, { preservePreferences = false } = {}) => {
   state.trackedTeams = Array.isArray(payload.teams)
     ? payload.teams.map((team) => sanitizeTrackedTeamName(team)).filter(Boolean)
     : [];
@@ -4663,7 +4814,7 @@ const applyTeamTrackingPayload = (payload = {}) => {
     ? payload.filter
       .map((team) => sanitizeTrackedTeamName(team))
       .filter((team) => allowedKeys.has(trackedTeamKey(team)))
-    : [];
+    : (preservePreferences ? state.trackedTeamFilter : []);
   state.trackedTeamSourceFilter = Array.isArray(payload.sourceFilter)
     ? payload.sourceFilter.map((source) => String(source || "").trim()).filter(Boolean)
     : state.trackedTeamSourceFilter;
@@ -4767,10 +4918,12 @@ const loadLocalTeamTracking = () => {
 const syncTeamTrackingFromServer = async () => {
   if (!canUseApi()) return false;
   try {
-    const response = await apiFetch("/api/team-tracking");
+    const response = await apiFetch(isNativeRuntime() ? "/api/mobile/team-tracking/feed" : "/api/team-tracking", isNativeRuntime()
+      ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ teams: state.trackedTeams, competition: state.competition === "worldcup" ? "worldcup" : "club" }) }
+      : {});
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "No se pudo cargar el seguimiento de equipos.");
-    applyTeamTrackingPayload(payload);
+    applyTeamTrackingPayload(payload, { preservePreferences: isNativeRuntime() });
     renderTeamTracking();
     return true;
   } catch (error) {
@@ -4786,7 +4939,8 @@ const saveTrackedTeams = async () => {
     filter: state.trackedTeamFilter,
     sourceFilter: state.trackedTeamSourceFilter
   });
-  if (!canUseApi()) return;
+  scheduleLocalDatabaseCheckpoint();
+  if (!canUseApi() || isNativeRuntime()) return;
   try {
     await apiFetch("/api/team-tracking/save", {
       method: "POST",
@@ -4815,13 +4969,15 @@ const refreshTrackedTeamFeed = async ({ force = false } = {}) => {
     const query = params.toString() ? `?${params.toString()}` : "";
     let payload = null;
     if (canUseApi()) {
-      const response = await apiFetch(`/api/team-tracking/feed${query}`);
+      const response = await apiFetch(isNativeRuntime() ? "/api/mobile/team-tracking/feed" : `/api/team-tracking/feed${query}`, isNativeRuntime()
+        ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ teams: state.trackedTeams, competition: state.competition === "worldcup" ? "worldcup" : "club", force: force ? 1 : 0 }) }
+        : {});
       payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "No se pudieron refrescar las noticias de equipos.");
     } else {
       payload = readTeamTrackingStorage();
     }
-    applyTeamTrackingPayload(payload);
+    applyTeamTrackingPayload(payload, { preservePreferences: isNativeRuntime() });
     renderTeamTracking();
     setTeamTrackingStatus(`Seguimiento actualizado: ${state.trackedTeamArticles.length} titulares para ${state.trackedTeams.length} equipo${state.trackedTeams.length === 1 ? "" : "s"}.`, "ready");
     return true;
@@ -4933,7 +5089,7 @@ const renderHealthBadge = (player) => {
 
 const readTeamAlertsState = () => {
   try {
-    return JSON.parse(window.localStorage.getItem(platformStorageKey(TEAM_ALERTS_READ_KEY)) || "{}") || {};
+    return JSON.parse(readLocalValue(platformStorageKey(TEAM_ALERTS_READ_KEY)) || "{}") || {};
   } catch (error) {
     return {};
   }
@@ -4941,7 +5097,7 @@ const readTeamAlertsState = () => {
 
 const writeTeamAlertsState = (value) => {
   try {
-    window.localStorage.setItem(platformStorageKey(TEAM_ALERTS_READ_KEY), JSON.stringify(value));
+    writeLocalValue(platformStorageKey(TEAM_ALERTS_READ_KEY), JSON.stringify(value));
   } catch (error) {
     // Alertas still work in memory when private browsing blocks storage.
   }
@@ -6424,6 +6580,9 @@ const setFutbolFantasyStatus = (message, mode = "") => {
 };
 
 const applyFutbolFantasySession = (payload = {}) => {
+  if (payload?.mobileSession && window.RadarLocalFirst) {
+    void window.RadarLocalFirst.setSecure("futbolfantasy-session", payload.mobileSession).catch(() => null);
+  }
   state.futbolFantasy.connected = Boolean(payload.connected);
   state.futbolFantasy.userName = payload.userName || "";
   state.futbolFantasy.trackingUrl = payload.trackingUrl || "https://www.futbolfantasy.com/seguimiento";
@@ -6880,6 +7039,9 @@ const renderLeagueIdentity = () => {
 };
 
 const applyBiwengerSession = (payload) => {
+  if (payload?.mobileCredential && window.RadarLocalFirst) {
+    void window.RadarLocalFirst.setSecure("biwenger-session", payload.mobileCredential).catch(() => null);
+  }
   const boundLeagueId = Number(activeLeague()?.biwengerLeagueId || 0);
   const remoteLeagueId = Number(payload?.leagueId || 0);
   const selectedName = normalize(activeLeagueName());
@@ -6961,21 +7123,49 @@ const applyBiwengerSession = (payload) => {
 
 const syncBiwengerLeagueCatalog = async (sessionPayload) => {
   if (!sessionPayload?.connected) return null;
+  const contextGeneration = state.biwenger.contextGeneration;
+  const accountId = String(state.auth.user?.id || "");
   const availableLeagues = Array.isArray(sessionPayload.availableLeagues) ? sessionPayload.availableLeagues : [];
-  let response = await apiFetch("/api/leagues/import-biwenger", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({})
-  });
-  let remotePayload = await response.json().catch(() => ({}));
-  // The imported catalogue is already persisted by the API. If Biwenger omits
-  // its account list in a transient status response, reload that persisted copy
-  // instead of leaving the selector empty until the next page load.
-  if (!response.ok || !Array.isArray(remotePayload.leagues) || !remotePayload.leagues.length) {
-    response = await apiFetch("/api/leagues");
+  let remotePayload = { leagues: [], activeLeagueId: null };
+  if (isNativeRuntime()) {
+    const now = new Date().toISOString();
+    remotePayload.leagues = availableLeagues.map((remote) => {
+      const remoteId = Number(remote?.id || 0);
+      return {
+        id: `biwenger-${remoteId}`,
+        name: String(remote?.name || "").trim() || `Liga Biwenger ${remoteId}`,
+        fantasyProvider: "biwenger",
+        biwengerLeagueId: remoteId,
+        icon: safeRemoteImageUrl(remote?.icon) || "",
+        cover: safeRemoteImageUrl(remote?.cover || remote?.icon) || "",
+        competition: remoteId === Number(sessionPayload.leagueId || 0) ? biwengerCompetitionToLocal(sessionPayload.competition) : "club",
+        scoring: remote?.scoring || sessionPayload.scoring || state.scoring,
+        biwengerScoreId: Number(remote?.scoreId || 0) || null,
+        scoreName: remote?.scoreName || "",
+        marketPlayers: [], teamPlayers: [], teamDepartures: [], favorites: [],
+        finance: {}, weights: {}, filters: {}, preferences: mergeLeaguePreferences({}, {}),
+        createdAt: now, updatedAt: now
+      };
+    }).filter((league) => Number(league.biwengerLeagueId || 0) > 0);
+    remotePayload.activeLeagueId = `biwenger-${Number(sessionPayload.leagueId || 0)}`;
+  } else {
+    let response = await apiFetch("/api/leagues/import-biwenger", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
     remotePayload = await response.json().catch(() => ({}));
+    // The web keeps its own server-side catalogue; the APK never reads or writes it.
+    if (!response.ok || !Array.isArray(remotePayload.leagues) || !remotePayload.leagues.length) {
+      response = await apiFetch("/api/leagues");
+      remotePayload = await response.json().catch(() => ({}));
+    }
+    if (!response.ok) throw new Error(remotePayload.error || "No se pudieron cargar las ligas de Biwenger.");
   }
-  if (!response.ok) throw new Error(remotePayload.error || "No se pudieron cargar las ligas de Biwenger.");
+
+  if (accountId !== String(state.auth.user?.id || "") || contextGeneration !== state.biwenger.contextGeneration) {
+    return buildLocalLeaguePayload(ensureLocalLeagueDb());
+  }
 
   const remoteByBiwengerId = new Map((remotePayload.leagues || []).map((league) => [
     Number(league.biwengerLeagueId || 0), league
@@ -7105,6 +7295,7 @@ const activeLeagueName = () => activeLeague()?.name?.trim() || "";
 const applyLeague = (league) => {
   if (!league) return;
   const previousLeagueId = state.activeLeagueId;
+  if (previousLeagueId !== league.id) state.biwenger.contextGeneration += 1;
   const previousLeagueFixtures = state.leagueFixtures;
   const previousLeagueOverview = state.leagueOverview;
   state.activeLeagueId = league.id;
@@ -7229,13 +7420,19 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
     const freshest = (localValue, remoteValue) => useLocalSnapshot
       ? (localValue ?? remoteValue)
       : (remoteValue ?? localValue);
+    const functional = (localValue, remoteValue, fallback) => {
+      const hasData = (value) => Array.isArray(value) ? value.length > 0 : (value && typeof value === "object" ? Object.keys(value).length > 0 : value != null);
+      if (hasData(localValue) && !hasData(remoteValue)) return localValue;
+      if (!hasData(localValue) && hasData(remoteValue)) return remoteValue;
+      return freshest(localValue, remoteValue) ?? fallback;
+    };
     merged.set(league.id, remote ? {
       ...remote,
       ...league,
-      marketPlayers: freshest(league.marketPlayers?.length ? league.marketPlayers : null, remote.marketPlayers),
-      teamPlayers: freshest(league.teamPlayers?.length ? league.teamPlayers : null, remote.teamPlayers),
-      teamDepartures: freshest(league.teamDepartures?.length ? league.teamDepartures : null, remote.teamDepartures || []),
-      finance: freshest(league.finance, remote.finance) || {},
+      marketPlayers: functional(league.marketPlayers, remote.marketPlayers, []),
+      teamPlayers: functional(league.teamPlayers, remote.teamPlayers, []),
+      teamDepartures: functional(league.teamDepartures, remote.teamDepartures, []),
+      finance: functional(league.finance, remote.finance, {}) || {},
       weights: { ...(remote.weights || {}), ...(league.weights || {}) },
       filters: { ...(remote.filters || {}), ...(league.filters || {}) },
       preferences: mergeLeaguePreferences(remote.preferences || {}, league.preferences || {}),
@@ -7245,9 +7442,9 @@ const mergeLeaguePayloads = (localPayload, remotePayload) => {
       fantasyProvider: (league.biwengerLeagueId || remote.biwengerLeagueId)
         ? "biwenger"
         : normalizedFantasyProvider(league.fantasyProvider || remote.fantasyProvider),
-      leagueFixtures: freshest(league.leagueFixtures, remote.leagueFixtures) || null,
+      leagueFixtures: functional(league.leagueFixtures, remote.leagueFixtures, null),
       leagueFixturesSavedAt: freshest(league.leagueFixturesSavedAt, remote.leagueFixturesSavedAt) || null,
-      leagueOverview: freshest(league.leagueOverview, remote.leagueOverview) || null,
+      leagueOverview: functional(league.leagueOverview, remote.leagueOverview, null),
       targetPlayerIds: freshest(league.targetPlayerIds, remote.targetPlayerIds) || [],
       favorites: (() => {
         const localFavoritesUpdatedAt = Date.parse(league.favoritesUpdatedAt || league.updatedAt || 0) || 0;
@@ -7281,7 +7478,7 @@ const loadLocalLeagues = () => {
 };
 
 const syncLeaguesFromServer = async (localPayload) => {
-  if (!canUseApi()) {
+  if (!canUseApi() || isNativeRuntime()) {
     setLeagueStatus("Guardado local en este dispositivo.");
     return localPayload;
   }
@@ -7324,7 +7521,8 @@ const syncLeaguesFromServer = async (localPayload) => {
 
 const saveActiveLeagueNow = async () => {
   if (!state.activeLeagueId) return;
-  if (!canUseApi()) {
+  if (!canUseApi() || isNativeRuntime()) {
+    await checkpointLocalDatabase().catch(() => null);
     setLeagueStatus(`Guardado en dispositivo: ${new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`);
     return;
   }
@@ -7414,7 +7612,7 @@ const createLeagueFromInput = async () => {
   if (nameInput) nameInput.value = "";
   setLeagueStatus(`Liga creada en este dispositivo: ${name}.`);
 
-  if (!canUseApi()) return;
+  if (!canUseApi() || isNativeRuntime()) return;
 
   if (button) button.disabled = true;
   try {
@@ -7455,7 +7653,7 @@ const deleteActiveLeague = async () => {
     return;
   }
 
-  if (!canUseApi()) {
+  if (!canUseApi() || isNativeRuntime()) {
     applyLeaguePayload(deleteLocalLeague(state.activeLeagueId));
     setLeagueStatus(`Liga eliminada en este dispositivo: ${leagueName}.`);
     renderTable();
@@ -8056,6 +8254,7 @@ const futbolFantasyLogout = async () => {
     if (!response.ok) throw new Error(payload.error || describeApiError(response.status, "/api/futbolfantasy/logout"));
     const passwordInput = qs("#ff-password");
     if (passwordInput) passwordInput.value = "";
+    if (window.RadarLocalFirst) await window.RadarLocalFirst.removeSecure("futbolfantasy-session").catch(() => null);
     applyFutbolFantasySession({ connected: false });
     setFutbolFantasyStatus("Sesion de Futbol Fantasy cerrada.", "ready");
   } catch (error) {
@@ -9135,6 +9334,7 @@ const biwengerLogout = async () => {
   setBiwengerBusy(true, "Cerrando");
   try {
     await apiFetch("/api/biwenger/logout", { method: "POST" });
+    if (window.RadarLocalFirst) await window.RadarLocalFirst.removeSecure("biwenger-session").catch(() => null);
     state.biwenger.connected = false;
     state.biwenger.userName = "";
     state.biwenger.leagueName = "";
@@ -12422,6 +12622,93 @@ const latestRoundPointsForPlayer = (player, scoreKey = "roundPoints") => {
     : null;
 };
 
+const renderHome = () => {
+  const container = qs("#home-view");
+  if (!container) return;
+  const now = new Date();
+  const dateLabel = qs("#home-date-label");
+  if (dateLabel) dateLabel.textContent = now.toLocaleDateString("es-ES", {
+    weekday: "long", day: "numeric", month: "long"
+  });
+
+  const syncLabel = qs("#home-sync-label");
+  const offline = document.documentElement.dataset.connectionMode === "offline";
+  const league = activeLeague();
+  const updatedAt = league?.updatedAt ? new Date(league.updatedAt) : null;
+  if (syncLabel) {
+    syncLabel.textContent = offline
+      ? "Modo sin conexión · datos del dispositivo"
+      : updatedAt && !Number.isNaN(updatedAt.getTime())
+        ? `Guardado ${updatedAt.toLocaleDateString("es-ES", { day: "2-digit", month: "short" })} · ${updatedAt.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`
+        : "Datos guardados en este dispositivo";
+  }
+
+  const canHomeMarket = platformUserCanAccess("market");
+  const canHomeTeam = platformUserCanAccess("team");
+  const canHomeLeague = platformUserCanAccess("league");
+  const canHomeFinance = canHomeMarket || canHomeTeam;
+  const balance = Number(state.finance.balance);
+  if (qs("#home-balance")) qs("#home-balance").textContent = canHomeFinance && Number.isFinite(balance) ? formatFinanceMoney(balance) : "—";
+  if (qs("#home-squad-count")) qs("#home-squad-count").textContent = canHomeTeam && state.teamPlayers.length ? `${state.teamPlayers.length}` : "—";
+  const myStanding = (state.leagueOverview?.standings || []).find((row) => row.isMe || Number(row.userId || 0) === Number(state.biwenger.userId || 0));
+  const rank = Number(myStanding?.rank || myStanding?.position || myStanding?.provisionalRank || 0);
+  if (qs("#home-position")) qs("#home-position").textContent = canHomeLeague && rank > 0 ? `${rank}.º` : "—";
+
+  const candidates = canHomeMarket && state.players.length ? marketTopCandidates(filteredPlayers(), 3) : [];
+  const primary = candidates[0] || null;
+  const title = qs("#home-action-title");
+  const copy = qs("#home-action-copy");
+  const actionButton = qs("#home-action-button");
+  if (primary) {
+    const plan = smartBidPlan(primary);
+    if (title) title.textContent = `${decisionLabels[primary.marketDecision.type]?.short || "Revisar"}: ${primary.name}`;
+    if (copy) copy.textContent = plan.rationalMax > 0
+      ? `Prioridad calculada con tus datos guardados. Tope recomendado: ${formatFinanceMoney(plan.rationalMax)}.`
+      : (primary.marketDecision?.summary || "Revisa sus datos antes de decidir.");
+    if (actionButton) {
+      actionButton.textContent = "Revisar recomendación";
+      actionButton.dataset.homePlayerId = primary.id;
+    }
+  } else {
+    if (title) title.textContent = !canHomeMarket ? "Mercado no disponible" : (state.players.length ? "No hay fichajes prioritarios" : "Actualiza el mercado");
+    if (copy) copy.textContent = !canHomeMarket
+      ? "Tu cuenta no tiene permiso para consultar oportunidades de mercado."
+      : state.players.length
+      ? "El mercado guardado no contiene una compra clara. Puedes revisar los jugadores vigilados."
+      : "Descarga el mercado para recibir una recomendación concreta.";
+    if (actionButton) {
+      actionButton.textContent = !canHomeMarket ? "Ver secciones disponibles" : (state.players.length ? "Ver mercado" : "Actualizar datos");
+      delete actionButton.dataset.homePlayerId;
+    }
+  }
+
+  const list = qs("#home-opportunity-list");
+  if (list) {
+    list.innerHTML = candidates.length ? candidates.map((player, index) => {
+      const decision = decisionLabels[player.marketDecision?.type] || decisionLabels.watch;
+      return `
+        <button class="home-opportunity-row" type="button" data-home-player="${escapeHtml(player.id)}">
+          <span class="home-opportunity-rank">${index + 1}</span>
+          <span class="home-opportunity-copy"><strong>${escapeHtml(player.name)}</strong><small>${escapeHtml(player.position)} · ${escapeHtml(player.team || "Sin equipo")}</small></span>
+          <span class="home-opportunity-value"><strong>${escapeHtml(formatMoney(Number(player.price || player.biwengerValue || 0)))}</strong><small>${escapeHtml(decision.short)}</small></span>
+        </button>
+      `;
+    }).join("") : `<p class="muted-empty compact">${!canHomeMarket ? "Mercado no disponible para esta cuenta." : (state.players.length ? "No hay compras prioritarias en el mercado guardado." : "Actualiza el mercado para ver oportunidades.")}</p>`;
+    list.querySelectorAll("[data-home-player]").forEach((button) => button.addEventListener("click", () => {
+      state.selectedPlayerId = button.dataset.homePlayer;
+      state.pendingMobileDetailOpen = true;
+      openView("market");
+    }));
+  }
+
+  state.teamAlerts = canHomeTeam ? buildTeamAlerts() : [];
+  const alertBox = qs("#home-alert-summary");
+  if (alertBox) alertBox.hidden = state.teamAlerts.length === 0;
+  if (qs("#home-alert-copy")) qs("#home-alert-copy").textContent = state.teamAlerts.length
+    ? `${state.teamAlerts.length} aviso${state.teamAlerts.length === 1 ? "" : "s"} en tu plantilla.`
+    : "Tu plantilla no tiene avisos pendientes.";
+};
+
 const applyCurrentRoundPoints = (payload = {}) => {
   const pointsByPlayer = payload.pointsByPlayer && typeof payload.pointsByPlayer === "object"
     ? payload.pointsByPlayer
@@ -12524,13 +12811,15 @@ const renderLineupPitch = (groups, options = {}) => {
 const openView = (viewName) => {
   if (!platformUserCanAccess(viewName)) return;
   qsa(".nav-item, .mobile-nav-item[data-view]").forEach((item) => item.classList.toggle("active", item.dataset.view === viewName));
-  qs("#open-mobile-sidebar")?.classList.toggle("active", !["team", "market", "league"].includes(viewName));
+  qs("#open-mobile-sidebar")?.classList.toggle("active", !["home", "team", "market"].includes(viewName));
   qsa(".view").forEach((view) => view.classList.toggle("active", view.id === `${viewName}-view`));
   updateTopbarForView(viewName);
   if (viewName !== "market") closeMobileDetail();
   if (viewName !== "team") closeTeamDetail();
   closeMobileSidebar();
-  if (viewName === "team") {
+  if (viewName === "home") {
+    renderHome();
+  } else if (viewName === "team") {
     if (!renderedComponents.has("team")) renderTeam();
     if (!renderedComponents.has("lineup")) renderLineup();
     if (state.biwenger.connected) void loadCurrentRoundPoints(false);
@@ -12588,6 +12877,7 @@ const openLeaguePanel = (panelName) => {
 };
 
 const TOPBAR_VIEW_COPY = {
+  home: { eyebrow: "Resumen diario", title: "Tu día fantasy" },
   market: { eyebrow: "Mercado diario", title: "Ranking de fichajes" },
   team: { eyebrow: "Mi plantilla", title: "Equipo y once recomendado" },
   favorites: { eyebrow: "Seguimiento", title: "Favoritos y avisos" },
@@ -13261,6 +13551,13 @@ const runSettingsRefreshAction = async (button, action, label) => {
 
 const refreshAllSettingsManually = async ({ reason = "manual" } = {}) => {
   if (!state.auth.authenticated) return false;
+  if (document.documentElement.dataset.connectionMode === "offline") {
+    renderTable();
+    renderTeam();
+    renderHome();
+    setLeagueStatus("Sin conexión: se han recalculado los datos guardados en el dispositivo.", "ready");
+    return true;
+  }
   if (!activeLeague()) {
     setLeagueStatus("Selecciona una liga antes de actualizar todos los datos.");
     return false;
@@ -13394,6 +13691,43 @@ const initNavigation = () => {
   qs("#open-mobile-sidebar")?.addEventListener("click", openMobileSidebar);
   qs("#close-mobile-sidebar")?.addEventListener("click", closeMobileSidebar);
   qs("#mobile-sidebar-backdrop")?.addEventListener("click", closeMobileSidebar);
+  qs("#home-open-market")?.addEventListener("click", () => openView("market"));
+  qs("#home-open-team")?.addEventListener("click", () => openView("team"));
+  qs("#home-action-button")?.addEventListener("click", (event) => {
+    if (!platformUserCanAccess("market")) {
+      openView(platformUserCanAccess("team") ? "team" : "settings");
+      return;
+    }
+    const playerId = event.currentTarget.dataset.homePlayerId;
+    if (playerId) {
+      state.selectedPlayerId = playerId;
+      state.pendingMobileDetailOpen = true;
+    }
+    if (!state.players.length && !state.biwenger.authenticated) {
+      showBiwengerOnboarding();
+      return;
+    }
+    openView("market");
+  });
+  qs("#home-refresh")?.addEventListener("click", async () => {
+    if (!state.biwenger.authenticated) {
+      showBiwengerOnboarding();
+      return;
+    }
+    await refreshAllSettingsManually({ reason: "manual" });
+    renderHome();
+  });
+  qs("#global-mobile-refresh")?.addEventListener("click", async () => {
+    if (!state.auth.authenticated) return;
+    const button = qs("#global-mobile-refresh");
+    if (button) button.disabled = true;
+    try {
+      await refreshAllSettingsManually({ reason: "manual" });
+      renderHome();
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
 };
 
 const activateFantasySettingsTab = (requestedTab = "biwenger") => {
@@ -13534,7 +13868,72 @@ const checkForAppUpdate = async ({ manual = false } = {}) => {
   }
 };
 
+const setDeviceBackupStatus = (message, mode = "") => {
+  const status = qs("#device-backup-status");
+  if (!status) return;
+  status.classList.remove("ready", "error", "busy");
+  if (mode) status.classList.add(mode);
+  const copy = status.querySelector("span:last-child");
+  if (copy) copy.textContent = message;
+};
+
+const initDeviceBackupEvents = () => {
+  const passwordInput = qs("#device-backup-password");
+  const fileInput = qs("#device-backup-file");
+  qs("#device-backup-export")?.addEventListener("click", async () => {
+    if (!window.RadarLocalFirst || !passwordInput?.value) {
+      setDeviceBackupStatus("Escribe una contraseña para proteger la copia.", "error");
+      return;
+    }
+    try {
+      setDeviceBackupStatus("Preparando copia cifrada...", "busy");
+      const serialized = await window.RadarLocalFirst.exportEncryptedBackup(passwordInput.value);
+      const blob = new Blob([serialized], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `radar-fantasy-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setDeviceBackupStatus("Copia cifrada exportada. Guarda el archivo y la contraseña por separado.", "ready");
+    } catch (error) {
+      setDeviceBackupStatus(error.message || "No se pudo exportar la copia.", "error");
+    }
+  });
+  qs("#device-backup-import")?.addEventListener("click", () => fileInput?.click());
+  fileInput?.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    if (!passwordInput?.value) {
+      setDeviceBackupStatus("Escribe la contraseña antes de importar.", "error");
+      fileInput.value = "";
+      return;
+    }
+    try {
+      const serialized = await file.text();
+      const preview = await window.RadarLocalFirst.previewEncryptedBackup(serialized, passwordInput.value);
+      if (!window.confirm(`Copia de ${preview.scope || "cuenta"}, ${preview.records} registros (${preview.exportedAt || "fecha desconocida"}). Se reemplazarán los datos de la cuenta actual. ¿Continuar?`)) return;
+      setDeviceBackupStatus("Validando y restaurando...", "busy");
+      const recovery = await window.RadarLocalFirst.exportEncryptedBackup(passwordInput.value);
+      const recoveryUrl = URL.createObjectURL(new Blob([recovery], { type: "application/json" }));
+      const recoveryLink = document.createElement("a");
+      recoveryLink.href = recoveryUrl;
+      recoveryLink.download = `radar-fantasy-recovery-before-import-${new Date().toISOString().slice(0, 10)}.json`;
+      recoveryLink.click();
+      URL.revokeObjectURL(recoveryUrl);
+      await window.RadarLocalFirst.importEncryptedBackup(serialized, passwordInput.value, { replace: true });
+      setDeviceBackupStatus("Copia restaurada. Recargando los datos locales...", "ready");
+      window.setTimeout(() => window.location.reload(), 250);
+    } catch (error) {
+      setDeviceBackupStatus(error.message || "No se pudo importar la copia; los datos no han cambiado.", "error");
+    } finally {
+      fileInput.value = "";
+    }
+  });
+};
+
 const initEvents = () => {
+  initDeviceBackupEvents();
   ["pointerdown", "keydown", "touchstart", "wheel"].forEach((eventName) => {
     document.addEventListener(eventName, markInterfaceInteraction, { passive: true, capture: true });
   });
@@ -13724,8 +14123,11 @@ const initEvents = () => {
     const localSelection = selectLocalLeague(selectedLeagueId);
     applyLeaguePayload(localSelection);
     setLeagueStatus("Liga seleccionada. Sincronizando...");
-    if (!canUseApi()) {
+    if (!canUseApi() || isNativeRuntime()) {
       setLeagueStatus("Liga seleccionada en este dispositivo. Usa Actualizar cuando quieras consultar datos nuevos.");
+      if (startupSyncWaitingForLeagueSelection && !startupSyncCompletedForSession && startupLeagueSelectionReady()) {
+        await runStartupFullRefreshIfReady();
+      }
       return;
     }
     try {
@@ -14037,7 +14439,7 @@ const platformStorageKey = (key) => {
 
 const platformUserCanAccess = (viewName) => {
   if (!state.auth.authenticated) return false;
-  if (viewName === "admin") return state.auth.user?.role === "admin";
+  if (viewName === "admin") return state.auth.user?.role === "admin" && document.documentElement.dataset.connectionMode !== "offline";
   if (state.auth.user?.role === "admin") return true;
   const permission = PLATFORM_VIEW_PERMISSIONS[viewName];
   return !permission || state.auth.permissions.includes(permission);
@@ -14082,15 +14484,28 @@ const applyPlatformAccess = () => {
 };
 
 let applicationStarted = false;
-const startAuthenticatedApplication = (user) => {
+const startAuthenticatedApplication = async (user, { cacheEntitlement = false, entitlement = "", offline = false } = {}) => {
   state.auth.authenticated = true;
   state.auth.user = user;
   state.auth.permissions = Array.isArray(user?.permissions) ? user.permissions : [];
+  document.documentElement.dataset.connectionMode = offline ? "offline" : "online";
+  if (window.RadarLocalFirst && user?.id) {
+    try { await window.RadarLocalFirst.openAccount(user.id, { allowLegacyUnscoped: user.role === "admin" }); }
+    catch (error) {
+      localDatabaseReady = false;
+      setAuthStatus("No se pudo abrir el almacenamiento local. Reintenta antes de continuar.", "error");
+      return false;
+    }
+  }
+  if (cacheEntitlement && entitlement) void cacheOfflineEntitlement(user, entitlement).catch(() => null);
   if (user?.role === "admin") {
     try {
       const legacy = window.localStorage.getItem(LOCAL_LEAGUES_KEY);
       const scopedKey = platformStorageKey(LOCAL_LEAGUES_KEY);
-      if (legacy && !window.localStorage.getItem(scopedKey)) window.localStorage.setItem(scopedKey, legacy);
+      if (legacy && !window.localStorage.getItem(scopedKey)) {
+        window.localStorage.setItem(scopedKey, legacy);
+        if (window.RadarLocalFirst && isNativeRuntime()) void window.RadarLocalFirst.set(scopedKey, legacy).catch(() => null);
+      }
     } catch (error) {
       // Existing data remains available on the server when browser storage is unavailable.
     }
@@ -14113,15 +14528,27 @@ const startAuthenticatedApplication = (user) => {
     window.setTimeout(() => checkForAppUpdate(), 60 * 1000);
   }
   applyPlatformAccess();
-  const firstView = ["team", "market", "league", "favorites", "team-tracking", "compare", "videos", "settings", "admin"]
+  const firstView = ["home", "team", "market", "league", "favorites", "team-tracking", "compare", "videos", "settings", "admin"]
     .find((view) => platformUserCanAccess(view));
   if (firstView) openView(firstView);
+  return true;
 };
 
 const platformAuthRequest = async (path, options = {}) => {
-  const response = await apiFetch(path, options);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), isNativeRuntime() ? 8000 : 15000);
+  let response;
+  try {
+    response = await apiFetch(path, { ...options, signal: options.signal || controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || "No se pudo completar la operación.");
+  if (!response.ok) {
+    const error = new Error(payload.error || "No se pudo completar la operación.");
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 };
 
@@ -14135,9 +14562,10 @@ const refreshPlatformAuth = async () => {
   try {
     const payload = await platformAuthRequest("/api/auth/status");
     if (payload.authenticated && payload.user) {
-      startAuthenticatedApplication(payload.user);
+      await startAuthenticatedApplication(payload.user, { cacheEntitlement: true, entitlement: payload.entitlement || "" });
       return;
     }
+    await clearOfflineEntitlement().catch(() => null);
     showAuthPanel(payload.bootstrapRequired ? "bootstrap" : "login");
     setAuthStatus(
       payload.bootstrapRequired
@@ -14148,6 +14576,12 @@ const refreshPlatformAuth = async () => {
       payload.administratorConfigured === false ? "error" : ""
     );
   } catch (error) {
+    const cached = error?.status === 401 || error?.status === 403 ? null : await readOfflineEntitlement();
+    if (cached?.user) {
+      await startAuthenticatedApplication(cached.user, { offline: true });
+      setLeagueStatus("Modo sin conexión: usando los datos guardados en este dispositivo.");
+      return;
+    }
     showAuthPanel("login");
     setAuthStatus(error.message || "No se pudo conectar con el servicio de acceso.", "error");
   }
@@ -14222,14 +14656,14 @@ const bindPlatformAuthEvents = () => {
     event.preventDefault(); setAuthStatus("Comprobando credenciales...", "busy");
     try {
       const payload = await platformAuthRequest("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: qs("#login-email").value, password: qs("#login-password").value }) });
-      startAuthenticatedApplication(payload.user);
+      await startAuthenticatedApplication(payload.user, { cacheEntitlement: true, entitlement: payload.entitlement || "" });
     } catch (error) { setAuthStatus(error.message, "error"); }
   });
   qs("#bootstrap-form")?.addEventListener("submit", async (event) => {
     event.preventDefault(); setAuthStatus("Creando la cuenta administradora...", "busy");
     try {
       const payload = await platformAuthRequest("/api/auth/bootstrap", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: qs("#bootstrap-name").value, email: qs("#bootstrap-email").value, password: qs("#bootstrap-password").value }) });
-      startAuthenticatedApplication(payload.user);
+      await startAuthenticatedApplication(payload.user, { cacheEntitlement: true, entitlement: payload.entitlement || "" });
     } catch (error) { setAuthStatus(error.message, "error"); }
   });
   qs("#forgot-form")?.addEventListener("submit", async (event) => {
@@ -14249,7 +14683,14 @@ const bindPlatformAuthEvents = () => {
       showAuthPanel("login"); setAuthStatus("Contraseña actualizada. Ya puedes entrar.", "ready");
     } catch (error) { setAuthStatus(error.message, "error"); }
   });
-  qs("#platform-logout")?.addEventListener("click", async () => { try { await platformAuthRequest("/api/auth/logout", { method: "POST" }); } finally { window.location.reload(); } });
+  qs("#platform-logout")?.addEventListener("click", async () => {
+    try { await platformAuthRequest("/api/auth/logout", { method: "POST" }); }
+    catch (error) { /* Local logout must still complete when the server is unavailable. */ }
+    finally {
+      await clearOfflineEntitlement().catch(() => null);
+      window.location.reload();
+    }
+  });
   qs("#new-platform-user")?.addEventListener("click", resetPlatformUserForm);
   qs("#cancel-platform-user")?.addEventListener("click", resetPlatformUserForm);
   qs("#admin-user-role")?.addEventListener("change", (event) => renderPermissionInputs(
@@ -14370,10 +14811,22 @@ const refreshStartupDataInBackground = (localPayload) => {
   return startupRefreshPromise;
 };
 
-const init = () => {
+const init = async () => {
   initAppTheme();
   bindPlatformAuthEvents();
-  void refreshPlatformAuth();
+  try {
+    await initializeLocalDatabase();
+  } catch (error) {
+    localDatabaseReady = false;
+    showAuthPanel("login");
+    setAuthStatus("No se pudo abrir el almacenamiento local. Puedes reintentar sin perder los datos originales.", "error");
+    return;
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") void checkpointLocalDatabase().catch(() => null);
+  });
+  window.addEventListener("pagehide", () => { void checkpointLocalDatabase().catch(() => null); });
+  await refreshPlatformAuth();
 };
 
-init();
+void init();

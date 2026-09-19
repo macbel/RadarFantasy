@@ -1,4 +1,15 @@
-# Version 3.12.3
+# Version 3.13.0
+
+Fecha de preparación: 2026-09-19
+
+## Notas de versión
+
+- La APK adopta almacenamiento local-first por cuenta con SQLite, migración idempotente, borrados durables y secretos cifrados en Android Keystore.
+- Inicio móvil incorpora una acción prioritaria, métricas reales y estado de actualización; la navegación inferior agrupa Inicio, Mercado, Plantilla y Más.
+- Se añade copia cifrada portable desde Ajustes con PBKDF2-SHA256 y AES-GCM, sin credenciales ni tokens.
+- El gateway móvil emite permisos RS256 con TTL máximo de siete días cuando el servidor tiene configurada la clave de firma y separa el feed de equipos de los archivos de preferencias web.
+
+La validación local y los límites de despliegue están registrados en `docs/specs/mobile-local-first-execution.md`.
 
 Fecha de publicación: 2026-08-30
 

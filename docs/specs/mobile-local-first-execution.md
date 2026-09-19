@@ -4,7 +4,7 @@ Fecha de ejecución: 2026-09-19
 Versión del producto: 3.13.0 (Android `versionCode` 58)  
 Branch de trabajo: `codex/release-3.12.3`
 
-Mandato de entrega recibido durante la ejecución: cerrar con commit subido al repositorio remoto, APK generada y web desplegada/verificada, preservando credenciales, datos y `output/`. Ese mandato queda pendiente de la fase de publicación; esta ejecución local no declara el producto entregado mientras falten esas comprobaciones.
+Mandato de entrega recibido durante la ejecución: cerrar con commit subido al repositorio remoto, APK generada y web desplegada/verificada, preservando credenciales, datos y `output/`.
 
 ## Cambios implementados
 
@@ -24,9 +24,12 @@ Mandato de entrega recibido durante la ejecución: cerrar con commit subido al r
 - APK debug: `android/app/build/outputs/apk/debug/app-debug.apk`, SHA-256 `CB6637EB32BA984EBD70C6C7959B63F1C943453052B8CCA8ADD7B6F3036CE1E6`, tamaño 8.068.182 bytes en esta ejecución. `apksigner` verificó el APK con el certificado Android Debug (digest SHA-256 `a3b5f863747adeca6f201be149984377896762b7c8b5dd63ff8e4773d4f79484`).
 - `git diff --check`: correcto.
 - PHP no está instalado en este equipo: `php -l api/index.php` y `php -l api/auth.php` quedan pendientes de un runtime PHP. No se simuló ese resultado.
+- Commit publicado en `origin/codex/release-3.12.3`: `410d6771` (`Implement local-first mobile architecture`). La carpeta `output/` permaneció sin seguimiento y sin cambios incluidos.
 
 ## Límites y pasos de despliegue
 
-No se publicó a `/fms` en esta ejecución porque la clave privada de firma y la configuración de producción no están disponibles en el repositorio/local. Antes de distribuir una APK release hay que inyectar la clave privada sólo en el servidor, obtener la pública de build por un canal verificable, comprobar la firma de la APK release contra la publicada y ejecutar preflight CORS/healthz. La APK construida aquí es debug y no constituye evidencia de compatibilidad de actualización con la firma de producción.
+La web se publicó en `/fms` mediante FTP con una copia temporal previa de los archivos remotos. Se verificó paridad SHA-256 remota para `index.html`, `app.js`, `styles.css`, `data.js`, `sw.js`, `manifest.webmanifest`, `mobile-local-first.js`, `api/index.php` y `api/auth.php`. Las comprobaciones HTTPS del 2026-09-19 devolvieron `200`: `/fms/api/healthz` respondió `ok:true`, `/fms/api/mobile/healthz` respondió `ok:true, mode:gateway` y `/fms/index.html` incluyó `mobile-local-first.js?v=1`.
+
+El servidor no recibió ninguna clave privada durante esta ejecución. Para habilitar permisos offline firmados hay que inyectar `FMS_OFFLINE_AUTH_PRIVATE_KEY` sólo en el servidor y empaquetar en `app-config.js` la clave pública correspondiente, además de comprobar la firma de una APK release contra la publicada. La APK construida aquí es debug y no constituye evidencia de compatibilidad de actualización con la firma de producción.
 
 La sesión PHP de proveedor sigue siendo un canal temporal para las peticiones actuales; el token móvil ya no se persiste en `biwenger-sessions.json`, pero una pasarela completamente stateless requerirá un adaptador de proveedor que acepte el contexto firmado en cada request. Las operaciones mutantes nunca se reintentan offline.

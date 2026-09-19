@@ -24,7 +24,7 @@ Mandato de entrega recibido durante la ejecución: cerrar con commit subido al r
 - APK debug: `android/app/build/outputs/apk/debug/app-debug.apk`, SHA-256 `CB6637EB32BA984EBD70C6C7959B63F1C943453052B8CCA8ADD7B6F3036CE1E6`, tamaño 8.068.182 bytes en esta ejecución. `apksigner` verificó el APK con el certificado Android Debug (digest SHA-256 `a3b5f863747adeca6f201be149984377896762b7c8b5dd63ff8e4773d4f79484`).
 - `git diff --check`: correcto.
 - PHP no está instalado en este equipo: `php -l api/index.php` y `php -l api/auth.php` quedan pendientes de un runtime PHP. No se simuló ese resultado.
-- Commit publicado en `origin/codex/release-3.12.3`: `410d6771` (`Implement local-first mobile architecture`). La carpeta `output/` permaneció sin seguimiento y sin cambios incluidos.
+- Commits publicados en `origin/codex/release-3.12.3`: `410d6771` (`Implement local-first mobile architecture`) y `26889786` (`Record mobile deployment evidence`). La carpeta `output/` permaneció sin seguimiento y sin cambios incluidos.
 
 ## Límites y pasos de despliegue
 

@@ -2,9 +2,11 @@ package com.fantasymarketscout.app;
 
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.net.Uri;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
@@ -15,12 +17,18 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.ActivityCallback;
+
+import androidx.activity.result.ActivityResult;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.ByteArrayOutputStream;
 import java.security.KeyStore;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,6 +44,7 @@ import javax.crypto.spec.GCMParameterSpec;
 public class LocalDataPlugin extends Plugin {
     private static final String KEY_ALIAS = "radar_fantasy_local_data_v1";
     private static final String DEFAULT_SCOPE = "guest";
+    private static final String MIGRATION_KEY = "legacy-import-v1";
     private static final int MAX_KEY = 256;
     private static final int MAX_VALUE = 8 * 1024 * 1024;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -77,6 +86,32 @@ public class LocalDataPlugin extends Plugin {
             result.put("entries", entries);
             result.put("scope", scope);
             result.put("engine", "sqlite");
+            boolean migrated = false;
+            String migration = call.getString("migration", "");
+            if (MIGRATION_KEY.equals(migration)) {
+                try (Cursor marker = database.getReadableDatabase().query("metadata", new String[]{"metadata_value"},
+                    "metadata_key = ?", new String[]{"migration:" + scope + ":" + MIGRATION_KEY}, null, null, null, "1")) {
+                    migrated = marker.moveToFirst() && "1".equals(marker.getString(0));
+                }
+            }
+            boolean legacySource = false;
+            if (entries.length() == 0 && !migrated && call.getBoolean("includeLegacy", false)) {
+                try (Cursor cursor = database.getReadableDatabase().query("app_records",
+                    new String[]{"record_key", "record_value", "revision", "updated_at"},
+                    "scope = ?", new String[]{"legacy"}, null, null, "record_key ASC")) {
+                    while (cursor.moveToNext()) {
+                        JSObject entry = new JSObject();
+                        entry.put("key", cursor.getString(0));
+                        entry.put("value", cursor.getString(1));
+                        entry.put("revision", cursor.getLong(2));
+                        entry.put("updatedAt", cursor.getLong(3));
+                        entries.put(entry);
+                    }
+                    legacySource = entries.length() > 0;
+                }
+            }
+            result.put("migrated", migrated);
+            result.put("legacySource", legacySource);
             return result;
         }, "No se pudo leer la base de datos local.");
     }
@@ -112,6 +147,7 @@ public class LocalDataPlugin extends Plugin {
                     values.put("record_value", value);
                     values.put("revision", revision);
                     values.put("updated_at", System.currentTimeMillis());
+                    writable.delete("app_records", "scope = ? AND record_key = ?", new String[]{scope, key});
                     writable.insertOrThrow("app_records", null, values);
                     saved += 1;
                 }
@@ -178,7 +214,8 @@ public class LocalDataPlugin extends Plugin {
             values.put("record_key", key);
             values.put("encrypted_value", encrypt(value));
             values.put("updated_at", System.currentTimeMillis());
-            database.getWritableDatabase().insertOrThrow("secure_records", null, values);
+            long row = database.getWritableDatabase().insertWithOnConflict("secure_records", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+            if (row < 0) throw new IllegalStateException("No se pudo guardar el secreto local");
             return new JSObject();
         }, "No se pudo escribir en el almacén seguro.");
     }
@@ -192,6 +229,82 @@ public class LocalDataPlugin extends Plugin {
             result.put("removed", database.getWritableDatabase().delete("secure_records", "scope = ? AND record_key = ?", new String[]{scope, key}));
             return result;
         }, "No se pudo borrar el secreto local.");
+    }
+
+    @PluginMethod
+    public void saveBackup(PluginCall call) {
+        String content = call.getString("content", "");
+        String filename = call.getString("filename", "radar-fantasy-backup.json").replaceAll("[^A-Za-z0-9._-]", "_");
+        try {
+            validateValue(content);
+        } catch (Exception error) {
+            call.reject(error.getMessage(), error);
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("application/json")
+            .putExtra(Intent.EXTRA_TITLE, filename);
+        startActivityForResult(call, intent, "saveBackupResult");
+    }
+
+    @ActivityCallback
+    private void saveBackupResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        Uri uri = result.getData() == null ? null : result.getData().getData();
+        if (result.getResultCode() != android.app.Activity.RESULT_OK || uri == null) {
+            JSObject cancelled = new JSObject();
+            cancelled.put("cancelled", true);
+            call.resolve(cancelled);
+            return;
+        }
+        try (OutputStream output = getContext().getContentResolver().openOutputStream(uri, "w")) {
+            if (output == null) throw new IllegalStateException("No se pudo abrir el archivo de destino");
+            output.write(call.getString("content", "").getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            JSObject saved = new JSObject();
+            saved.put("saved", true);
+            call.resolve(saved);
+        } catch (Exception error) {
+            call.reject("No se pudo guardar la copia cifrada.", error);
+        }
+    }
+
+    @PluginMethod
+    public void openBackup(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("application/json");
+        startActivityForResult(call, intent, "openBackupResult");
+    }
+
+    @ActivityCallback
+    private void openBackupResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        Uri uri = result.getData() == null ? null : result.getData().getData();
+        if (result.getResultCode() != android.app.Activity.RESULT_OK || uri == null) {
+            JSObject cancelled = new JSObject();
+            cancelled.put("cancelled", true);
+            call.resolve(cancelled);
+            return;
+        }
+        try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new IllegalStateException("No se pudo abrir el archivo seleccionado");
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            int total = 0;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > 40 * 1024 * 1024) throw new IllegalArgumentException("El respaldo supera el tamaño máximo permitido.");
+                output.write(buffer, 0, read);
+            }
+            JSObject opened = new JSObject();
+            opened.put("content", new String(output.toByteArray(), StandardCharsets.UTF_8));
+            call.resolve(opened);
+        } catch (Exception error) {
+            call.reject("No se pudo leer la copia cifrada.", error);
+        }
     }
 
     private interface Operation { JSObject run() throws Exception; }

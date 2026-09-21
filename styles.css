@@ -7912,6 +7912,69 @@ tr.has-rival-bids.has-rival-sale {
   border-top: 2px solid currentColor;
 }
 
+@media (max-width: 720px) {
+  .mobile-team-switch {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    padding: 4px;
+    margin-bottom: 12px;
+    border: 1px solid rgba(101, 190, 196, 0.2);
+    border-radius: 12px;
+    background: rgba(7, 19, 24, 0.7);
+  }
+
+  .mobile-team-switch button {
+    min-height: 44px;
+    border: 0;
+    border-radius: 9px;
+    color: var(--muted);
+    background: transparent;
+    font: inherit;
+    font-weight: 700;
+  }
+
+  .mobile-team-switch button.active {
+    color: var(--text);
+    background: var(--amber-soft);
+  }
+
+  #market-view > .summary-band { order: 1; }
+  #market-view > .external-input-actions { order: 2; }
+  #market-view > .results-layout { order: 3; }
+  #market-view > .market-top-five { order: 4; }
+  #market-view > .market-decision-center { order: 5; }
+  #market-view > .daily-command-center { order: 6; }
+  #market-view > .bid-analysis { order: 7; }
+  #market-view > .market-analysis-center { order: 8; }
+  #market-view > .input-band { order: 9; }
+
+  #market-view > .summary-band .metric { display: none; }
+  #market-view > .summary-band .metric:nth-child(1),
+  #market-view > .summary-band .metric:nth-child(2),
+  #market-view > .summary-band .metric:nth-child(5) { display: block; }
+
+  #market-view > .summary-band .metric:nth-child(2) strong {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    line-height: 1.18;
+  }
+
+  #team-view .team-panel { order: 1; }
+  #team-view .team-primary-column { order: 2; }
+  #team-view .team-finance-summary > div:nth-child(n+3) { display: none; }
+  #team-view[data-mobile-team-mode="lineup"] .team-panel { display: none; }
+  #team-view[data-mobile-team-mode="roster"] .team-primary-column { display: none; }
+
+  .bid-limit-badge {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 .icon-home::before {
   left: 3px;
   top: 6px;
@@ -8275,6 +8338,10 @@ tr.has-rival-bids.has-rival-sale {
 
   .nav-primary {
     display: none;
+  }
+
+  .mobile-league-shortcut {
+    display: flex;
   }
 
   .nav-item {
@@ -9257,6 +9324,10 @@ html[data-theme="day"] .lineup-substitutes-heading strong { color: #13272b; }
   background: var(--amber-soft);
 }
 
+.home-alert-summary[hidden] {
+  display: none;
+}
+
 .home-alert-summary > span:nth-child(2) {
   flex: 1;
   font-size: 13px;
@@ -9353,4 +9424,41 @@ html[data-theme="day"] .home-opportunity-list {
     grid-template-columns: minmax(0, 1fr);
   }
 
+}
+
+@media (max-width: 720px) {
+  #market-view > .summary-band { order: 1; }
+  #market-view > .external-input-actions { order: 2; }
+  #market-view > .results-layout { order: 3; }
+  #market-view > .market-top-five { order: 4; }
+  #market-view > .market-decision-center { order: 5; }
+  #market-view > .daily-command-center { order: 6; }
+  #market-view > .bid-analysis { order: 7; }
+  #market-view > .market-analysis-center { order: 8; }
+  #market-view > .input-band { order: 9; }
+
+  #market-view > .summary-band .metric { display: none; }
+  #market-view > .summary-band .metric:nth-child(1),
+  #market-view > .summary-band .metric:nth-child(2),
+  #market-view > .summary-band .metric:nth-child(5) { display: block; }
+
+  #market-view > .summary-band .metric:nth-child(2) strong {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    line-height: 1.18;
+  }
+
+  #team-view .team-panel { order: 1; }
+  #team-view .team-primary-column { order: 2; }
+  #team-view .team-finance-summary > div:nth-child(n+3) { display: none; }
+  #team-view[data-mobile-team-mode="lineup"] .team-panel { display: none; }
+  #team-view[data-mobile-team-mode="roster"] .team-primary-column { display: none; }
+
+  .bid-limit-badge {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }

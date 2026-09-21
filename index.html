@@ -83,7 +83,7 @@
     </script>
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=74" />
+    <link rel="stylesheet" href="styles.css?v=75" />
   </head>
   <body>
     <main class="auth-gate" id="auth-gate" aria-label="Acceso a Radar Fantasy">
@@ -157,7 +157,7 @@
             <span class="icon icon-market" aria-hidden="true"></span>
             Mercado
           </button>
-          <button class="nav-item nav-primary" type="button" data-view="league">
+          <button class="nav-item nav-primary mobile-league-shortcut" type="button" data-view="league">
             <span class="icon icon-team" aria-hidden="true"></span>
             Centro de liga
           </button>
@@ -628,7 +628,11 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
           </div>
         </section>
 
-        <section class="view" id="team-view" aria-label="Mi equipo y alineacion ideal">
+        <section class="view" id="team-view" data-mobile-team-mode="roster" aria-label="Mi equipo y alineacion ideal">
+          <div class="mobile-team-switch" role="tablist" aria-label="Vista de plantilla">
+            <button class="active" type="button" role="tab" aria-selected="true" data-mobile-team-mode="roster">Plantilla</button>
+            <button type="button" role="tab" aria-selected="false" data-mobile-team-mode="lineup">Alineación</button>
+          </div>
           <section class="team-layout">
             <div class="team-primary-column">
             <div class="market-input optional-manual-entry" id="team-manual-entry" hidden>
@@ -1608,9 +1612,9 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
 
     <script src="app-config.js?v=11"></script>
     <script src="data.js?v=15"></script>
-    <script src="mobile-local-first.js?v=1"></script>
+    <script src="mobile-local-first.js?v=2"></script>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
-    <script src="app.js?v=133"></script>
+    <script src="app.js?v=134"></script>
   </body>
 </html>

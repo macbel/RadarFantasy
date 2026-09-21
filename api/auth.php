@@ -93,14 +93,17 @@ function auth_mobile_request(): bool
 function auth_apply_mobile_cors(): void
 {
     $origin = trim((string)($_SERVER['HTTP_ORIGIN'] ?? ''));
-    $allowlist = array_values(array_filter(array_map('trim', explode(',', (string)getenv('FMS_MOBILE_CORS_ORIGINS')))));
-    if ($origin !== '' && (!$allowlist || in_array($origin, $allowlist, true))) {
+    $configured = array_values(array_filter(array_map('trim', explode(',', (string)getenv('FMS_MOBILE_CORS_ORIGINS')))));
+    $allowlist = array_values(array_unique(array_merge([
+        'https://alufi.es', 'https://www.alufi.es', 'https://localhost', 'http://localhost', 'capacitor://localhost'
+    ], $configured)));
+    if ($origin !== '' && in_array($origin, $allowlist, true)) {
         header('Access-Control-Allow-Origin: ' . $origin);
         header('Access-Control-Allow-Credentials: true');
         header('Vary: Origin');
     }
     header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, X-FMS-Device-Key, X-FMS-Local-First, Authorization');
+    header('Access-Control-Allow-Headers: Content-Type, X-FMS-Device-Key, X-FMS-Local-First, Authorization, X-FMS-Biwenger-League, X-FMS-Biwenger-Version, X-FMS-FutbolFantasy-Cookie');
     header('Access-Control-Max-Age: 600');
 }
 
@@ -109,12 +112,19 @@ function auth_base64url(string $value): string
     return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
 }
 
+function auth_offline_private_key(): string
+{
+    $environment = trim((string)getenv('FMS_OFFLINE_AUTH_PRIVATE_KEY'));
+    if ($environment !== '') return str_replace('\\n', "\n", $environment);
+    $path = dirname(__DIR__) . DIRECTORY_SEPARATOR . '.fantasy-db' . DIRECTORY_SEPARATOR . 'offline-auth.pem';
+    return is_readable($path) ? trim((string)file_get_contents($path)) : '';
+}
+
 function auth_offline_entitlement(array $user): ?string
 {
     if (!auth_mobile_request()) return null;
-    $private = trim((string)getenv('FMS_OFFLINE_AUTH_PRIVATE_KEY'));
+    $private = auth_offline_private_key();
     if ($private === '') return null;
-    $private = str_replace('\\n', "\n", $private);
     $device = trim((string)($_SERVER['HTTP_X_FMS_DEVICE_KEY'] ?? ''));
     if ($device === '' || strlen($device) > 256) return null;
     $ttl = (int)getenv('FMS_OFFLINE_AUTH_TTL_SECONDS');

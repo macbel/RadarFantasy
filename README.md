@@ -2,11 +2,11 @@
 
 App para analizar mercados fantasy, empezando por Biwenger, con ranking de fichajes y apoyo de fuentes como SofaScore, FutbolFantasy y API-Football.
 
-## Modo local-first de la APK (3.13.0)
+## Modo local-first de la APK (3.13.1)
 
 La aplicación Android guarda ligas, plantilla, mercado, favoritos, finanzas, alineación y preferencias en SQLite por cuenta; la web mantiene su almacenamiento legacy separado. El primer arranque importa los datos locales una sola vez y las nuevas escrituras no dependen de la cuota de `localStorage`. Una copia cifrada exportable usa PBKDF2-SHA256 y AES-GCM desde `Ajustes > Datos del dispositivo`; no incluye contraseñas, cookies, tokens, permisos ni claves del dispositivo. Sin red se muestran los datos guardados mientras el permiso firmado siga vigente (TTL máximo configurable de 7 días); una revocación remota sólo puede conocerse al volver a conectar.
 
-Para habilitar permisos offline en producción configura `FMS_OFFLINE_AUTH_PRIVATE_KEY` fuera del repositorio y empaqueta la clave pública correspondiente en `app-config.js` como `offlineAuthPublicKey`. El gateway móvil distingue sus rutas, valida sesión y no usa la base web de ligas como fuente funcional. Las credenciales de proveedores se conservan en Android Keystore y las mutaciones requieren red.
+Para habilitar permisos offline en producción configura `FMS_OFFLINE_AUTH_PRIVATE_KEY` fuera del repositorio o instala la clave privada en `.fantasy-db/offline-auth.pem` con acceso web denegado; empaqueta la clave pública correspondiente en `app-config.js` como `offlineAuthPublicKey`. El gateway móvil distingue sus rutas, valida sesión y no usa la base web de ligas como fuente funcional. Las credenciales de proveedores se conservan en Android Keystore y las mutaciones requieren red.
 
 ## Cuentas y administración
 

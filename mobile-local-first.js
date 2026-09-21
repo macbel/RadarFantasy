@@ -7,6 +7,15 @@
   const nativePlugin = () => global.Capacitor?.Plugins?.LocalData || null;
   const now = () => Date.now();
   const isManagedKey = (key) => MANAGED_KEY.test(String(key || ""));
+  const isAccountKey = (key, scope) => String(key || "").endsWith(`.${scope}`);
+  const isLegacyDeviceKey = (key) => [
+    "fantasy-market-scout.api-base.v1",
+    "fantasy-market-scout.device-key.v1",
+    "radar-fantasy.update-check.v1",
+    "radar-fantasy.settings-platform.v1",
+    "radar-fantasy.theme-mode.v1",
+    "radar-fantasy.theme-location.v1"
+  ].includes(String(key || ""));
   const clone = (value) => {
     if (value === undefined) return undefined;
     return JSON.parse(JSON.stringify(value));
@@ -28,6 +37,7 @@
     schemaVersion: SCHEMA_VERSION,
     scope: "guest",
     ready: false,
+    accountOpen: false,
     migrated: false,
     memory: new Map(),
     knownKeys: new Set(),
@@ -80,7 +90,9 @@
       const scope = String(userId || "").trim();
       if (!scope) throw new Error("La cuenta local requiere un identificador estable.");
       if (!this.ready) await this.initialize();
+      if (scope !== this.scope) await this.flush();
       this.scope = scope;
+      this.accountOpen = false;
       this.memory.clear();
       this.knownKeys.clear();
       this.pending.clear();
@@ -89,17 +101,21 @@
         this.migrated = true;
         return { scope, imported: 0, engine: "web-storage" };
       }
-      const result = await plugin.getAll({ scope });
-      const entries = Array.isArray(result?.entries) ? result.entries : [];
+      const result = await plugin.getAll({ scope, migration: MIGRATION_KEY, includeLegacy: true });
+      const legacySource = Boolean(result?.legacySource);
+      const entries = (Array.isArray(result?.entries) ? result.entries : []).filter((entry) => {
+        const key = String(entry?.key || "");
+        return isManagedKey(key) && (!legacySource || isAccountKey(key, scope) || (allowLegacyUnscoped && isLegacyDeviceKey(key)));
+      });
+      this.migrated = Boolean(result?.migrated);
       entries.forEach((entry) => {
         const key = String(entry?.key || "");
-        if (!isManagedKey(key)) return;
         this.memory.set(key, String(entry?.value ?? ""));
         this.knownKeys.add(key);
       });
-      if (!entries.length) {
-        const legacy = this._legacyEntries().filter((entry) => entry.key.endsWith(`.${scope}`)
-          || (allowLegacyUnscoped && !/\.leagues\.v1$|team-tracking|decision-history|favorites|daily-feedback/i.test(entry.key)));
+      if (!entries.length && !this.migrated) {
+        const legacy = this._legacyEntries().filter((entry) => isAccountKey(entry.key, scope)
+          || (allowLegacyUnscoped && isLegacyDeviceKey(entry.key)));
         if (legacy.length) {
           await plugin.setMany({ scope, migration: MIGRATION_KEY, entries: legacy.map((entry) => ({ ...entry, revision: 1 })) });
           legacy.forEach((entry) => {
@@ -108,11 +124,16 @@
           });
           this.migrated = true;
         }
-      } else {
+      } else if (entries.length) {
         this.migrated = true;
       }
       this._mirror(Array.from(this.memory, ([key, value]) => ({ key, value })));
+      this.accountOpen = true;
       return { scope, imported: entries.length, engine: "sqlite", migrated: this.migrated };
+    },
+
+    isAccountOpen() {
+      return this.accountOpen;
     },
 
     get(key, fallback = null) {
@@ -148,14 +169,15 @@
       this.memory.delete(normalized);
       this.knownKeys.add(normalized);
       this.pending.set(normalized, { key: normalized, remove: true, revision: now() });
+      try { global.localStorage.removeItem(normalized); } catch (_) { /* SQLite remains authoritative. */ }
       return this.flushSoon();
     },
 
     async flushSoon() {
       if (!this.ready || !nativePlugin()) return false;
       if (this.flushPromise) return this.flushPromise;
-      this.flushPromise = new Promise((resolve) => {
-        global.setTimeout(() => this.flush().then(resolve).catch(() => resolve(false)), 0);
+      this.flushPromise = new Promise((resolve, reject) => {
+        global.setTimeout(() => this._drain().then(resolve, reject), 0);
       }).finally(() => { this.flushPromise = null; });
       return this.flushPromise;
     },
@@ -163,16 +185,22 @@
     async flush() {
       const plugin = nativePlugin();
       if (!plugin || !this.ready) return true;
-      const operations = Array.from(this.pending.values());
-      if (!operations.length) return true;
-      this.pending.clear();
-      try {
+      if (this.flushPromise) return this.flushPromise;
+      this.flushPromise = this._drain().finally(() => { this.flushPromise = null; });
+      return this.flushPromise;
+    },
+
+    async _drain() {
+      const plugin = nativePlugin();
+      if (!plugin || !this.ready) return true;
+      while (this.pending.size) {
+        const operations = Array.from(this.pending.values());
         await plugin.setMany({ scope: this.scope, migration: this.migrated ? MIGRATION_KEY : "", entries: operations });
-        return true;
-      } catch (error) {
-        operations.forEach((entry) => this.pending.set(entry.key, entry));
-        throw error;
+        operations.forEach((entry) => {
+          if (this.pending.get(entry.key) === entry) this.pending.delete(entry.key);
+        });
       }
+      return true;
     },
 
     async getSecure(key, scope = this.scope) {
@@ -199,7 +227,7 @@
         schemaVersion: SCHEMA_VERSION,
         scope: this.scope,
         exportedAt: new Date().toISOString(),
-        appVersion: global.RADAR_FANTASY_VERSION || "3.13.0",
+        appVersion: global.RADAR_FANTASY_VERSION || "3.13.1",
         records: Array.from(this.memory, ([key, value]) => ({ key, value }))
       };
     },
@@ -208,24 +236,23 @@
       if (!payload || Number(payload.schemaVersion) > SCHEMA_VERSION || !Array.isArray(payload.records)) {
         throw new Error("El respaldo no es compatible con esta versión.");
       }
-      const foreign = payload.records.some((entry) => isManagedKey(entry?.key)
-        && String(entry.key).includes(".user-") && !String(entry.key).endsWith(`.${this.scope}`));
-      if (foreign) throw new Error("El respaldo pertenece a otra cuenta local.");
-      const records = payload.records.filter((entry) => isManagedKey(entry?.key) && typeof entry.value === "string"
-        && (!String(entry.key).includes(".user-") || String(entry.key).endsWith(`.${this.scope}`)));
-      if (!records.length) throw new Error("El respaldo no contiene datos funcionales.");
-      if (replace) {
-        this.pending.clear();
-        const removals = Array.from(this.memory.keys()).map((key) => ({ key, remove: true, revision: now() }));
-        removals.forEach((entry) => this.pending.set(entry.key, entry));
-        this.memory.clear();
-      }
-      records.forEach((entry) => {
-        this.memory.set(entry.key, entry.value);
-        this.pending.set(entry.key, { ...entry, revision: now() });
-      });
+      if (String(payload.scope || "") !== this.scope) throw new Error("El respaldo pertenece a otra cuenta local.");
       await this.flush();
-      this._mirror(records);
+      const records = payload.records.filter((entry) => isManagedKey(entry?.key) && typeof entry.value === "string"
+        && (isAccountKey(entry.key, this.scope) || isLegacyDeviceKey(entry.key)));
+      if (!records.length) throw new Error("El respaldo no contiene datos funcionales.");
+      const previous = new Map(this.memory);
+      const next = replace ? new Map() : new Map(previous);
+      records.forEach((entry) => next.set(entry.key, entry.value));
+      const operations = [];
+      if (replace) previous.forEach((_, key) => operations.push({ key, remove: true, revision: now() }));
+      records.forEach((entry) => operations.push({ key: entry.key, value: entry.value, revision: now() }));
+      const plugin = nativePlugin();
+      if (plugin) await plugin.setMany({ scope: this.scope, migration: this.migrated ? MIGRATION_KEY : "", entries: operations });
+      this.memory = next;
+      this.knownKeys = new Set(next.keys());
+      if (replace) previous.forEach((_, key) => { try { global.localStorage.removeItem(key); } catch (_) { /* SQLite remains authoritative. */ } });
+      this._mirror(Array.from(next, ([key, value]) => ({ key, value })));
       return { imported: records.length, scope: this.scope };
     },
 

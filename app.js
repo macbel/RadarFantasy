@@ -213,9 +213,11 @@ const LOCAL_LEAGUES_KEY = "fantasy-market-scout.leagues.v1";
 const LOCAL_API_BASE_KEY = "fantasy-market-scout.api-base.v1";
 const LOCAL_DEVICE_KEY = "fantasy-market-scout.device-key.v1";
 const REMEMBERED_BIWENGER_EMAIL_KEY = "fantasy-market-scout.biwenger-email.v1";
+const BIWENGER_SESSION_KEY = "biwenger-session";
+const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.0";
+const APP_VERSION = "3.13.1";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -355,7 +357,14 @@ const verifyOfflineEntitlement = async (token, user) => {
   const expectedAudience = String(APP_CONFIG.offlineAuthAudience || "radar-fantasy-android");
   const expectedIssuer = String(APP_CONFIG.offlineAuthIssuer || "radar-fantasy");
   if (String(claims.sub || "") !== String(user.id) || String(claims.aud || "") !== expectedAudience || String(claims.iss || "") !== expectedIssuer) return false;
-  if (Number(claims.exp || 0) * 1000 <= Date.now() || Number(claims.iat || 0) * 1000 > Date.now() + 120000) return false;
+  const issuedAt = Number(claims.iat || 0) * 1000;
+  const expiresAt = Number(claims.exp || 0) * 1000;
+  const permissions = Array.isArray(claims.permissions) ? claims.permissions : [];
+  if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || issuedAt <= 0 || expiresAt <= issuedAt
+    || expiresAt <= Date.now() || issuedAt > Date.now() + 120000 || expiresAt - issuedAt > OFFLINE_ENTITLEMENT_MAX_AGE_MS
+    || !Number.isInteger(Number(claims.authz)) || Number(claims.authz) < 1
+    || !["user", "admin"].includes(String(claims.role || ""))
+    || permissions.some((permission) => !Object.hasOwn(PLATFORM_PERMISSION_META, permission))) return false;
   try {
     const body = `${decoded.encodedHeader}.${decoded.encodedClaims}`;
     const normalize = publicKey.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+/g, "");
@@ -364,22 +373,30 @@ const verifyOfflineEntitlement = async (token, user) => {
     const signatureNormalized = decoded.encodedSignature.replace(/-/g, "+").replace(/_/g, "/");
     const signature = Uint8Array.from(atob(signatureNormalized + "=".repeat((4 - (signatureNormalized.length % 4)) % 4)), (char) => char.charCodeAt(0));
     const validSignature = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, new TextEncoder().encode(body));
-    if (!validSignature || claims.device) {
-      const deviceBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(await ensureDeviceKey()));
-      const deviceHash = Array.from(new Uint8Array(deviceBytes), (value) => value.toString(16).padStart(2, "0")).join("");
-      if (String(claims.device || "") !== deviceHash) return false;
-    }
-    return validSignature;
+    if (!validSignature || !claims.device) return false;
+    const deviceBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(await ensureDeviceKey()));
+    const deviceHash = Array.from(new Uint8Array(deviceBytes), (value) => value.toString(16).padStart(2, "0")).join("");
+    return String(claims.device) === deviceHash;
   } catch (_) {
     return false;
   }
+};
+const offlineUserFromEntitlement = (token, user) => {
+  const claims = decodeOfflineEntitlement(token)?.claims || {};
+  return {
+    ...user,
+    id: String(claims.sub || user?.id || ""),
+    role: String(claims.role || "user"),
+    permissions: Array.isArray(claims.permissions) ? [...claims.permissions] : [],
+    authorizationVersion: Number(claims.authz || 0)
+  };
 };
 const cacheOfflineEntitlement = async (user, token) => {
   const database = nativeLocalDatabase();
   if (!isNativeRuntime() || !database || !user?.id) return false;
   token = String(token || "");
   if (!token || !(await verifyOfflineEntitlement(token, user))) return false;
-  const payload = { token, user, validatedAt: Date.now(), wallClock: Date.now() };
+  const payload = { token, user: offlineUserFromEntitlement(token, user), validatedAt: Date.now(), wallClock: Date.now() };
   if (window.RadarLocalFirst) await window.RadarLocalFirst.setSecure(OFFLINE_ENTITLEMENT_KEY, payload, "device");
   else await database.setSecure({ key: OFFLINE_ENTITLEMENT_KEY, value: JSON.stringify(payload) });
   return true;
@@ -395,7 +412,7 @@ const readOfflineEntitlement = async () => {
     if (Date.now() + 60 * 1000 < Number(payload.wallClock || 0)) return null;
     const claims = decodeOfflineEntitlement(payload.token)?.claims;
     if (!claims || Number(claims.exp || 0) * 1000 <= Date.now()) return null;
-    return payload;
+    return { ...payload, user: offlineUserFromEntitlement(payload.token, payload.user) };
   } catch (error) {
     return null;
   }
@@ -407,13 +424,18 @@ const clearOfflineEntitlement = async () => {
   else await database.removeSecure({ key: OFFLINE_ENTITLEMENT_KEY });
 };
 const readLocalValue = (key) => {
+  if (isNativeRuntime() && window.RadarLocalFirst) {
+    if (window.RadarLocalFirst.isAccountOpen?.()) return window.RadarLocalFirst.get(key, "") || "";
+    const durable = window.RadarLocalFirst.get(key, null);
+    if (durable !== null) return durable;
+  }
   try {
     const stored = window.localStorage.getItem(key);
     if (stored) return stored;
   } catch (error) {
     // Fall through to the durable repository.
   }
-  return window.RadarLocalFirst?.get(key, "") || "";
+  return "";
 };
 const writeLocalValue = (key, value) => {
   const normalizedKey = String(key || "");
@@ -429,13 +451,18 @@ const writeLocalValue = (key, value) => {
   scheduleLocalDatabaseCheckpoint();
 };
 const readJsonLocalValue = (key, fallback = null) => {
+  if (isNativeRuntime() && window.RadarLocalFirst) {
+    if (window.RadarLocalFirst.isAccountOpen?.()) return window.RadarLocalFirst.getJSON(key, fallback);
+    const durable = window.RadarLocalFirst.getJSON(key, null);
+    if (durable !== null) return durable;
+  }
   try {
     const raw = window.localStorage.getItem(key);
     if (raw) return JSON.parse(raw);
   } catch (error) {
     // Fall through to SQLite.
   }
-  return window.RadarLocalFirst?.getJSON(key, fallback) ?? fallback;
+  return fallback;
 };
 const writeJsonLocalValue = (key, value) => {
   writeLocalValue(key, JSON.stringify(value));
@@ -598,12 +625,14 @@ const apiFetch = async (path, options = {}) => {
   let providerHeaders = {};
   if (isNativeRuntime() && window.RadarLocalFirst) {
     try {
-      const providerSession = await window.RadarLocalFirst.getSecure("biwenger-session");
+      const providerSession = await window.RadarLocalFirst.getSecure(BIWENGER_SESSION_KEY);
       if (providerSession?.token) {
         providerHeaders.Authorization = `Bearer ${providerSession.token}`;
         if (providerSession.leagueId) providerHeaders["X-FMS-Biwenger-League"] = String(providerSession.leagueId);
         if (providerSession.xVersion) providerHeaders["X-FMS-Biwenger-Version"] = String(providerSession.xVersion);
       }
+      const futbolFantasySession = await window.RadarLocalFirst.getSecure(FUTBOL_FANTASY_SESSION_KEY);
+      if (futbolFantasySession?.cookie) providerHeaders["X-FMS-FutbolFantasy-Cookie"] = String(futbolFantasySession.cookie);
     } catch (_) {
       // A missing provider credential is handled by the endpoint as onboarding.
     }
@@ -666,6 +695,14 @@ const describeApiError = (status, path = "/api") => {
 
 const readLocalLeagueDb = () => {
   const scopedKey = platformStorageKey(LOCAL_LEAGUES_KEY);
+  if (isNativeRuntime() && window.RadarLocalFirst) {
+    if (window.RadarLocalFirst.isAccountOpen?.()) {
+      const durable = window.RadarLocalFirst.getJSON(scopedKey, null);
+      return durable && typeof durable === "object" && durable.leagues ? durable : null;
+    }
+    const durable = window.RadarLocalFirst.getJSON(scopedKey, null);
+    if (durable && typeof durable === "object" && durable.leagues) return durable;
+  }
   try {
     const raw = window.localStorage.getItem(scopedKey);
     if (raw) {
@@ -675,8 +712,7 @@ const readLocalLeagueDb = () => {
   } catch (error) {
     // Fall through to SQLite.
   }
-  const parsed = window.RadarLocalFirst?.getJSON(scopedKey, null);
-  return parsed && typeof parsed === "object" && parsed.leagues ? parsed : null;
+  return null;
 };
 
 const writeLocalLeagueDb = (db) => {
@@ -952,6 +988,12 @@ const formatMoney = (value) => {
 const formatFinanceMoney = (value) => Number.isFinite(value)
   ? `${Math.round(value).toLocaleString("es-ES")} €`
   : "S/D";
+const formatCompactFinanceMoney = (value) => {
+  if (!Number.isFinite(value)) return "—";
+  if (Math.abs(value) >= 1000000) return `${(value / 1000000).toLocaleString("es-ES", { maximumFractionDigits: 1 })} M€`;
+  if (Math.abs(value) >= 1000) return `${Math.round(value / 1000).toLocaleString("es-ES")} mil €`;
+  return formatFinanceMoney(value);
+};
 
 const numericPreference = (value, fallback = 0) => {
   const numeric = Number(value);
@@ -1048,13 +1090,18 @@ const normalize = (text) =>
 
 const readJsonStorage = (key, fallback) => {
   const scopedKey = platformStorageKey(key);
+  if (isNativeRuntime() && window.RadarLocalFirst) {
+    if (window.RadarLocalFirst.isAccountOpen?.()) return window.RadarLocalFirst.getJSON(scopedKey, fallback);
+    const durable = window.RadarLocalFirst.getJSON(scopedKey, null);
+    if (durable !== null) return durable;
+  }
   try {
     const parsed = JSON.parse(window.localStorage.getItem(scopedKey) || "null");
     if (parsed !== null) return parsed;
   } catch (error) {
     // Fall through to SQLite.
   }
-  return window.RadarLocalFirst?.getJSON(scopedKey, fallback) ?? fallback;
+  return fallback;
 };
 
 const writeJsonStorage = (key, value) => {
@@ -6580,8 +6627,8 @@ const setFutbolFantasyStatus = (message, mode = "") => {
 };
 
 const applyFutbolFantasySession = (payload = {}) => {
-  if (payload?.mobileSession && window.RadarLocalFirst) {
-    void window.RadarLocalFirst.setSecure("futbolfantasy-session", payload.mobileSession).catch(() => null);
+  if (payload?.mobileCredential?.cookie && window.RadarLocalFirst) {
+    void window.RadarLocalFirst.setSecure(FUTBOL_FANTASY_SESSION_KEY, payload.mobileCredential).catch(() => null);
   }
   state.futbolFantasy.connected = Boolean(payload.connected);
   state.futbolFantasy.userName = payload.userName || "";
@@ -7040,7 +7087,7 @@ const renderLeagueIdentity = () => {
 
 const applyBiwengerSession = (payload) => {
   if (payload?.mobileCredential && window.RadarLocalFirst) {
-    void window.RadarLocalFirst.setSecure("biwenger-session", payload.mobileCredential).catch(() => null);
+    void window.RadarLocalFirst.setSecure(BIWENGER_SESSION_KEY, payload.mobileCredential).catch(() => null);
   }
   const boundLeagueId = Number(activeLeague()?.biwengerLeagueId || 0);
   const remoteLeagueId = Number(payload?.leagueId || 0);
@@ -8254,7 +8301,7 @@ const futbolFantasyLogout = async () => {
     if (!response.ok) throw new Error(payload.error || describeApiError(response.status, "/api/futbolfantasy/logout"));
     const passwordInput = qs("#ff-password");
     if (passwordInput) passwordInput.value = "";
-    if (window.RadarLocalFirst) await window.RadarLocalFirst.removeSecure("futbolfantasy-session").catch(() => null);
+    if (window.RadarLocalFirst) await window.RadarLocalFirst.removeSecure(FUTBOL_FANTASY_SESSION_KEY).catch(() => null);
     applyFutbolFantasySession({ connected: false });
     setFutbolFantasyStatus("Sesion de Futbol Fantasy cerrada.", "ready");
   } catch (error) {
@@ -9334,7 +9381,7 @@ const biwengerLogout = async () => {
   setBiwengerBusy(true, "Cerrando");
   try {
     await apiFetch("/api/biwenger/logout", { method: "POST" });
-    if (window.RadarLocalFirst) await window.RadarLocalFirst.removeSecure("biwenger-session").catch(() => null);
+    if (window.RadarLocalFirst) await window.RadarLocalFirst.removeSecure(BIWENGER_SESSION_KEY).catch(() => null);
     state.biwenger.connected = false;
     state.biwenger.userName = "";
     state.biwenger.leagueName = "";
@@ -12647,10 +12694,13 @@ const renderHome = () => {
   const canHomeTeam = platformUserCanAccess("team");
   const canHomeLeague = platformUserCanAccess("league");
   const canHomeFinance = canHomeMarket || canHomeTeam;
-  const balance = Number(state.finance.balance);
-  if (qs("#home-balance")) qs("#home-balance").textContent = canHomeFinance && Number.isFinite(balance) ? formatFinanceMoney(balance) : "—";
+  const rawBalance = state.finance.balance;
+  const balance = rawBalance === null || rawBalance === undefined || rawBalance === "" ? null : Number(rawBalance);
+  if (qs("#home-balance")) qs("#home-balance").textContent = canHomeFinance && Number.isFinite(balance) ? formatCompactFinanceMoney(balance) : "—";
   if (qs("#home-squad-count")) qs("#home-squad-count").textContent = canHomeTeam && state.teamPlayers.length ? `${state.teamPlayers.length}` : "—";
-  const myStanding = (state.leagueOverview?.standings || []).find((row) => row.isMe || Number(row.userId || 0) === Number(state.biwenger.userId || 0));
+  const currentBiwengerUserId = Number(state.biwenger.userId || 0);
+  const myStanding = (state.leagueOverview?.standings || []).find((row) => row.isMe === true
+    || (currentBiwengerUserId > 0 && Number(row?.userId || 0) === currentBiwengerUserId));
   const rank = Number(myStanding?.rank || myStanding?.position || myStanding?.provisionalRank || 0);
   if (qs("#home-position")) qs("#home-position").textContent = canHomeLeague && rank > 0 ? `${rank}.º` : "—";
 
@@ -12659,7 +12709,14 @@ const renderHome = () => {
   const title = qs("#home-action-title");
   const copy = qs("#home-action-copy");
   const actionButton = qs("#home-action-button");
-  if (primary) {
+  if (canHomeFinance && Number.isFinite(balance) && balance < 0) {
+    if (title) title.textContent = "Regulariza la deuda antes de fichar";
+    if (copy) copy.textContent = `Tu saldo guardado es ${formatFinanceMoney(balance)}. Revisa ventas o pujas antes de abrir una compra nueva.`;
+    if (actionButton) {
+      actionButton.textContent = canHomeMarket ? "Ver mercado" : "Ver plantilla";
+      delete actionButton.dataset.homePlayerId;
+    }
+  } else if (primary) {
     const plan = smartBidPlan(primary);
     if (title) title.textContent = `${decisionLabels[primary.marketDecision.type]?.short || "Revisar"}: ${primary.name}`;
     if (copy) copy.textContent = plan.rationalMax > 0
@@ -13880,6 +13937,38 @@ const setDeviceBackupStatus = (message, mode = "") => {
 const initDeviceBackupEvents = () => {
   const passwordInput = qs("#device-backup-password");
   const fileInput = qs("#device-backup-file");
+  const nativeBackupPlugin = () => isNativeRuntime() ? window.Capacitor?.Plugins?.LocalData : null;
+  const saveBackupFile = async (serialized, filename) => {
+    const native = nativeBackupPlugin();
+    if (native?.saveBackup) return native.saveBackup({ content: serialized, filename });
+    const blob = new Blob([serialized], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+    return { saved: true };
+  };
+  const restoreBackup = async (serialized) => {
+    if (!window.RadarLocalFirst || !passwordInput?.value) {
+      setDeviceBackupStatus("Escribe la contraseña antes de importar.", "error");
+      return;
+    }
+    const preview = await window.RadarLocalFirst.previewEncryptedBackup(serialized, passwordInput.value);
+    if (!window.confirm(`Copia de ${preview.scope || "cuenta"}, ${preview.records} registros (${preview.exportedAt || "fecha desconocida"}). Se reemplazarán los datos de la cuenta actual. ¿Continuar?`)) return;
+    setDeviceBackupStatus("Guarda la copia de recuperación antes de restaurar...", "busy");
+    const recovery = await window.RadarLocalFirst.exportEncryptedBackup(passwordInput.value);
+    const recoveryResult = await saveBackupFile(recovery, `radar-fantasy-recovery-before-import-${new Date().toISOString().slice(0, 10)}.json`);
+    if (recoveryResult?.cancelled || !recoveryResult?.saved) {
+      setDeviceBackupStatus("Restauración cancelada: no se guardó la copia de recuperación.", "error");
+      return;
+    }
+    setDeviceBackupStatus("Validando y restaurando...", "busy");
+    await window.RadarLocalFirst.importEncryptedBackup(serialized, passwordInput.value, { replace: true });
+    setDeviceBackupStatus("Copia restaurada. Recargando los datos locales...", "ready");
+    window.setTimeout(() => window.location.reload(), 250);
+  };
   qs("#device-backup-export")?.addEventListener("click", async () => {
     if (!window.RadarLocalFirst || !passwordInput?.value) {
       setDeviceBackupStatus("Escribe una contraseña para proteger la copia.", "error");
@@ -13888,42 +13977,38 @@ const initDeviceBackupEvents = () => {
     try {
       setDeviceBackupStatus("Preparando copia cifrada...", "busy");
       const serialized = await window.RadarLocalFirst.exportEncryptedBackup(passwordInput.value);
-      const blob = new Blob([serialized], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `radar-fantasy-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
+      const result = await saveBackupFile(serialized, `radar-fantasy-backup-${new Date().toISOString().slice(0, 10)}.json`);
+      if (result?.cancelled || !result?.saved) {
+        setDeviceBackupStatus("Exportación cancelada; no se ha guardado ninguna copia.");
+        return;
+      }
       setDeviceBackupStatus("Copia cifrada exportada. Guarda el archivo y la contraseña por separado.", "ready");
     } catch (error) {
       setDeviceBackupStatus(error.message || "No se pudo exportar la copia.", "error");
     }
   });
-  qs("#device-backup-import")?.addEventListener("click", () => fileInput?.click());
-  fileInput?.addEventListener("change", async () => {
-    const file = fileInput.files?.[0];
-    if (!file) return;
-    if (!passwordInput?.value) {
-      setDeviceBackupStatus("Escribe la contraseña antes de importar.", "error");
-      fileInput.value = "";
+  qs("#device-backup-import")?.addEventListener("click", async () => {
+    const native = nativeBackupPlugin();
+    if (!native?.openBackup) {
+      fileInput?.click();
       return;
     }
     try {
-      const serialized = await file.text();
-      const preview = await window.RadarLocalFirst.previewEncryptedBackup(serialized, passwordInput.value);
-      if (!window.confirm(`Copia de ${preview.scope || "cuenta"}, ${preview.records} registros (${preview.exportedAt || "fecha desconocida"}). Se reemplazarán los datos de la cuenta actual. ¿Continuar?`)) return;
-      setDeviceBackupStatus("Validando y restaurando...", "busy");
-      const recovery = await window.RadarLocalFirst.exportEncryptedBackup(passwordInput.value);
-      const recoveryUrl = URL.createObjectURL(new Blob([recovery], { type: "application/json" }));
-      const recoveryLink = document.createElement("a");
-      recoveryLink.href = recoveryUrl;
-      recoveryLink.download = `radar-fantasy-recovery-before-import-${new Date().toISOString().slice(0, 10)}.json`;
-      recoveryLink.click();
-      URL.revokeObjectURL(recoveryUrl);
-      await window.RadarLocalFirst.importEncryptedBackup(serialized, passwordInput.value, { replace: true });
-      setDeviceBackupStatus("Copia restaurada. Recargando los datos locales...", "ready");
-      window.setTimeout(() => window.location.reload(), 250);
+      const result = await native.openBackup();
+      if (result?.cancelled) {
+        setDeviceBackupStatus("Importación cancelada; los datos no han cambiado.");
+        return;
+      }
+      await restoreBackup(String(result?.content || ""));
+    } catch (error) {
+      setDeviceBackupStatus(error.message || "No se pudo leer la copia; los datos no han cambiado.", "error");
+    }
+  });
+  fileInput?.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    try {
+      await restoreBackup(await file.text());
     } catch (error) {
       setDeviceBackupStatus(error.message || "No se pudo importar la copia; los datos no han cambiado.", "error");
     } finally {
@@ -13967,6 +14052,16 @@ const initEvents = () => {
   }, true);
   initMarketAnalysisCenter();
   initFantasySettingsTabs();
+  qsa("[data-mobile-team-mode]").forEach((button) => button.addEventListener("click", () => {
+    const mode = button.dataset.mobileTeamMode === "lineup" ? "lineup" : "roster";
+    const teamView = qs("#team-view");
+    if (teamView) teamView.dataset.mobileTeamMode = mode;
+    qsa("[data-mobile-team-mode]").forEach((item) => {
+      const active = item.dataset.mobileTeamMode === mode;
+      item.classList.toggle("active", active);
+      item.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }));
   qs("#load-demo").addEventListener("click", loadDemo);
   qs("#sync-biwenger").addEventListener("click", () => refreshBiwengerStatus());
   qs("#biwenger-login").addEventListener("click", biwengerLogin);

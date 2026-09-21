@@ -1,7 +1,7 @@
 # Ejecución local-first móvil
 
-Fecha de ejecución: 2026-09-19  
-Versión del producto: 3.13.0 (Android `versionCode` 58)  
+Fecha de ejecución: 2026-09-21
+Versión del producto: 3.13.1 (Android `versionCode` 59)
 Branch de trabajo: `codex/release-3.12.3`
 
 Mandato de entrega recibido durante la ejecución: cerrar con commit subido al repositorio remoto, APK generada y web desplegada/verificada, preservando credenciales, datos y `output/`.
@@ -10,26 +10,23 @@ Mandato de entrega recibido durante la ejecución: cerrar con commit subido al r
 
 - El almacenamiento funcional nativo usa `LocalDataPlugin` con SQLite schema 2, claves `(scope, record_key)`, tabla de metadatos, revisiones, migración v1 y secretos separados cifrados con AES-GCM/Android Keystore. `setMany` valida tamaño y claves, confirma la transacción antes de resolver, usa `insertOrThrow` y admite borrado atómico.
 - `mobile-local-first.js` mantiene un `Map` por cuenta, cola serial de escrituras, `openAccount`, `set/get/remove`, `flush`, exportación e importación. La copia de `localStorage` es un espejo de transición. El marcador `legacy-import-v1` y la carga por scope evitan mezclar cuentas; los fallos de SQLite se propagan y no se anuncian como guardados.
-- La autenticación móvil puede emitir un JWT RS256 con `sub`, `aud`, `iss`, dispositivo hash, fechas, versión de autorización, rol y permisos. La clave privada se obtiene únicamente de `FMS_OFFLINE_AUTH_PRIVATE_KEY`; la aplicación verifica firma, issuer, audience, dispositivo y TTL máximo de siete días antes de permitir arranque offline. Deben configurarse `FMS_OFFLINE_AUTH_PRIVATE_KEY`, `FMS_OFFLINE_AUTH_PUBLIC_KEY`/`APP_CONFIG.offlineAuthPublicKey` y, opcionalmente, issuer/audience/TTL fuera del repositorio.
-- Se añadió el gateway `/api/mobile/permission` y `/api/mobile/team-tracking/feed`. El gateway resuelve auth/CORS antes de abrir archivos funcionales; el feed recibe equipos explícitos y usa una estructura efímera. Las sesiones Biwenger móviles se transportan mediante `Authorization` y no se guardan en los archivos globales de sesiones; credenciales recibidas se guardan sólo en Keystore.
-- Backup portátil desde Ajustes: sobre JSON versionado, PBKDF2-SHA256 (210.000 iteraciones, salt de 16 bytes), AES-GCM con IV de 12 bytes, validación de límites, contraseña no persistida y rechazo de contraseña/corrupción sin mutación. `allowBackup=false` evita que el backup automático de Android copie secretos cuya clave Keystore no migra.
-- Inicio móvil conserva fecha real, estado de conexión, una acción, tres métricas sin convertir saldo desconocido en cero, oportunidades y actualización global; `mobile-local-first.js` entra en `mobile-web`/Capacitor.
+- La autenticación móvil emite un JWT RS256 con `sub`, `aud`, `iss`, hash de dispositivo, fechas, autorización, rol y permisos. La clave privada se obtiene del entorno o de `.fantasy-db/offline-auth.pem`, protegido de webroot; el cliente valida firma, issuer, audience, dispositivo, permisos, fechas finitas y TTL máximo de siete días antes del arranque offline.
+- El gateway `/api/mobile/permission` y `/api/mobile/team-tracking/feed` resuelve auth/CORS antes de abrir archivos funcionales. Cada petición reconstruye el contexto del proveedor desde el token y liga seleccionada, sin persistir sesiones móviles en los archivos globales. El feed exige el permiso `teamTracking`.
+- Backup portátil desde Ajustes usa PBKDF2-SHA256 (210.000 iteraciones) y AES-GCM sobre JSON versionado, sin secretos. Android usa el selector SAF para guardar/abrir; cancelación, tamaño inválido y contraseña/corrupción no mutan datos. `allowBackup=false` evita copias automáticas de secretos Keystore.
+- El almacenamiento SQLite es autoridad tras abrir la cuenta: la cola drena escrituras concurrentes, el cambio de cuenta confirma antes de cambiar scope, la importación confirma antes de mutar memoria y la migración legacy sólo acepta claves de la cuenta actual o claves explícitamente de dispositivo.
+- Inicio móvil muestra saldo desconocido como `—`, prioriza deuda real y evita posiciones de ranking sin identificador válido. Mercado y Plantilla reducen los paneles iniciales en 320/390 px; Plantilla alterna Plantilla/Alineación y `Centro de liga` queda accesible una vez desde Más en móvil.
 
 ## Evidencia local
 
-- `npm.cmd test`: correcto; incluye contratos DOM, motor deportivo y `tests/mobile-local-first.test.js` (aislamiento de scopes, borrado durable y rechazo de backup inválido).
-- `node --check app.js mobile-local-first.js scripts/prepare-mobile-web.cjs tests/engine-smoke.test.js`: correcto.
+- `npm.cmd test`: correcto; incluye contratos DOM, motor deportivo y `tests/mobile-local-first.test.js` (aislamiento de scopes, borrado durable, rechazo de backup inválido, importación transaccional, cambio de cuenta y escrituras concurrentes).
+- `node --check app.js`, `node --check mobile-local-first.js` y `node --check app-config.js`: correctos.
 - `npm.cmd run mobile:copy`: correcto; copia el nuevo módulo a `mobile-web` y assets Android/iOS.
 - Gradle JDK 21 desde `.tooling/jdk-21.0.6+7`: `android\gradlew.bat assembleDebug --no-daemon` correcto.
-- APK debug: `android/app/build/outputs/apk/debug/app-debug.apk`, SHA-256 `CB6637EB32BA984EBD70C6C7959B63F1C943453052B8CCA8ADD7B6F3036CE1E6`, tamaño 8.068.182 bytes en esta ejecución. `apksigner` verificó el APK con el certificado Android Debug (digest SHA-256 `a3b5f863747adeca6f201be149984377896762b7c8b5dd63ff8e4773d4f79484`).
+- APK debug: `android/app/build/outputs/apk/debug/app-debug.apk`, SHA-256 `9520CEC8207EE6706AE7295A0D978F35783147205AC535D672F268684C4DF610`, tamaño 8.075.527 bytes. `apksigner` verificó el certificado SHA-256 `a3b5f863747adeca6f201be149984377896762b7c8b5dd63ff8e4773d4f79484`, igual al APK histórico comprobado localmente.
 - `git diff --check`: correcto.
-- PHP no está instalado en este equipo: `php -l api/index.php` y `php -l api/auth.php` quedan pendientes de un runtime PHP. No se simuló ese resultado.
-- Commits publicados en `origin/codex/release-3.12.3`: `410d6771` (`Implement local-first mobile architecture`) y `26889786` (`Record mobile deployment evidence`). La carpeta `output/` permaneció sin seguimiento y sin cambios incluidos.
+- `C:\\Users\\USUARIO\\Documents\\App Mercado Fantasy\\.tooling\\php-audit\\php.exe -l api/auth.php` y `-l api/index.php`: correctos. Con su extensión OpenSSL se firmó y verificó una autorización aislada, sin cuenta ni operación real.
+- `git diff --check`: correcto. El commit y el despliegue de esta ejecución se anotan tras completar la paridad remota.
 
 ## Límites y pasos de despliegue
 
-La web se publicó en `/fms` mediante FTP con una copia temporal previa de los archivos remotos. Se verificó paridad SHA-256 remota para `index.html`, `app.js`, `styles.css`, `data.js`, `sw.js`, `manifest.webmanifest`, `mobile-local-first.js`, `api/index.php` y `api/auth.php`. Las comprobaciones HTTPS del 2026-09-19 devolvieron `200`: `/fms/api/healthz` respondió `ok:true`, `/fms/api/mobile/healthz` respondió `ok:true, mode:gateway` y `/fms/index.html` incluyó `mobile-local-first.js?v=1`.
-
-El servidor no recibió ninguna clave privada durante esta ejecución. Para habilitar permisos offline firmados hay que inyectar `FMS_OFFLINE_AUTH_PRIVATE_KEY` sólo en el servidor y empaquetar en `app-config.js` la clave pública correspondiente, además de comprobar la firma de una APK release contra la publicada. La APK construida aquí es debug y no constituye evidencia de compatibilidad de actualización con la firma de producción.
-
-La sesión PHP de proveedor sigue siendo un canal temporal para las peticiones actuales; el token móvil ya no se persiste en `biwenger-sessions.json`, pero una pasarela completamente stateless requerirá un adaptador de proveedor que acepte el contexto firmado en cada request. Las operaciones mutantes nunca se reintentan offline.
+La publicación actual queda pendiente de anotar tras la carga FTP con copia temporal de los archivos remotos y la provisión de `.fantasy-db/offline-auth.pem` fuera de las rutas públicas. Se debe comprobar `403` o `404` para su URL directa, salud HTTPS y paridad SHA-256 de los assets desplegados. No hay dispositivo conectado para validar físicamente SAF/instalación; la compilación y los callbacks de cancelación están cubiertos por pruebas.

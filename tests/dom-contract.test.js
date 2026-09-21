@@ -88,7 +88,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=133') || !html.includes('styles.css?v=74') || !sw.includes('radar-fantasy-shell-v84')) {
+if (!html.includes('app.js?v=134') || !html.includes('styles.css?v=75') || !html.includes('mobile-local-first.js?v=2') || !sw.includes('radar-fantasy-shell-v85')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -115,6 +115,12 @@ if (!html.includes('id="interaction-wait-popup"') || !js.includes("beginInteract
 
 if (!html.includes('id="mobile-league-trigger"') || !html.includes('class="mobile-nav-bar"') || !js.includes("openMobileSidebar") || !js.includes("closeMobileSidebar")) {
   throw new Error("Mobile navigation must provide a compact league trigger, a simplified bottom bar, and a secondary sheet");
+}
+
+if (!html.includes('mobile-league-shortcut') || !html.includes('data-view="league"')
+  || !html.includes('Centro de liga') || !css.includes('.mobile-league-shortcut')
+  || !js.includes('platformUserCanAccess(viewName)')) {
+  throw new Error("The mobile Más sheet must keep Centro de liga visible and permission-gated");
 }
 
 if (!js.includes("biwengerImportSignature") || !js.includes("mercado sin cambios; se omite el resto de la descarga") || !js.includes("60 * 60 * 1000")) {
@@ -149,6 +155,12 @@ if (!androidLocalData.includes("SQLiteOpenHelper") || !androidLocalData.includes
   || !androidLocalData.includes('CREATE TABLE app_records') || !androidLocalData.includes('CREATE TABLE secure_records')
   || !androidMainActivity.includes("registerPlugin(LocalDataPlugin.class)")) {
   throw new Error("The APK must use SQLite for local app data and Android Keystore for cached access data");
+}
+
+if (!androidLocalData.includes("ACTION_CREATE_DOCUMENT") || !androidLocalData.includes("ACTION_OPEN_DOCUMENT")
+  || !androidLocalData.includes("saveBackupResult") || !androidLocalData.includes("openBackupResult")
+  || !js.includes("native?.saveBackup") || !js.includes("native.openBackup") || !js.includes("recoveryResult?.cancelled")) {
+  throw new Error("Android backups must use SAF and leave data unchanged when recovery export is cancelled");
 }
 
 if (!js.includes("initializeLocalDatabase") || !js.includes("checkpointLocalDatabase")

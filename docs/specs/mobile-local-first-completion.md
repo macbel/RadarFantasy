@@ -1,0 +1,26 @@
+# Cierre de implementación 3.13: revisión y entrega
+
+El usuario pide reanudar y terminar. Esta especificación complementa mobile-local-first.md, no sustituye sus criterios. Para cada proyecto, asignar análisis y especificación al agente con capacidad suficiente más ajustada a la complejidad y el riesgo, sin imponer Astra ni un esfuerzo excesivo por defecto. Elegir también el ejecutor mínimo capaz para el trabajo. Esta pauta reemplaza cualquier selección fija de agente o esfuerzo que aparezca en notas históricas.
+
+## Baseline verificado
+
+HEAD y remoto codex/release-3.12.3 = 0dc474bc. Tres commits previos publicados, APK debug 3.13.0 code58 hash CB6637EB32BA984EBD70C6C7959B63F1C943453052B8CCA8ADD7B6F3036CE1E6. Web healthz y mobile/healthz 200; app.js y mobile-local-first.js remoto NO coinciden con locales. Cinco archivos pendientes: LocalDataPlugin.java, api/auth.php, api/index.php, app.js, mobile-local-first.js. Conservarlos y auditarlos; output/ preexistente ajeno sin seguimiento.
+
+Pruebas pasaban en revisión previa pero insuficientes. Reporte anterior admite claves de firma offline sin configurar, pasarela de proveedor incompleta y firma APK sin cotejar. No reutilizar 'implementación completada' como evidencia.
+
+## Prioridades técnicas obligatorias
+
+1. Revisar TODO el diff pendiente: sesiones móviles PHP se limpian ahora antes de send_json/close, pero mobile_biwenger_session_from_request sólo retorna token, leagueId y xVersion. Muchas funciones esperan userId, competition, scoring, availableLeagues etc. Reconstruir/verificar contexto íntegro con proveedor o sobre firmado que impida inventar liga/usuario, sin lecturas funcionales de servidor, sin recuperar sesiones de otra cuenta y sin consulta redundante por cada helper. Cachear contexto sólo en request y añadir pruebas de status/import/operaciones/switch. Auditar errores/finally/shutdown para que no sobrevivan tokens al session write. FF cookie temporal debe limpiarse aun con excepciones; no transferir cookies a dominio arbitrario.
+2. Revisar auth offline: firma realmente generada y verificada, claims como fuente de permisos (no user JSON mutable separado), logout y denegaciones invalidan, reloj/caducidad, cuenta/dispositivo correctos. Clave privada configurada de forma segura y pública empaquetada. Autorizado provisionar clave para esta funcionalidad: no bloquear sólo porque aún no existe. Verificar si ya hay una y preservarla. Si hosting no permite env multiline, añadir ruta privada de configuración/clave fuera de document root o denegada por servidor y COMPROBAR no accesible por HTTP antes de confiar; no exponer PEM/credenciales en outputs ni Git. Preferir file path/env y generar par local ignorado mediante crypto seguro. Prueba servidor emite token válido y firma verificada con pública empaquetada mediante cuenta de prueba aislada/autorizada sólo si existe mecanismo seguro sin tocar cuentas reales. Si no se puede comprobar login real, señalarlo; no inventar éxito.
+3. Auditar persistencia de scopes/device keys y todas escrituras, flush errores, migración idempotente, borrado sin resurrección. Backup portable real Android: comprobar que download de Blob/input funciona dentro WebView o implementar SAF con fichero cifrado, cancelación y restore transaccional. No afirmar funcionalidad probada sólo por tests JS.
+4. Rediseño original exige también Mercado/Plantilla y Más. Contrastar spec original con UI actual: no limitarse a Inicio. Pruebas visuales de contenido realista en 320/390px día/noche, controles globales accesibles, oportunidades abren ficha, deuda/permisos/estado vacío apropiados. Evitar publicar pantallas densas originales como rediseño acabado.
+5. Provisionar runtime PHP local si no existe (fuente oficial verificable) para lint y pruebas backend aisladas. No dejar lint pendiente si se puede resolver con runtime portátil. Tests de integración no realizan pujas/ventas reales.
+
+## Cierre
+
+- Completar matriz A1-A17 de spec original con evidencia y limitaciones explícitas, sin marcar mock como prueba dispositivo.
+- Actualizar versión coherente siguiente (3.13.1/code59 si no colisión), SW y query cache, registrar informe veraz.
+- npm tests, syntax JS/PHP, diff-check, mobile:copy y Gradle JDK21. Cotejar certificado APK con APK anterior local/publicada; debug puede ser firma histórica válida, no asumir incompatible por etiqueta. No cambiar clave ni recomendar desinstalar. Entregar APK identificada versión/hash/ruta fácil de usar.
+- Desplegar backend compatible/clave segura y cliente /fms mediante mecanismo existente, respaldando código; nunca subir BD reales ni sobrescribir usuarios. Verificar bytes/hash contra archivos locales finales y health/API. Un endpoint health por sí solo no demuestra auth/funcionalidad.
+- Commit y push todos archivos desarrollo de este trabajo a rama actual, excluir secretos/artifacts/output. Verificar ls-remote igual a HEAD y worktree sin modificaciones pendientes de la tarea. No crear release/merge main por defecto.
+- Actualizar docs/specs/mobile-local-first-execution.md con estado final. Informar al padre cuando listo para revisión antes de dar entrega completa. Reportar impedimentos concretos y continuar todas partes independientes; no detenerse por permisos ya dados.

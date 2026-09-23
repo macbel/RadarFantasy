@@ -27,7 +27,7 @@ Mandato de entrega recibido durante la ejecución: cerrar con commit subido al r
 - `C:\\Users\\USUARIO\\Documents\\App Mercado Fantasy\\.tooling\\php-audit\\php.exe -l api/auth.php` y `-l api/index.php`: correctos. Con su extensión OpenSSL se firmó y verificó una autorización aislada, sin cuenta ni operación real.
 - `git diff --check`: correcto. El commit y el despliegue de esta ejecución se anotan tras completar la paridad remota.
 
-## Verificación remota y límites (2026-09-23)
+## Verificación remota y límites (2026-09-23; backend bloqueado)
 
 La inspección HTTPS confirmó que los archivos estáticos de producción ya coinciden byte por byte con los artefactos locales; no hizo falta volver a cargarlos. Los SHA-256 remoto/local verificados fueron:
 
@@ -43,8 +43,10 @@ La inspección HTTPS confirmó que los archivos estáticos de producción ya coi
 
 `https://alufi.es/fms/` y una petición con query de caché respondieron 200. El HTML servido usa `styles.css?v=75`, `data.js?v=15`, `mobile-local-first.js?v=2` y `app.js?v=134`; el service worker local identifica `radar-fantasy-shell-v85`. El bundle de producción contiene `Centro de liga` y su hash coincide con el bundle local. `/api/healthz` respondió 200 (`ok:true`, `criteriaVersion:11`) y `/api/mobile/healthz` respondió 200 (`ok:true`, `mode:"gateway"`). Sin iniciar sesión, `/api/mobile/permission` y `/api/mobile/team-tracking/feed` devolvieron 401 `Debes iniciar sesión`, como corresponde. No se usó ninguna cuenta real, por lo que no se pudo comprobar una autorización firmada en vivo.
 
+Una comprobación independiente posterior del preflight `OPTIONS https://alufi.es/fms/api/mobile/permission`, enviando `Origin: https://evil.example`, recibió `204` junto con `Access-Control-Allow-Origin: https://evil.example` y `Access-Control-Allow-Credentials: true`. Esa combinación refleja la política CORS permisiva anterior y demuestra que el `api/auth.php` desplegado no corresponde al backend local final. Por tanto, los health checks y los 401 anteriores no prueban que la versión final del gateway esté activa: el backend de producción sigue pendiente y no debe considerarse entrega completa.
+
 La petición HEAD a `https://alufi.es/fms/.fantasy-db/offline-auth.pem` respondió 403; `https://alufi.es/fms/api/.htaccess` también respondió 403. Esto verifica que esas rutas no se pueden leer por HTTP, pero no demuestra por sí solo que la clave privada exista ni que el backend en producción la esté usando. La firma RS256 y su verificación sí quedaron probadas localmente con una autorización aislada mediante PHP/OpenSSL, sin cuenta ni operación real.
 
-No se transfirieron archivos durante esta comprobación. La configuración FileZilla local ofrece FTP en claro (puerto 21); `AUTH TLS` tras `USER` respondió 530 y `FEAT` no anunció TLS. El puerto 22 aceptó autenticación SSH con la clave de host previamente guardada, pero el servidor reseteó tanto la apertura del subsistema SFTP como una orden de lectura inocua (`pwd; ls -la`). Por ello no se pudo verificar la paridad de `api/index.php`/`api/auth.php` con los archivos locales ni provisionar/comprobar la clave fuera de banda. Los controles HTTP anteriores son evidencia de rutas y respuestas, no una prueba de que el backend PHP remoto tenga el mismo código que el checkout.
+No se transfirieron archivos durante esta comprobación. La configuración de despliegue segura sigue bloqueada: no usar FTP en claro; el servidor reseteó tanto la apertura del subsistema SFTP como una orden de lectura inocua (`pwd; ls -la`). No se pudo verificar la paridad de `api/index.php`/`api/auth.php` con los archivos locales ni provisionar/comprobar la clave fuera de banda. Los controles HTTP anteriores no demuestran paridad del backend; la respuesta CORS observada confirma que la API remota conserva código antiguo y requiere actualización por un canal HTTPS/SFTP de archivos autorizado.
 
 No hay dispositivo Android conectado para validar físicamente SAF o instalación; la compilación y los callbacks de cancelación están cubiertos por pruebas. La APK, el commit de implementación y los assets estáticos ya existentes conservan la evidencia indicada arriba.

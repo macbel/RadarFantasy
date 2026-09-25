@@ -217,8 +217,10 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.2";
+const APP_VERSION = "3.13.3";
+const APP_VERSION_CODE = 61;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
+const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
 const TEAM_ALERTS_READ_KEY = "radar-fantasy.team-alerts-read.v1";
@@ -13907,8 +13909,9 @@ const compareAppVersions = (left, right) => {
   return 0;
 };
 
-let pendingAppUpdateUrl = "";
-let pendingAppUpdateVersion = "";
+let pendingAppUpdate = null;
+let appUpdateCheckPromise = null;
+let appUpdateInstallInProgress = false;
 const setAppUpdateStatus = (message, mode = "") => {
   const status = qs("#app-update-status");
   if (!status) return;
@@ -13920,20 +13923,20 @@ const closeAppUpdatePopup = () => {
   const popup = qs("#app-update-popup");
   if (popup) popup.hidden = true;
 };
-const showAppUpdatePopup = (version, url) => {
-  pendingAppUpdateUrl = url;
-  pendingAppUpdateVersion = version;
+const showAppUpdatePopup = (update) => {
+  pendingAppUpdate = update;
   const popup = qs("#app-update-popup");
   const message = qs("#app-update-message");
   if (!popup || !message) return;
   const platform = window.Capacitor?.getPlatform?.() || "web";
   message.textContent = platform === "android"
-    ? `La versi\u00f3n ${version} est\u00e1 lista. Se descargar\u00e1 el nuevo APK y Android te pedir\u00e1 permiso para instalarlo.`
-    : `La versi\u00f3n ${version} est\u00e1 disponible. Se abrir\u00e1 la p\u00e1gina oficial para completar la actualizaci\u00f3n.`;
+    ? `La versi\u00f3n ${update.version} est\u00e1 lista. Se descargar\u00e1 y verificar\u00e1 el APK antes de abrir el instalador.`
+    : `La versi\u00f3n ${update.version} est\u00e1 disponible. Se abrir\u00e1 el APK oficial.`;
   popup.hidden = false;
 };
 const openPendingAppUpdate = async () => {
-  if (!pendingAppUpdateUrl) return;
+  if (!pendingAppUpdate || appUpdateInstallInProgress) return;
+  appUpdateInstallInProgress = true;
   const platform = window.Capacitor?.getPlatform?.() || "web";
   const browser = window.Capacitor?.Plugins?.Browser;
   const updater = window.Capacitor?.Plugins?.AppUpdater;
@@ -13947,27 +13950,51 @@ const openPendingAppUpdate = async () => {
       if (installButton) installButton.disabled = true;
       if (laterButton) laterButton.disabled = true;
       if (message) message.textContent = "Preparando la descarga segura del APK...";
-      progressListener = await updater.addListener("appUpdateProgress", ({ progress = 0, downloaded = 0, total = 0 } = {}) => {
+      progressListener = await updater.addListener("appUpdateProgress", ({ stage = "downloading", progress = 0, downloaded = 0, total = 0 } = {}) => {
         const size = total > 0 ? ` \u00b7 ${(downloaded / 1048576).toFixed(1)} de ${(total / 1048576).toFixed(1)} MB` : "";
-        if (message) message.textContent = `Descargando actualizaci\u00f3n: ${Math.max(0, Math.min(100, progress))}%${size}`;
+        const stageText = stage === "verifying" ? "Verificando el APK..." : stage === "permission" ? "Concede permiso a Radar Fantasy para instalar esta actualizaci\u00f3n." : stage === "installer" ? "Abriendo el instalador de Android..." : `Descargando actualizaci\u00f3n: ${Math.max(0, Math.min(100, progress))}%${size}`;
+        if (message) message.textContent = stageText;
+        setAppUpdateStatus(stageText, "busy");
       });
-      await updater.downloadAndInstall({ url: pendingAppUpdateUrl, version: pendingAppUpdateVersion || "latest" });
-      if (message) message.textContent = "Descarga completada. Confirma la instalaci\u00f3n en Android.";
-      setAppUpdateStatus("APK descargado; esperando confirmaci\u00f3n de Android.", "ready");
+      await updater.downloadAndInstall({ url: pendingAppUpdate.url, version: pendingAppUpdate.version, expectedSha256: pendingAppUpdate.sha256 || "", expectedSize: pendingAppUpdate.size || 0, packageName: pendingAppUpdate.packageName || "com.fantasymarketscout.app", versionCode: pendingAppUpdate.versionCode || 0 });
+      if (message) message.textContent = "Instalador abierto. Confirma la actualizaci\u00f3n en Android.";
+      setAppUpdateStatus("Instalador abierto; esperando tu confirmaci\u00f3n en Android.", "ready");
       return;
     }
-    if (isNativeRuntime() && browser) await browser.open({ url: pendingAppUpdateUrl });
-    else window.open(pendingAppUpdateUrl, "_blank", "noopener");
+    if (isNativeRuntime() && browser) await browser.open({ url: pendingAppUpdate.url });
+    else window.open(pendingAppUpdate.url, "_blank", "noopener");
     closeAppUpdatePopup();
   } catch (error) {
     const detail = error?.message ? ` ${error.message}` : "";
     if (message) message.textContent = `No se pudo completar la actualizaci\u00f3n.${detail}`;
-    setAppUpdateStatus("No se pudo completar la descarga. Int\u00e9ntalo de nuevo.", "error");
+    setAppUpdateStatus(`No se pudo completar la actualizaci\u00f3n.${detail}`, "error");
   } finally {
     if (progressListener?.remove) await progressListener.remove();
     if (installButton) installButton.disabled = false;
     if (laterButton) laterButton.disabled = false;
+    appUpdateInstallInProgress = false;
   }
+};
+const readAndroidUpdateManifest = async () => {
+  const response = await fetch(ANDROID_UPDATE_MANIFEST_URL, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Manifiesto HTTP ${response.status}`);
+  const data = await response.json();
+  const version = String(data.version || "");
+  const url = String(data.apkUrl || "");
+  if (!/^\d+\.\d+\.\d+$/.test(version) || !Number.isSafeInteger(data.versionCode) || data.versionCode <= 0 || data.packageName !== "com.fantasymarketscout.app" || !/^https:\/\//i.test(url) || !/\.apk(?:\?|$)/i.test(url) || !/^[a-f0-9]{64}$/i.test(data.sha256 || "") || !Number.isSafeInteger(data.size) || data.size <= 0) {
+    throw new Error("El manifiesto de actualización contiene datos incompletos o inválidos.");
+  }
+  return { version, versionCode: data.versionCode, packageName: data.packageName, url, sha256: data.sha256, size: data.size };
+};
+const readGithubUpdate = async () => {
+  const response = await fetch(LATEST_RELEASE_API_URL, { cache: "no-store", headers: { Accept: "application/vnd.github+json" } });
+  if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
+  const release = await response.json();
+  const version = String(release.tag_name || "").replace(/^v/i, "");
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("GitHub no indica una versión válida.");
+  const apk = Array.isArray(release.assets) ? release.assets.find((asset) => /\.apk$/i.test(asset.name || "") && /^https:\/\//i.test(asset.browser_download_url || "")) : null;
+  if (!apk) throw new Error(`La versión v${version} de GitHub no tiene un APK para Android.`);
+  return { version, url: apk.browser_download_url, size: Number.isSafeInteger(apk.size) ? apk.size : 0, packageName: "com.fantasymarketscout.app" };
 };
 const checkForAppUpdate = async ({ manual = false } = {}) => {
   if (!isNativeRuntime()) {
@@ -13975,31 +14002,36 @@ const checkForAppUpdate = async ({ manual = false } = {}) => {
     return;
   }
   const lastCheck = Number(readLocalValue(APP_UPDATE_CHECK_KEY) || 0);
-  if (!manual && Date.now() - lastCheck < 6 * 60 * 60 * 1000) return;
+  if (!manual && Date.now() - lastCheck < 30 * 60 * 1000) return;
+  if (appUpdateCheckPromise) return appUpdateCheckPromise;
+  appUpdateCheckPromise = (async () => {
   setAppUpdateStatus("Buscando una versi\u00f3n nueva...", "busy");
   try {
-    const response = await fetch(LATEST_RELEASE_API_URL, { cache: "no-store", headers: { Accept: "application/vnd.github+json" } });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const release = await response.json();
-    const latestVersion = String(release.tag_name || release.name || "").replace(/^v/i, "");
+    let update;
+    let manifestError;
+    try { update = await readAndroidUpdateManifest(); }
+    catch (error) { manifestError = error; }
+    if (!update) {
+      try { update = await readGithubUpdate(); }
+      catch (error) { throw new Error(`${manifestError?.message || "Manifiesto no disponible"}; ${error.message}`); }
+    }
     writeLocalValue(APP_UPDATE_CHECK_KEY, String(Date.now()));
-    if (!latestVersion || compareAppVersions(latestVersion, APP_VERSION) <= 0) {
+    if ((update.versionCode && update.versionCode <= APP_VERSION_CODE) || compareAppVersions(update.version, APP_VERSION) <= 0) {
+      if (manifestError) {
+        setAppUpdateStatus(`No se pudo consultar el servidor de actualizaciones: ${manifestError.message}. GitHub aún no publica una versión nueva.`, "error");
+        return;
+      }
       setAppUpdateStatus(`Radar Fantasy v${APP_VERSION} est\u00e1 actualizada.`, "ready");
       return;
     }
-    const platform = window.Capacitor?.getPlatform?.() || "";
-    const apk = Array.isArray(release.assets)
-      ? release.assets.find((asset) => /\.apk$/i.test(asset.name || ""))
-      : null;
-    const updateUrl = platform === "android" && apk?.browser_download_url
-      ? apk.browser_download_url
-      : release.html_url;
-    if (!updateUrl) throw new Error("La versi\u00f3n publicada no tiene enlace de instalaci\u00f3n.");
-    setAppUpdateStatus(`Nueva versi\u00f3n v${latestVersion} disponible.`, "ready");
-    showAppUpdatePopup(latestVersion, updateUrl);
+    setAppUpdateStatus(`Nueva versi\u00f3n v${update.version} disponible.`, "ready");
+    showAppUpdatePopup(update);
   } catch (error) {
-    if (manual) setAppUpdateStatus("No se pudo comprobar la actualizaci\u00f3n ahora mismo.", "error");
+    setAppUpdateStatus(`No se pudo comprobar la actualización: ${error.message}`, "error");
   }
+  })();
+  try { return await appUpdateCheckPromise; }
+  finally { appUpdateCheckPromise = null; }
 };
 
 const setDeviceBackupStatus = (message, mode = "") => {
@@ -14698,6 +14730,10 @@ const startAuthenticatedApplication = async (user, { cacheEntitlement = false, e
     setSourceBusy(false);
     void refreshStartupDataInBackground(buildLocalLeaguePayload(ensureLocalLeagueDb()));
     window.setTimeout(() => checkForAppUpdate(), 60 * 1000);
+    window.setInterval(() => checkForAppUpdate(), 30 * 60 * 1000);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") void checkForAppUpdate();
+    });
   }
   applyPlatformAccess();
   const firstView = ["home", "team", "market", "league", "favorites", "team-tracking", "compare", "videos", "settings", "admin"]

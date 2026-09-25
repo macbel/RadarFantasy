@@ -227,7 +227,7 @@
         schemaVersion: SCHEMA_VERSION,
         scope: this.scope,
         exportedAt: new Date().toISOString(),
-        appVersion: global.RADAR_FANTASY_VERSION || "3.13.2",
+        appVersion: global.RADAR_FANTASY_VERSION || "3.13.3",
         records: Array.from(this.memory, ([key, value]) => ({ key, value }))
       };
     },

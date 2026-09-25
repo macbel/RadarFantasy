@@ -6294,6 +6294,28 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
             $fixtures['refreshMergeError'] = $mergeError->getMessage();
         }
     }
+    // A short Feeberse window can contain valid matches for only a few clubs.
+    // Keep looking for the season schedule even when that window is non-empty.
+    if (fixture_competition_family((string)($session['competition'] ?? $session['leagueName'] ?? '')) === 'la-liga'
+        && fixture_upcoming_team_count($fixtures) < 20) {
+        $coverageErrors = [];
+        foreach (['api-football', 'espn', 'thesportsdb'] as $provider) {
+            try {
+                $supplement = match ($provider) {
+                    'api-football' => api_football_current_fixtures($session, max($timeoutSeconds, 12), $headers, $strictTls, $dbDir, $forceRefresh),
+                    'espn' => espn_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh),
+                    default => thesportsdb_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls)
+                };
+                $before = fixture_upcoming_team_count($fixtures);
+                $fixtures = merge_fixture_payloads($fixtures, $supplement);
+                if (fixture_upcoming_team_count($fixtures) > $before) $sourceStrategy .= '+' . $provider . '-coverage';
+                if (fixture_upcoming_team_count($fixtures) >= 20) break;
+            } catch (Throwable $coverageError) {
+                $coverageErrors[$provider] = $coverageError->getMessage();
+            }
+        }
+        if ($coverageErrors) $fixtures['coverageFallbackErrors'] = $coverageErrors;
+    }
     $fixtures = filter_fixture_payload_to_competition($fixtures, $session);
     $fixtures = decorate_fixture_competition_state($fixtures, $session);
     $fixtures['schemaVersion'] = 9;
@@ -6591,7 +6613,7 @@ function api_football_current_fixtures(array $session, int $timeoutSeconds, arra
         'league' => (int)$league['id'],
         'season' => (int)$league['season'],
         'from' => $today->modify('-1 day')->format('Y-m-d'),
-        'to' => $today->modify('+21 days')->format('Y-m-d'),
+        'to' => $today->modify('+45 days')->format('Y-m-d'),
         'timezone' => 'Europe/Madrid'
     ];
     $payload = api_football_get_json('/fixtures', $query, max($timeoutSeconds, 12), $headers, $strictTls);
@@ -7330,6 +7352,20 @@ function thesportsdb_event_timestamp(array $event): int
     return $utc ? $utc->getTimestamp() : strtotime($date . ' ' . $time);
 }
 
+function fixture_upcoming_team_count(array $fixtures): int
+{
+    $teams = [];
+    foreach ((array)($fixtures['events'] ?? []) as $event) {
+        if (!is_array($event) || (int)($event['timestamp'] ?? 0) < time() - 10800
+            || in_array(strtolower((string)($event['status'] ?? '')), ['finished', 'postponed', 'cancelled', 'canceled', 'abandoned'], true)) continue;
+        foreach (['home', 'away'] as $side) {
+            $name = normalize_text((string)($event[$side]['name'] ?? ''));
+            if ($name !== '') $teams[$name] = true;
+        }
+    }
+    return count($teams);
+}
+
 function merge_fixture_payloads(array $primary, array $fallback): array
 {
     $family = fixture_competition_family((string)($primary['competition'] ?? ''));
@@ -7344,15 +7380,7 @@ function merge_fixture_payloads(array $primary, array $fallback): array
         $eventFamily = fixture_competition_family((string)($event['competition'] ?? ''));
         return $family === '' || $eventFamily === '' || $eventFamily === $family;
     };
-    $upcomingTeams = static function (array $events): int {
-        $teams = [];
-        foreach ($events as $event) {
-            if ((int)($event['timestamp'] ?? 0) < time() - 10800 || ($event['status'] ?? '') === 'finished') continue;
-            foreach (['home', 'away'] as $side) $teams[normalize_text((string)($event[$side]['name'] ?? ''))] = true;
-        }
-        unset($teams['']);
-        return count($teams);
-    };
+    $upcomingTeams = static fn(array $events): int => fixture_upcoming_team_count(['events' => $events]);
     $first = array_values(array_filter((array)($primary['events'] ?? []), $valid));
     $second = array_values(array_filter((array)($fallback['events'] ?? []), $valid));
     $preferred = $upcomingTeams($second) > $upcomingTeams($first) ? $fallback : $primary;

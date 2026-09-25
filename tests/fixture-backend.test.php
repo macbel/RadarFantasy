@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 $source = str_replace("\r\n", "\n", file_get_contents(__DIR__ . '/../api/index.php'));
-foreach (['normalize_text', 'fixture_competition_family', 'identity_name_score', 'merge_fixture_payloads', 'merge_recent_detail_payloads'] as $name) {
+foreach (['normalize_text', 'fixture_competition_family', 'identity_name_score', 'fixture_upcoming_team_count', 'merge_fixture_payloads', 'merge_recent_detail_payloads'] as $name) {
     $start = strpos($source, "function $name(");
     if ($start === false) throw new RuntimeException("Missing production function $name");
     $end = $name === 'merge_recent_detail_payloads'
@@ -36,6 +36,7 @@ $wide = ['competition' => 'LaLiga', 'seasonName' => '2026/27', 'events' => $full
 $wideMerged = merge_fixture_payloads($partial, $wide);
 check(count($wideMerged['events']) === 9, 'A 2/20 window must be replaced by the 18/20 season schedule');
 check($wideMerged['providerCoverage']['primaryTeams'] === 2 && $wideMerged['providerCoverage']['secondaryTeams'] === 18 && $wideMerged['providerCoverage']['mergedTeams'] === 18, 'Coverage must reflect the wider schedule');
+check(fixture_upcoming_team_count($partial) === 2 && fixture_upcoming_team_count($wideMerged) === 18, 'Backend must detect partial LaLiga coverage for fallback');
 check(count(merge_fixture_payloads($first, ['competition' => 'Premier League', 'events' => $other['events']])['events']) === 1, 'Competition must not leak');
 check(count(merge_fixture_payloads($first, ['competition' => 'LaLiga', 'seasonName' => '2025/26', 'events' => $other['events']])['events']) === 1, 'Season must not leak');
 $cancelled = $event('Athletic', 'Getafe', 'x', $time);

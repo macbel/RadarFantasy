@@ -1398,6 +1398,11 @@ function send_empty(int $status): void
 
 function apply_cors_headers(): void
 {
+    if (auth_mobile_request()) {
+        auth_apply_mobile_cors();
+        return;
+    }
+
     $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
     $allowed = array_values(array_filter(array_map('trim', explode(',', (string)getenv('FMS_ALLOWED_ORIGINS')))));
     if ($origin !== '') {

@@ -45,7 +45,7 @@ async function run() {
   }
   const port = await reservePort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(php, ['-c', path.join(root, 'php-local.ini'), '-S', `127.0.0.1:${port}`, 'dev-router.php'], {
+  const child = spawn(php, ['-c', path.join(root, 'php-local.ini'), '-S', `127.0.0.1:${port}`, 'local-app-router.php'], {
     cwd: root,
     env: { ...process.env, FMS_ALLOWED_ORIGINS: '', FMS_MOBILE_CORS_ORIGINS: '' },
     stdio: 'ignore',

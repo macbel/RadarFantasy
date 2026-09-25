@@ -233,8 +233,8 @@ const worldCupAliasPairs = [
 if (worldCupAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(biwengerName, fixtureName) < 88)) {
   throw new Error("World Cup team translations must match SofaScore fixture names: " + JSON.stringify(worldCupAliasPairs));
 }
-if (!fixtureDataNeedsRefresh({ schemaVersion: 7, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
-  || fixtureDataNeedsRefresh({ schemaVersion: 8, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
+if (!fixtureDataNeedsRefresh({ schemaVersion: 8, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
+  || fixtureDataNeedsRefresh({ schemaVersion: 9, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
   throw new Error("Fixture cache freshness must invalidate old schemas without refetching a current complete snapshot");
 }
 if (fixturePayloadMatchesCompetition({ competition: "Bundesliga" }, "la-liga")
@@ -1070,7 +1070,7 @@ if (fixturePayloadMatchesCompetition({ competition: "LaLiga 2" })
   throw new Error("A fixture payload from a different competition must be rejected for the selected Biwenger league");
 }
 const filteredCompetitionFixtures = filterFixturePayloadByCompetition({
-  schemaVersion: 8,
+  schemaVersion: 9,
   competition: "LaLiga",
   events: [
     { id: 1, competition: "LaLiga" },
@@ -1081,7 +1081,7 @@ const filteredCompetitionFixtures = filterFixturePayloadByCompetition({
 if (filteredCompetitionFixtures.events.length !== 1 || filteredCompetitionFixtures.events[0].id !== 1) {
   throw new Error("Matchday and live views must remove events outside the exact selected competition");
 }
-if (filterFixturePayloadByCompetition({ schemaVersion: 7, competition: "LaLiga", events: [{ id: 1 }] }).events.length !== 0) {
+if (filterFixturePayloadByCompetition({ schemaVersion: 8, competition: "LaLiga", events: [{ id: 1 }] }).events.length !== 0) {
   throw new Error("Old fixture caches without per-event competition metadata must stay hidden until refreshed");
 }
 const signatureRound7 = biwengerImportSignature("team", { players: [hydratedCurrentRound[0]], lineup: { type: "4-4-2", playersID: [1] } });
@@ -1089,6 +1089,37 @@ const signatureRound8 = biwengerImportSignature("team", { players: [{ ...hydrate
 if (signatureRound7 === signatureRound8) {
   throw new Error("A current-round score change must invalidate the incremental Biwenger snapshot");
 }
+
+const fixtureNames = ["Alavaria", "Betonia", "Cadizar", "Donostia", "Elvar", "Ferrolia", "Granata", "Huescana", "Iberia", "Jerezal", "Kantabria", "Laredia", "Malagor", "Navarria", "Oviedal", "Pamplon", "Quintana", "Ribera", "Sevillan", "Tarragona"];
+const fixturePlayers = fixtureNames.map((team, id) => ({ id: "fixture-" + id, name: "Jugador " + id, team }));
+state.competition = "la-liga";
+state.biwenger.competition = "LaLiga";
+state.players = fixturePlayers;
+state.teamPlayers = [];
+const future = Math.floor(Date.now() / 1000) + 86400;
+const match = (a, b, id, timestamp = future) => ({ id, competition: "LaLiga", timestamp, status: "notstarted", home: { name: fixtureNames[a] }, away: { name: fixtureNames[b] } });
+const thin = { schemaVersion: 9, competition: "LaLiga", seasonId: 2026, events: [match(0, 1, "a")] };
+const wide = { schemaVersion: 9, competition: "LaLiga", seasonId: 2026, events: Array.from({ length: 9 }, (_, i) => match(2 + i * 2, 3 + i * 2, "b-" + i)) };
+if (fixturePlayerCoverage(thin).covered !== 2 || fixturePlayerCoverage(wide).covered !== 18) throw new Error("Fixture coverage must count players, not just nonempty events");
+const united = mergeFixturePayloads(thin, { ...wide, events: [...wide.events, match(0, 1, "other-id", future + 600)] });
+if (fixturePlayerCoverage(united).covered !== 20 || united.events.length !== 10) throw new Error("Partial fixtures must merge without duplicate aliases/events");
+if (mergeFixturePayloads(thin, { ...wide, competition: "Premier League" }).events.length !== 1
+  || mergeFixturePayloads(thin, { ...wide, seasonId: 2025 }).events.length !== 1) throw new Error("Fixture merge crossed competition or season");
+if (fixtureCandidatesForPlayer(fixturePlayers[0], { ...thin, events: [{ ...thin.events[0], status: "postponed" }] }).length) throw new Error("Postponed fixture was treated as upcoming");
+const partialCache = { ...thin, playerCoverage: { covered: 2, total: 20 }, fetchedAtTs: Math.floor(Date.now() / 1000) - 11 * 60 };
+if (!fixtureDataNeedsRefresh(partialCache) || fixtureDataNeedsRefresh({ ...partialCache, playerCoverage: { covered: 20, total: 20 } })) throw new Error("Partial cache refresh policy failed");
+const datedBase = [{ eventId: 10, date: "2026-09-20", opponent: "Alavaria", points: { biwenger: 0 }, goals: null }];
+const datedFresh = [{ eventId: 10, date: "2026-09-20", opponent: "Alavaria", minutes: 90, goals: 2 }];
+const mergedGoals = mergeRecentMatchArrays(datedBase, datedFresh);
+if (mergedGoals.length !== 1 || mergedGoals[0].goals !== 2 || mergedGoals[0].points.biwenger !== 0) throw new Error("Recent goals/zero points did not merge by match identity");
+if (mergeRecentMatchArrays([{ provider: "biwenger", points: { biwenger: 0 } }], datedFresh).some((row) => row.points?.biwenger === 0 && row.goals === 2)) throw new Error("Undated fitness was incorrectly paired by index");
+for (const goals of [0, 1, 2, null]) {
+  const detail = recentMatchDetail({ provider: "api-football", goals, minutes: 90, played: true }, 0, true);
+  if (!detail.rows.includes(goals === null ? "Goles: sin dato" : "Goles: " + goals)) throw new Error("Goal detail missing: " + goals);
+}
+if (!recentMatchNeedsHydration({ provider: "biwenger", points: { biwenger: 0 }, goals: null }, 0)) throw new Error("Zero-point match must request missing goals once");
+const totals = teamAccumulatedPoints([{ id: 1, points: 0 }, { id: 1, points: 0 }, { id: 2, points: -2 }, { id: 3, points: 12 }, { id: 4, points: null }]);
+if (totals.total !== 10 || totals.known !== 3 || totals.count !== 4) throw new Error("Season squad points must dedupe and retain unknowns");
 
 console.log(JSON.stringify({
   players: analyzed.length,

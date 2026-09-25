@@ -1353,8 +1353,14 @@ function merge_recent_detail_payloads(array $payloads): array
                     $bestScore = $score;
                 }
             }
-            if ($bestIndex === null || ($bestScore < 60 && count($primaryMatches) !== 1)) continue;
-            foreach (['starter', 'minuteIn', 'minuteOut', 'minuteInLabel', 'minuteOutLabel', 'lineupSource', 'minutesSource'] as $key) {
+            $candidateEventId = (string)($candidate['eventId'] ?? '');
+            $matchedEventId = $bestIndex !== null ? (string)($primaryMatches[$bestIndex]['eventId'] ?? '') : '';
+            $sameEvent = $candidateEventId !== '' && $matchedEventId !== '' && $candidateEventId === $matchedEventId;
+            $sameDateAndOpponent = $candidateDate !== '' && $bestIndex !== null
+                && substr($candidateDate, 0, 10) === substr((string)($primaryMatches[$bestIndex]['date'] ?? ''), 0, 10)
+                && $candidateOpponent !== '' && identity_name_score($candidateOpponent, (string)($primaryMatches[$bestIndex]['opponent'] ?? '')) >= 70;
+            if ($bestIndex === null || (!$sameEvent && !$sameDateAndOpponent)) continue;
+            foreach (['starter', 'minuteIn', 'minuteOut', 'minuteInLabel', 'minuteOutLabel', 'lineupSource', 'minutesSource', 'goals'] as $key) {
                 if (array_key_exists($key, $candidate) && $candidate[$key] !== null && $candidate[$key] !== '') $primaryMatches[$bestIndex][$key] = $candidate[$key];
             }
         }
@@ -5848,7 +5854,7 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
 {
     $competition = trim((string)($session['competition'] ?? ''));
     $leagueName = trim((string)($session['leagueName'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v6-' . slugify($competition ?: $leagueName) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v7-' . slugify($competition ?: $leagueName) . '.json';
     $cached = read_json_file($cachePath, []);
     if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit';
@@ -6145,7 +6151,7 @@ function feeberse_current_fixtures(array $session, int $timeoutSeconds, bool $st
     if (fixture_competition_family($competition) !== 'la-liga') {
         throw new RuntimeException('Feeberse calendario solo está mapeado para LaLiga');
     }
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-fixtures-la-liga-v2.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-fixtures-la-liga-v3.json';
     $cached = read_json_file($cachePath, []);
     if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
         $cached['cacheStatus'] = 'hit-feeberse-fixtures';
@@ -6174,7 +6180,8 @@ function feeberse_current_fixtures(array $session, int $timeoutSeconds, bool $st
                 $away = (array)($match['away_team'] ?? []);
                 $statusCode = strtoupper((string)($match['status'] ?? 'NS'));
                 $finished = preg_match('/^(FT|AET|FT_PEN)/', $statusCode) === 1;
-                $live = !$finished && !in_array($statusCode, ['NS', 'TBD', 'POSTPONED', 'CANCELLED'], true);
+                if (in_array($statusCode, ['POSTPONED', 'CANCELLED', 'CANCELED', 'ABANDONED'], true)) continue;
+                $live = !$finished && !in_array($statusCode, ['NS', 'TBD'], true);
                 $detailUrl = 'https://score.feeberse.com/es/liga/la-liga/partido/'
                     . slugify((string)($home['name'] ?? 'local')) . '-vs-' . slugify((string)($away['name'] ?? 'visitante'))
                     . '-' . rawurlencode((string)$match['id']);
@@ -6224,6 +6231,17 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
             $sourceStrategy = 'feeberse-primary';
         } catch (Throwable $feeberseError) {
             $fixtures = null;
+        }
+    }
+    if (is_array($fixtures)) {
+        // Feeberse exposes a short rolling window. Compare it with a season calendar
+        // even when that window contains some valid upcoming matches.
+        try {
+            $sofaFixtures = sofascore_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh);
+            $fixtures = merge_fixture_payloads($fixtures, $sofaFixtures);
+            $sourceStrategy = 'feeberse+sofascore';
+        } catch (Throwable $sofaError) {
+            $fixtures['secondarySourceError'] = $sofaError->getMessage();
         }
     }
     if (!is_array($fixtures)) try {
@@ -6278,7 +6296,7 @@ function fast_current_fixtures(array $session, int $timeoutSeconds, array $heade
     }
     $fixtures = filter_fixture_payload_to_competition($fixtures, $session);
     $fixtures = decorate_fixture_competition_state($fixtures, $session);
-    $fixtures['schemaVersion'] = 8;
+    $fixtures['schemaVersion'] = 9;
     $fixtures['fetchedAtTs'] = (int)($fixtures['fetchedAtTs'] ?? time());
     $fixtures['sourceStrategy'] = $sourceStrategy;
     $fixtures['durationMs'] = (int)round((microtime(true) - $startedAt) * 1000);
@@ -6757,7 +6775,7 @@ function feeberse_player_recent_details(array $player, string $competition, int 
         throw new RuntimeException('solo está disponible para LaLiga');
     }
     $cacheKey = slugify((string)($player['name'] ?? '') . '-' . (string)($player['team'] ?? $player['clubTeam'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-player-recent-v3-' . $cacheKey . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-player-recent-v4-' . $cacheKey . '.json';
     $cached = read_json_file($cachePath, []);
     if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 21600 && !empty($cached['recentMatches'])) {
         $cached['cacheStatus'] = 'hit-feeberse-player';
@@ -6806,6 +6824,9 @@ function feeberse_player_recent_details(array $player, string $competition, int 
             'minutes' => $minutes,
             'minutesSource' => $estimatedMinuteIn !== null || $estimatedMinuteOut !== null ? 'estimated' : 'feeberse',
             'played' => $minutes > 0,
+            'goals' => isset($stats['goals']) && is_numeric($stats['goals']) ? (int)$stats['goals']
+                : (isset($stats['goals']['total']) && is_numeric($stats['goals']['total']) ? (int)$stats['goals']['total']
+                : (isset($stats['goalsScored']) && is_numeric($stats['goalsScored']) ? (int)$stats['goalsScored'] : null)),
             'starter' => $starter,
             'minuteIn' => $estimatedMinuteIn,
             'minuteInLabel' => $estimatedMinuteIn !== null ? (string)$estimatedMinuteIn : null,
@@ -6839,7 +6860,7 @@ function api_football_player_recent_details(array $player, array $session, int $
     if (api_football_key() === '') throw new RuntimeException('API-Football no configurada');
     $competition = trim((string)(($session['competition'] ?? '') ?: ($player['competition'] ?? 'football')));
     $cacheKey = slugify($competition . '-' . (string)($player['name'] ?? '') . '-' . (string)($player['team'] ?? $player['clubTeam'] ?? $player['nationalTeam'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'api-football-player-recent-' . $cacheKey . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'api-football-player-recent-v2-' . $cacheKey . '.json';
     $cached = read_json_file($cachePath, []);
     if (!empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 21600 && !empty($cached['recentMatches'])) {
         $cached['cacheStatus'] = 'hit-api-football-player';
@@ -7027,6 +7048,7 @@ function api_football_recent_match_from_fixture(array $fixtureRow, int $playerId
         'starter' => $starter,
         'lineupSource' => $lineupStatus['source'],
         'played' => $minutes > 0,
+        'goals' => isset($stat['goals']['total']) && is_numeric($stat['goals']['total']) ? (int)$stat['goals']['total'] : null,
         'rating' => $rating !== null ? round($rating, 2) : null,
         'points' => api_football_points_from_statistics($stat, $minutes, $rating)
     ];
@@ -7310,54 +7332,62 @@ function thesportsdb_event_timestamp(array $event): int
 
 function merge_fixture_payloads(array $primary, array $fallback): array
 {
-    $merged = [];
-    foreach (array_merge((array)($primary['events'] ?? []), (array)($fallback['events'] ?? [])) as $event) {
-        if (!is_array($event)) continue;
-        $home = normalize_text((string)($event['home']['name'] ?? ''));
-        $away = normalize_text((string)($event['away']['name'] ?? ''));
-        $timestamp = (int)($event['timestamp'] ?? 0);
-        $bucket = $timestamp > 0 ? gmdate('YmdHi', $timestamp) : '0';
-        $key = $home . '|' . $away . '|' . $bucket;
-        if (!isset($merged[$key])) {
-            $merged[$key] = $event;
-            continue;
+    $family = fixture_competition_family((string)($primary['competition'] ?? ''));
+    $fallbackFamily = fixture_competition_family((string)($fallback['competition'] ?? ''));
+    if ($family !== '' && $fallbackFamily !== '' && $family !== $fallbackFamily) return $primary;
+    $seasonA = (string)($primary['seasonId'] ?? $primary['seasonName'] ?? '');
+    $seasonB = (string)($fallback['seasonId'] ?? $fallback['seasonName'] ?? '');
+    if ($seasonA !== '' && $seasonB !== '' && $seasonA !== $seasonB) return $primary;
+    $valid = static function ($event) use ($family): bool {
+        if (!is_array($event)) return false;
+        if (in_array(strtolower((string)($event['status'] ?? '')), ['postponed', 'cancelled', 'canceled', 'abandoned'], true)) return false;
+        $eventFamily = fixture_competition_family((string)($event['competition'] ?? ''));
+        return $family === '' || $eventFamily === '' || $eventFamily === $family;
+    };
+    $upcomingTeams = static function (array $events): int {
+        $teams = [];
+        foreach ($events as $event) {
+            if ((int)($event['timestamp'] ?? 0) < time() - 10800 || ($event['status'] ?? '') === 'finished') continue;
+            foreach (['home', 'away'] as $side) $teams[normalize_text((string)($event[$side]['name'] ?? ''))] = true;
         }
-        $existing = $merged[$key];
-        $merged[$key] = [
-            'id' => $existing['id'] ?? $event['id'] ?? $key,
-            'timestamp' => (int)($existing['timestamp'] ?? $event['timestamp'] ?? time()),
-            'status' => (string)($existing['status'] ?? $event['status'] ?? 'notstarted'),
-            'statusText' => (string)(($existing['statusText'] ?? '') !== '' ? $existing['statusText'] : ($event['statusText'] ?? '')),
-            'home' => [
-                'name' => (string)($existing['home']['name'] ?? $event['home']['name'] ?? 'Local'),
-                'image' => $existing['home']['image'] ?? $event['home']['image'] ?? null
-            ],
-            'away' => [
-                'name' => (string)($existing['away']['name'] ?? $event['away']['name'] ?? 'Visitante'),
-                'image' => $existing['away']['image'] ?? $event['away']['image'] ?? null
-            ],
-            'homeScore' => $existing['homeScore'] ?? $event['homeScore'] ?? null,
-            'awayScore' => $existing['awayScore'] ?? $event['awayScore'] ?? null,
-            'sofascoreUrl' => $existing['sofascoreUrl'] ?? $event['sofascoreUrl'] ?? null,
-            'feeberseUrl' => $existing['feeberseUrl'] ?? $event['feeberseUrl'] ?? null,
-            'detailUrl' => $existing['detailUrl'] ?? $event['detailUrl'] ?? null,
-            'videoUrl' => $existing['videoUrl'] ?? $event['videoUrl'] ?? null,
-            'competition' => $existing['competition'] ?? $event['competition'] ?? null,
-            'competitionId' => $existing['competitionId'] ?? $event['competitionId'] ?? null,
-            'round' => $existing['round'] ?? $event['round'] ?? null
-        ];
+        unset($teams['']);
+        return count($teams);
+    };
+    $first = array_values(array_filter((array)($primary['events'] ?? []), $valid));
+    $second = array_values(array_filter((array)($fallback['events'] ?? []), $valid));
+    $preferred = $upcomingTeams($second) > $upcomingTeams($first) ? $fallback : $primary;
+    $merged = $upcomingTeams($second) > $upcomingTeams($first) ? $second : $first;
+    $other = $upcomingTeams($second) > $upcomingTeams($first) ? $first : $second;
+    foreach ($other as $event) {
+        $sameIndex = null;
+        foreach ($merged as $index => $existing) {
+            $sameId = (string)($existing['id'] ?? '') !== '' && (string)($existing['id'] ?? '') === (string)($event['id'] ?? '')
+                && (string)($existing['competitionId'] ?? '') === (string)($event['competitionId'] ?? '');
+            $samePair = identity_name_score((string)($existing['home']['name'] ?? ''), (string)($event['home']['name'] ?? '')) >= 70
+                && identity_name_score((string)($existing['away']['name'] ?? ''), (string)($event['away']['name'] ?? '')) >= 70;
+            $closeDate = abs((int)($existing['timestamp'] ?? 0) - (int)($event['timestamp'] ?? 0)) <= 36 * 3600;
+            if ($samePair && ($sameId || $closeDate)) { $sameIndex = $index; break; }
+        }
+        if ($sameIndex === null) { $merged[] = $event; continue; }
+        foreach (['sofascoreUrl', 'feeberseUrl', 'detailUrl', 'videoUrl', 'homeScore', 'awayScore'] as $key) {
+            if (($merged[$sameIndex][$key] ?? null) === null && ($event[$key] ?? null) !== null) $merged[$sameIndex][$key] = $event[$key];
+        }
+        foreach (['home', 'away'] as $side) {
+            if (empty($merged[$sameIndex][$side]['image']) && !empty($event[$side]['image'])) $merged[$sameIndex][$side]['image'] = $event[$side]['image'];
+        }
     }
     $events = array_values($merged);
     usort($events, static fn($a, $b) => (int)($a['timestamp'] ?? 0) <=> (int)($b['timestamp'] ?? 0));
     return [
         'ok' => true,
-        'competition' => (string)($primary['competition'] ?? $fallback['competition'] ?? ''),
+        'competition' => (string)($preferred['competition'] ?? $primary['competition'] ?? ''),
         'tournamentId' => $primary['tournamentId'] ?? $fallback['tournamentId'] ?? null,
-        'seasonId' => $primary['seasonId'] ?? $fallback['seasonId'] ?? null,
-        'seasonName' => (string)($primary['seasonName'] ?? $fallback['seasonName'] ?? ''),
+        'seasonId' => $preferred['seasonId'] ?? $primary['seasonId'] ?? $fallback['seasonId'] ?? null,
+        'seasonName' => (string)($preferred['seasonName'] ?? $primary['seasonName'] ?? $fallback['seasonName'] ?? ''),
         'round' => (string)($primary['round'] ?? $fallback['round'] ?? 'actual'),
         'events' => $events,
-        'cacheStatus' => (string)($primary['cacheStatus'] ?? 'merged') . '+merge'
+        'cacheStatus' => (string)($primary['cacheStatus'] ?? 'merged') . '+merge',
+        'providerCoverage' => ['primaryTeams' => $upcomingTeams($first), 'secondaryTeams' => $upcomingTeams($second), 'mergedTeams' => $upcomingTeams($events)]
     ];
 }
 
@@ -8385,7 +8415,8 @@ function biwenger_recent_matches_from_fitness(array $fitness): array
             'provider' => 'biwenger',
             'label' => 'Partido reciente ' . ($index + 1),
             'minutes' => null,
-            'played' => $points !== 0,
+            'played' => $points !== 0 ? true : null,
+            'goals' => null,
             'points' => [
                 'biwenger' => $points,
                 'mixed' => $points,
@@ -9316,6 +9347,7 @@ function recent_match_summary(array $row): array
         'minuteIn' => $inMinute,
         'minuteOut' => $outMinute,
         'played' => $minutes > 0,
+        'goals' => isset($row['incidents']['goals']) && is_numeric($row['incidents']['goals']) ? (int)$row['incidents']['goals'] : null,
         'rating' => isset($row['rating']) && is_numeric($row['rating']) ? round((float)$row['rating'], 2) : null,
         'points' => recent_match_points($row)
     ];

@@ -217,7 +217,7 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.1";
+const APP_VERSION = "3.13.2";
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
 const DECISION_HISTORY_KEY = "fantasy-market-scout.decision-history.v1";
@@ -1206,13 +1206,19 @@ const teamNameMatchScore = (left, right) => {
 const hasUpcomingFixtureEvents = (fixtures = state.leagueFixtures) => {
   const events = fixtures?.events || [];
   const nowSeconds = Date.now() / 1000;
-  return Array.isArray(events) && events.some((event) => Number(event.timestamp || 0) >= nowSeconds - (3 * 60 * 60));
+  return Array.isArray(events) && events.some((event) => fixtureIsUpcoming(event, nowSeconds));
 };
+
+const fixtureIsUpcoming = (event, nowSeconds = Date.now() / 1000) =>
+  Number(event?.timestamp || 0) >= nowSeconds - (3 * 60 * 60)
+  && !["finished", "postponed", "cancelled", "canceled", "abandoned"].includes(String(event?.status || "").toLowerCase());
 
 const fixtureDataNeedsRefresh = (fixtures = state.leagueFixtures) => {
   const fetchedAtMs = Number(fixtures?.fetchedAtTs || 0) * 1000;
-  const stale = !Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0 || Date.now() - fetchedAtMs > 45 * 60 * 1000;
-  return Number(fixtures?.schemaVersion || 0) < 8 || stale || !hasUpcomingFixtureEvents(fixtures);
+  const partial = fixtures?.playerCoverage?.total > 0 && fixtures.playerCoverage.covered < fixtures.playerCoverage.total;
+  const maxAge = partial ? 10 * 60 * 1000 : 45 * 60 * 1000;
+  const stale = !Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0 || Date.now() - fetchedAtMs > maxAge;
+  return Number(fixtures?.schemaVersion || 0) < 9 || stale || !hasUpcomingFixtureEvents(fixtures);
 };
 
 const fixtureCompetitionFamily = (value) => {
@@ -1253,12 +1259,13 @@ const filterFixturePayloadByCompetition = (fixtures, competition = selectedFixtu
   if (!fixtures || typeof fixtures !== "object") return fixtures;
   const events = Array.isArray(fixtures.events) ? fixtures.events : [];
   const expected = fixtureCompetitionFamily(competition);
-  if (expected && Number(fixtures.schemaVersion || 0) < 8) {
+  if (expected && Number(fixtures.schemaVersion || 0) < 9) {
     return { ...fixtures, events: [] };
   }
   return {
     ...fixtures,
-    events: events.filter((event) => fixtureEventMatchesCompetition(event, competition))
+    events: events.filter((event) => fixtureEventMatchesCompetition(event, competition)
+      && !["postponed", "cancelled", "canceled", "abandoned"].includes(String(event?.status || "").toLowerCase()))
   };
 };
 
@@ -1275,7 +1282,7 @@ const upcomingFixtureCoverage = (fixtures = state.leagueFixtures) => {
   const nowSeconds = Date.now() / 1000;
   const teams = new Set();
   events
-    .filter((event) => Number(event.timestamp || 0) >= nowSeconds - (3 * 60 * 60))
+    .filter((event) => fixtureIsUpcoming(event, nowSeconds))
     .forEach((event) => {
       [event.home?.name, event.away?.name].filter(Boolean).forEach((name) => teams.add(canonicalTeamName(name)));
     });
@@ -1287,7 +1294,7 @@ const fixtureCandidatesForPlayer = (player, fixtures = state.leagueFixtures) => 
   const nowSeconds = Date.now() / 1000;
   const teamNames = teamNamesForFixtureMatching(player);
   return events
-    .filter((event) => Number(event.timestamp || 0) >= nowSeconds - (3 * 60 * 60))
+    .filter((event) => fixtureIsUpcoming(event, nowSeconds))
     .map((event) => {
       const homeName = event.home?.name || "";
       const awayName = event.away?.name || "";
@@ -1307,8 +1314,45 @@ const fixturePlayerCoverage = (fixtures, players = [...state.players, ...state.t
     if (teamNamesForFixtureMatching(player).length) unique.set(key, player);
   });
   const rows = [...unique.values()];
-  const covered = rows.filter((player) => fixtureCandidatesForPlayer(player, fixtures).length > 0).length;
-  return { covered, total: rows.length };
+  const missing = rows.filter((player) => fixtureCandidatesForPlayer(player, fixtures).length === 0);
+  return { covered: rows.length - missing.length, total: rows.length,
+    unmatchedTeams: [...new Set(missing.map((player) => player.team || player.clubTeam || "").filter(Boolean))].sort() };
+};
+
+const mergeFixturePayloads = (first, second) => {
+  if (!fixturePayloadMatchesCompetition(first) || !fixturePayloadMatchesCompetition(second)) return first;
+  const seasonA = String(first?.seasonId || first?.seasonName || "");
+  const seasonB = String(second?.seasonId || second?.seasonName || "");
+  if (seasonA && seasonB && seasonA !== seasonB) return first;
+  const coverageA = fixturePlayerCoverage(first);
+  const coverageB = fixturePlayerCoverage(second);
+  const preferred = coverageB.covered > coverageA.covered ? second : first;
+  const supplemental = preferred === first ? second : first;
+  const events = [...(preferred.events || [])];
+  for (const event of supplemental.events || []) {
+    if (!fixtureEventMatchesCompetition(event) || ["postponed", "cancelled", "canceled", "abandoned"].includes(String(event?.status || "").toLowerCase())) continue;
+    const index = events.findIndex((existing) => {
+      const sameId = existing.id && event.id && String(existing.id) === String(event.id)
+        && String(existing.competitionId || "") === String(event.competitionId || "");
+      const samePair = teamNameMatchScore(existing.home?.name, event.home?.name) >= 88
+        && teamNameMatchScore(existing.away?.name, event.away?.name) >= 88;
+      return samePair && (sameId || Math.abs(Number(existing.timestamp || 0) - Number(event.timestamp || 0)) <= 36 * 3600);
+    });
+    if (index < 0) events.push(event);
+    else {
+      const current = events[index];
+      events[index] = {
+        ...event, ...current,
+        home: { ...event.home, ...current.home, image: current.home?.image || event.home?.image },
+        away: { ...event.away, ...current.away, image: current.away?.image || event.away?.image },
+        sofascoreUrl: current.sofascoreUrl || event.sofascoreUrl,
+        feeberseUrl: current.feeberseUrl || event.feeberseUrl,
+        detailUrl: current.detailUrl || event.detailUrl
+      };
+    }
+  }
+  events.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+  return { ...preferred, events, sourceStrategy: `${first.sourceStrategy || "primary"}+${second.sourceStrategy || "secondary"}` };
 };
 
 const nextMatchForPlayer = (player) => {
@@ -5489,10 +5533,18 @@ const playerAccumulatedPoints = (player, options = {}) => {
     options.fallbackKey
   ].filter(Boolean);
   for (const key of keys) {
-    const value = Number(player?.[key]);
+    if (player?.[key] === null || player?.[key] === undefined || player?.[key] === "") continue;
+    const value = Number(player[key]);
     if (Number.isFinite(value)) return value;
   }
-  return 0;
+  return options.allowMissing ? null : 0;
+};
+
+const teamAccumulatedPoints = (players = state.teamPlayers) => {
+  const unique = new Map();
+  players.forEach((player) => unique.set(String(player?.biwengerPlayerId || player?.id || `${player?.name}-${player?.team}`), player));
+  const values = [...unique.values()].map((player) => playerAccumulatedPoints(player, { allowMissing: true }));
+  return { total: values.reduce((sum, value) => sum + (value ?? 0), 0), known: values.filter((value) => value !== null).length, count: values.length };
 };
 
 const renderScoringBadge = (player, options = {}) => {
@@ -5597,9 +5649,7 @@ const recentFormProfile = (player) => {
   const scored = matches.map((match) => {
     const score = selectedRecentScore(match);
     const hasMinutes = matchHasMinutes(match);
-    const played = match?.provider === "biwenger" || Number.isFinite(Number(match?.points?.biwenger))
-      ? score !== 0
-      : (hasMinutes ? Number(match.minutes) > 0 : score !== 0 || Boolean(match?.played));
+    const played = hasMinutes ? Number(match.minutes) > 0 : score !== 0 || match?.played === true;
     return { match, score, played, minutes: hasMinutes ? Number(match.minutes) : null };
   });
   const playedRows = scored.filter((row) => row.played);
@@ -5666,8 +5716,10 @@ const recentMatchDetail = (match, score, played) => {
     }
     if (match.minutesSource === "estimated") rows.push("Minutos de cambio estimados");
   } else {
-    rows.push("No jugó o puntuó 0");
+    rows.push(score === 0 && !matchHasMinutes(match) ? "0 pts · minutos sin dato" : "No jugó");
   }
+  const goals = match.goals === null || match.goals === undefined || match.goals === "" ? null : Number(match.goals);
+  rows.push(Number.isInteger(goals) && goals >= 0 ? `Goles: ${goals}` : "Goles: sin dato");
   if (match.opponent) rows.push(`Rival: ${match.opponent}`);
   if (match.date) rows.push(`Fecha: ${match.date}`);
   if (match.provider === "biwenger" || Number.isFinite(Number(match.points?.biwenger))) {
@@ -5689,6 +5741,18 @@ const recentMatchDetail = (match, score, played) => {
 
 const recentMatchTitle = (detail) => detail.rows.join(" · ");
 
+const recentMatchWasPlayed = (match, score) => matchHasMinutes(match)
+  ? Number(match.minutes) > 0 : match?.played === true || score !== 0;
+
+const recentMatchNeedsHydration = (match, score) => {
+  const played = recentMatchWasPlayed(match, score);
+  const lacksRole = played && typeof match.starter !== "boolean";
+  const lacksSubstitution = played && (match.minutesSource === "estimated"
+    || (match.starter === true && Number(match.minutes) < 85 && !(Number(match.minuteOut) > 0))
+    || (match.starter === false && !(Number(match.minuteIn) > 0)));
+  return !matchHasMinutes(match) || match.goals === null || match.goals === undefined || lacksRole || lacksSubstitution;
+};
+
 const renderRecentFormDots = (player) => {
   const history = recentDisplayHistoryMatches(player);
   const matches = history.matches;
@@ -5699,17 +5763,10 @@ const renderRecentFormDots = (player) => {
       ${padded.map((match, index) => {
         if (!match) return `<span class="recent-dot missing" title="Sin dato" aria-label="Sin dato"></span>`;
         const score = selectedRecentScore(match);
-        const isBiwenger = match.provider === "biwenger" || Number.isFinite(Number(match.points?.biwenger));
-        const played = isBiwenger ? score !== 0 : Boolean(match.played) && matchHasMinutes(match) && Number(match.minutes) > 0;
+        const played = recentMatchWasPlayed(match, score);
         const detail = recentMatchDetail(match, score, played);
         const label = recentMatchTitle(detail);
-        const lacksRoleDetail = played && typeof match.starter !== "boolean";
-        const lacksSubstitutionDetail = played && (
-          match.minutesSource === "estimated"
-          || (match.starter === true && Number(match.minutes) < 85 && !(Number(match.minuteOut) > 0))
-          || (match.starter === false && !(Number(match.minuteIn) > 0))
-        );
-        const needsHydration = played && (!matchHasMinutes(match) || lacksRoleDetail || lacksSubstitutionDetail);
+        const needsHydration = recentMatchNeedsHydration(match, score);
         return `<span class="recent-dot ${recentDotClass(score, played)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" ${playerAttrs} data-recent-index="${index}" data-recent-needs-hydration="${needsHydration ? "true" : "false"}" data-recent-detail="${escapeHtml(encodeURIComponent(JSON.stringify(detail)))}"></span>`;
       }).join("")}
     </span>
@@ -9499,6 +9556,7 @@ const renderLeagueFixtures = () => {
     <div class="fixtures-heading">
       <strong>${escapeHtml(payload.competition || "Competicion")}</strong>
       <span>${visibleEvents.length} partidos actuales y próximos · ${videoCount} vídeos disponibles</span>
+      ${payload.playerCoverage?.total ? `<span>${payload.playerCoverage.covered}/${payload.playerCoverage.total} jugadores con próximo rival${payload.coverageStatus === "partial" ? ` · Pendiente de enlazar: ${escapeHtml((payload.playerCoverage.unmatchedTeams || []).slice(0, 3).join(", "))}${(payload.playerCoverage.unmatchedTeams || []).length > 3 ? ` y ${(payload.playerCoverage.unmatchedTeams || []).length - 3} más` : ""}` : ""}</span>` : ""}
     </div>
     ${Object.entries(groupedEvents).map(([round, roundEvents]) => `
       <section class="fixture-round-group">
@@ -9792,15 +9850,22 @@ const findRecentPlayer = (button) => {
 };
 
 const mergeRecentMatchArrays = (current = [], fresh = []) => {
-  const base = Array.isArray(current) ? current.slice(-5) : [];
-  const details = Array.isArray(fresh) ? fresh.slice(-5) : [];
-  const length = Math.max(base.length, details.length, 0);
-  return Array.from({ length }, (_, index) => {
-    const oldMatch = base[base.length - length + index] || {};
-    const freshMatch = details[details.length - length + index] || {};
-    const points = { ...(freshMatch.points || {}), ...(oldMatch.points || {}) };
-    return { ...oldMatch, ...freshMatch, points };
-  });
+  const rows = Array.isArray(current) ? current.slice() : [];
+  for (const match of Array.isArray(fresh) ? fresh : []) {
+    const date = String(match?.date || "").slice(0, 10);
+    const index = rows.findIndex((old) => {
+      if (match?.eventId && old?.eventId && String(match.eventId) === String(old.eventId)) return true;
+      const oldDate = String(old?.date || "").slice(0, 10);
+      return Boolean(date && oldDate && date === oldDate && match?.opponent && old?.opponent
+        && teamNameMatchScore(match.opponent, old.opponent) >= 70);
+    });
+    if (index < 0) { rows.push(match); continue; }
+    const old = rows[index];
+    rows[index] = { ...old, ...match,
+      goals: match.goals === null || match.goals === undefined ? old.goals ?? null : match.goals,
+      points: { ...(match.points || {}), ...(old.points || {}) } };
+  }
+  return rows.sort((a, b) => (Number(a.timestamp || Date.parse(a.date) || 0) - Number(b.timestamp || Date.parse(b.date) || 0))).slice(-5);
 };
 
 const recentProviderLabel = (provider) => ({
@@ -9910,12 +9975,11 @@ const enrichRivalRecentDetails = async (players, options = {}) => {
 const updateRecentButtonDetail = (button, match) => {
   if (!match) return;
   const score = selectedRecentScore(match);
-  const isBiwenger = match.provider === "biwenger" || Number.isFinite(Number(match.points?.biwenger));
-  const played = isBiwenger ? score !== 0 : Boolean(match.played) && matchHasMinutes(match) && Number(match.minutes) > 0;
+  const played = recentMatchWasPlayed(match, score);
   const detail = recentMatchDetail(match, score, played);
   const label = recentMatchTitle(detail);
   button.dataset.recentDetail = encodeURIComponent(JSON.stringify(detail));
-  button.dataset.recentNeedsHydration = matchHasMinutes(match) ? "false" : button.dataset.recentNeedsHydration;
+  button.dataset.recentNeedsHydration = recentMatchNeedsHydration(match, score) ? "true" : "false";
   button.title = label;
   button.setAttribute("aria-label", label);
   if (!qs("#recent-form-popover")?.hidden) openRecentFormPopover(button);
@@ -10026,15 +10090,14 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
     let coverage = fixturePlayerCoverage(payload);
     if (state.biwenger.authenticated && (!fixturePayloadMatchesCompetition(payload)
       || !hasUpcomingFixtureEvents(payload)
-      || (coverage.total > 0 && coverage.covered === 0))) {
+      || (coverage.total > 0 && coverage.covered < coverage.total))) {
       const competition = String(state.biwenger.competition || payload.competition || activeLeagueName() || "la-liga");
       const fallbackResponse = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(competition)}${forceRefresh ? "&refresh=1" : ""}`);
       const fallbackPayload = filterFixturePayloadByCompetition(await fallbackResponse.json().catch(() => ({})));
-      const fallbackCoverage = fixturePlayerCoverage(fallbackPayload);
-      if (fallbackResponse.ok && fixturePayloadMatchesCompetition(fallbackPayload) && hasUpcomingFixtureEvents(fallbackPayload)
-        && (fallbackCoverage.covered > coverage.covered || !fixturePayloadMatchesCompetition(payload) || !hasUpcomingFixtureEvents(payload))) {
-        payload = fallbackPayload;
-        coverage = fallbackCoverage;
+      if (fallbackResponse.ok && fixturePayloadMatchesCompetition(fallbackPayload) && hasUpcomingFixtureEvents(fallbackPayload)) {
+        payload = fixturePayloadMatchesCompetition(payload) && hasUpcomingFixtureEvents(payload)
+          ? mergeFixturePayloads(payload, fallbackPayload) : fallbackPayload;
+        coverage = fixturePlayerCoverage(payload);
       }
     }
     if (!fixturePayloadMatchesCompetition(payload)) {
@@ -10045,6 +10108,7 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
       throw new Error("El calendario recibido no coincide con los equipos de los jugadores de esta liga.");
     }
     payload.playerCoverage = coverage;
+    payload.coverageStatus = coverage.total === 0 ? "unknown" : coverage.covered === coverage.total ? "complete" : "partial";
     state.leagueFixtures = payload;
     invalidateMarketAnalysisCache();
     saveLocalLeagueSnapshot();
@@ -12210,6 +12274,15 @@ const renderTeam = () => {
   const countsEl = qs("#team-position-counts");
   if (!roster || !countsEl) return;
   renderFinance();
+  const squadPoints = teamAccumulatedPoints();
+  const squadPointsEl = qs("#team-squad-points");
+  if (squadPointsEl) {
+    squadPointsEl.textContent = squadPoints.known ? `${squadPoints.total.toLocaleString("es-ES")} pts` : "S/D";
+    squadPointsEl.title = squadPoints.known < squadPoints.count
+      ? `${squadPoints.known}/${squadPoints.count} jugadores con puntos de temporada disponibles` : "Puntos acumulados de temporada de toda la plantilla";
+    qs("#team-squad-points-status").textContent = squadPoints.known < squadPoints.count
+      ? `Datos incompletos (${squadPoints.known}/${squadPoints.count})` : "Temporada";
+  }
   applyFutbolFantasySession(state.futbolFantasy);
   const incomingOffers = activeIncomingOffers(state.biwengerOperations?.offers || []);
 
@@ -12242,16 +12315,20 @@ const renderTeam = () => {
       || Number(b.competitionPoints || b.points || 0) - Number(a.competitionPoints || a.points || 0));
 
   const incomingByPlayerId = new Map(incomingOffers.map((offer) => [Number(offer.playerId || 0), offer]));
+  const existingGroups = [...roster.querySelectorAll("details.roster-group")];
+  const expandedGroups = new Set(existingGroups.filter((group) => group.open).map((group) => group.dataset.position));
+  const compactRoster = window.matchMedia("(max-width: 900px)").matches;
+  const firstPosition = players[0]?.position;
   roster.innerHTML = Object.keys(POSITION_ORDER).map((position) => {
     const group = players.filter((player) => player.position === position);
     if (!group.length) return "";
     return `
-      <section class="roster-group">
-        <div class="roster-group-header">
+      <details class="roster-group" data-position="${position}" ${!compactRoster || (existingGroups.length ? expandedGroups.has(position) : position === firstPosition) ? "open" : ""}>
+        <summary class="roster-group-header">
           ${renderPositionIcon(position)}
           <strong>${POSITION_NAMES[position]}</strong>
           <span>${group.length}</span>
-        </div>
+        </summary>
         ${group.map((player) => `
           ${(() => {
             const incomingOffer = incomingByPlayerId.get(Number(player.biwengerPlayerId || 0));
@@ -12272,7 +12349,7 @@ const renderTeam = () => {
           </div>
         `; })()}
         `).join("")}
-      </section>
+      </details>
     `;
   }).join("");
   roster.querySelectorAll("[data-open-offer-player]").forEach((button) => button.addEventListener("click", async () => {

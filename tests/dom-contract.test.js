@@ -88,7 +88,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=134') || !html.includes('styles.css?v=75') || !html.includes('mobile-local-first.js?v=2') || !sw.includes('radar-fantasy-shell-v85')) {
+if (!html.includes('app.js?v=135') || !html.includes('styles.css?v=76') || !html.includes('mobile-local-first.js?v=3') || !sw.includes('radar-fantasy-shell-v86')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -386,7 +386,7 @@ if (!css.includes('html[data-theme="day"] .market-card .score-meter strong')
   throw new Error("Day mode must keep market ratings and matchday results readable on light cards");
 }
 
-if (!php.includes("$fixtures['schemaVersion'] = 8") || !php.includes("fixtures-v6-") || !php.includes("eliminatedTeams")
+if (!php.includes("$fixtures['schemaVersion'] = 9") || !php.includes("fixtures-v7-") || !php.includes("eliminatedTeams")
   || !php.includes("$queries[] = 'La Liga'") || !js.includes("45 * 60 * 1000") || !js.includes("invalidateMarketAnalysisCache();\n    saveLocalLeagueSnapshot();")) {
   throw new Error("Old incomplete fixture snapshots must be invalidated after the calendar fix");
 }

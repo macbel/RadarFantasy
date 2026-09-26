@@ -233,8 +233,8 @@ const worldCupAliasPairs = [
 if (worldCupAliasPairs.some(([biwengerName, fixtureName]) => teamNameMatchScore(biwengerName, fixtureName) < 88)) {
   throw new Error("World Cup team translations must match SofaScore fixture names: " + JSON.stringify(worldCupAliasPairs));
 }
-if (!fixtureDataNeedsRefresh({ schemaVersion: 8, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
-  || fixtureDataNeedsRefresh({ schemaVersion: 9, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
+if (!fixtureDataNeedsRefresh({ schemaVersion: 9, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })
+  || fixtureDataNeedsRefresh({ schemaVersion: 10, fetchedAtTs: Math.floor(Date.now() / 1000), events: state.leagueFixtures.events })) {
   throw new Error("Fixture cache freshness must invalidate old schemas without refetching a current complete snapshot");
 }
 if (fixturePayloadMatchesCompetition({ competition: "Bundesliga" }, "la-liga")
@@ -1070,7 +1070,7 @@ if (fixturePayloadMatchesCompetition({ competition: "LaLiga 2" })
   throw new Error("A fixture payload from a different competition must be rejected for the selected Biwenger league");
 }
 const filteredCompetitionFixtures = filterFixturePayloadByCompetition({
-  schemaVersion: 9,
+  schemaVersion: 10,
   competition: "LaLiga",
   events: [
     { id: 1, competition: "LaLiga" },
@@ -1098,8 +1098,8 @@ state.players = fixturePlayers;
 state.teamPlayers = [];
 const future = Math.floor(Date.now() / 1000) + 86400;
 const match = (a, b, id, timestamp = future) => ({ id, competition: "LaLiga", timestamp, status: "notstarted", home: { name: fixtureNames[a] }, away: { name: fixtureNames[b] } });
-const thin = { schemaVersion: 9, competition: "LaLiga", seasonId: 2026, events: [match(0, 1, "a")] };
-const wide = { schemaVersion: 9, competition: "LaLiga", seasonId: 2026, events: Array.from({ length: 9 }, (_, i) => match(2 + i * 2, 3 + i * 2, "b-" + i)) };
+const thin = { schemaVersion: 10, competition: "LaLiga", seasonId: 2026, events: [match(0, 1, "a")] };
+const wide = { schemaVersion: 10, competition: "LaLiga", seasonId: 2026, events: Array.from({ length: 9 }, (_, i) => match(2 + i * 2, 3 + i * 2, "b-" + i)) };
 if (fixturePlayerCoverage(thin).covered !== 2 || fixturePlayerCoverage(wide).covered !== 18) throw new Error("Fixture coverage must count players, not just nonempty events");
 const united = mergeFixturePayloads(thin, { ...wide, events: [...wide.events, match(0, 1, "other-id", future + 600)] });
 if (fixturePlayerCoverage(united).covered !== 20 || united.events.length !== 10) throw new Error("Partial fixtures must merge without duplicate aliases/events");

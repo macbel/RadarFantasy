@@ -88,7 +88,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=136') || !html.includes('styles.css?v=76') || !html.includes('mobile-local-first.js?v=4') || !sw.includes('radar-fantasy-shell-v87')) {
+if (!html.includes('app.js?v=137') || !html.includes('styles.css?v=76') || !html.includes('mobile-local-first.js?v=4') || !sw.includes('radar-fantasy-shell-v88')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -264,7 +264,7 @@ if (!refreshAllBlock.includes("refreshTeamSettingsManually")
 if (!js.includes('refresh=1') || !js.includes("fixturePlayerCoverage")
   || !php.includes("$forceRefresh = filter_var")
   || !php.includes("!$forceRefresh && !empty($cached['fetchedAtTs'])")
-  || !php.includes("sofascore+espn-refresh")) {
+  || !php.includes("fixture_payload_usable($candidate, $session)")) {
   throw new Error("Manual full refresh must bypass fixture caches and validate player coverage");
 }
 
@@ -363,7 +363,7 @@ if (!js.includes('"Sin fichajes recomendables"') || !js.includes("const firstCan
   throw new Error("An avoided player must not be auto-selected as the best market option");
 }
 
-if (!php.includes("if ($route === '/fixtures'") || !php.includes("fast_current_fixtures") || !php.includes("sofascore-primary") || !php.includes("api-football-fallback") || !php.includes("espn-fallback") || !php.includes("thesportsdb-fallback") || !php.includes("resultados-futbol-fallback")) {
+if (!php.includes("if ($route === '/fixtures'") || !php.includes("fast_current_fixtures") || !php.includes("['sofascore', 'api-football', 'espn', 'thesportsdb', 'resultados-futbol']") || !php.includes("fixture_payload_usable($candidate, $session)")) {
   throw new Error("Fixture sync must use SofaScore first with resilient provider fallbacks");
 }
 
@@ -386,7 +386,7 @@ if (!css.includes('html[data-theme="day"] .market-card .score-meter strong')
   throw new Error("Day mode must keep market ratings and matchday results readable on light cards");
 }
 
-if (!php.includes("$fixtures['schemaVersion'] = 9") || !php.includes("fixtures-v7-") || !php.includes("eliminatedTeams")
+if (!php.includes("$fixtures['schemaVersion'] = 10") || !php.includes("fixture_cache_key('sofascore', $session)") || !php.includes("eliminatedTeams")
   || !php.includes("$queries[] = 'La Liga'") || !js.includes("45 * 60 * 1000") || !js.includes("invalidateMarketAnalysisCache();\n    saveLocalLeagueSnapshot();")) {
   throw new Error("Old incomplete fixture snapshots must be invalidated after the calendar fix");
 }

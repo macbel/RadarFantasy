@@ -3,6 +3,8 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const { createRouter } = require('../scripts/php-router.cjs');
 
 const root = path.resolve(__dirname, '..');
 const php = process.env.PHP_BINARY || path.join(root, '.tooling', 'php-audit', 'php.exe');
@@ -38,6 +40,8 @@ async function waitForServer(baseUrl, child) {
 }
 
 async function run() {
+  const trackedFiles = execFileSync('git', ['ls-files', '-z'], { cwd: root }).toString().split('\0').filter(Boolean);
+  const missingBefore = new Set(trackedFiles.filter((file) => !fs.existsSync(path.join(root, file))));
   assertMobileCorsContract();
   if (!fs.existsSync(php)) {
     process.stdout.write('Mobile CORS source contract passed; PHP HTTP integration skipped (local PHP runtime unavailable).\n');
@@ -45,7 +49,8 @@ async function run() {
   }
   const port = await reservePort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const child = spawn(php, ['-c', path.join(root, 'php-local.ini'), '-S', `127.0.0.1:${port}`, 'local-app-router.php'], {
+  const router = createRouter();
+  const child = spawn(php, ['-c', path.join(root, 'php-local.ini'), '-S', `127.0.0.1:${port}`, router.filename], {
     cwd: root,
     env: { ...process.env, FMS_ALLOWED_ORIGINS: '', FMS_MOBILE_CORS_ORIGINS: '' },
     stdio: 'ignore',
@@ -73,6 +78,9 @@ async function run() {
     process.stdout.write('Mobile CORS integration passed: hostile origin denied; localhost allowed.\n');
   } finally {
     child.kill();
+    router.cleanup();
+    const missingAfter = trackedFiles.filter((file) => !fs.existsSync(path.join(root, file)) && !missingBefore.has(file));
+    assert.deepEqual(missingAfter, [], 'PHP integration test must not delete tracked files');
   }
 }
 

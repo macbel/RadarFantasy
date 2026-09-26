@@ -288,7 +288,10 @@ if ($route === '/fixtures' && $requestMethod === 'GET') {
     try {
         send_json(200, fast_current_fixtures($fixtureSession, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir, $forceRefresh));
     } catch (Throwable $error) {
-        send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar el calendario']);
+        $confirmedEmpty = str_starts_with($error->getMessage(), 'No hay proximos partidos confirmados');
+        send_json(502, ['ok' => false, 'code' => $confirmedEmpty ? 'no_upcoming_confirmed' : 'provider_error',
+            'message' => $confirmedEmpty ? 'Las fuentes consultadas no confirman proximos partidos.' : 'No se ha podido consultar el calendario.',
+            'httpStatus' => 502, 'stage' => 'fixtures', 'retryable' => true, 'staleDataAvailable' => false]);
     }
 }
 
@@ -748,7 +751,19 @@ if ($route === '/biwenger/operations' && $requestMethod === 'GET') {
     try {
         send_json(200, biwenger_operations_center($sessionState, $sourceTimeoutSeconds, $biwengerJsonHeaders, $strictTls));
     } catch (Throwable $error) {
-        send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar el centro operativo']);
+        $status = preg_match('/HTTP\s*(401|403)/i', $error->getMessage()) ? 401
+            : (preg_match('/HTTP\s*404|Entity not found/i', $error->getMessage()) ? 404
+            : (preg_match('/HTTP\s*429/i', $error->getMessage()) ? 429 : 502));
+        send_json($status, [
+            'ok' => false,
+            'code' => match ($status) { 401 => 'auth_required', 404 => 'stale_entity', 429 => 'rate_limited', default => 'provider_error' },
+            'message' => match ($status) { 401 => 'Vuelve a conectar Biwenger.', 404 => 'La liga o el jugador ha cambiado. Actualiza la liga.', 429 => 'Biwenger limita las consultas. Espera antes de reintentar.', default => 'Biwenger no ha podido entregar los datos operativos.' },
+            'httpStatus' => $status,
+            'stage' => 'market',
+            'retryable' => $status !== 401,
+            'retryAfterSeconds' => $status === 429 ? 60 : null,
+            'staleDataAvailable' => false
+        ]);
     }
 }
 
@@ -934,7 +949,10 @@ if ($route === '/biwenger/fixtures' && $requestMethod === 'GET') {
     try {
         send_json(200, fast_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir, $forceRefresh));
     } catch (Throwable $error) {
-        send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar el calendario']);
+        $confirmedEmpty = str_starts_with($error->getMessage(), 'No hay proximos partidos confirmados');
+        send_json(502, ['ok' => false, 'code' => $confirmedEmpty ? 'no_upcoming_confirmed' : 'provider_error',
+            'message' => $confirmedEmpty ? 'Las fuentes consultadas no confirman proximos partidos.' : 'No se ha podido consultar el calendario.',
+            'httpStatus' => 502, 'stage' => 'fixtures', 'retryable' => true, 'staleDataAvailable' => false]);
     }
 }
 
@@ -2415,6 +2433,11 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
             $strictTls
         );
         $marketData = is_array($response['data'] ?? null) ? $response['data'] : [];
+        if (!array_key_exists('sales', $marketData) && !array_key_exists('loans', $marketData) && !array_key_exists('auctions', $marketData)) {
+            throw new RuntimeException('Biwenger market schema unavailable');
+        }
+        $rawMarketCount = count(biwenger_market_entries($marketData));
+        $offerReadStatus = 'ready';
         $offerMap = [];
         try {
             $userOffersResponse = biwenger_private_get_json(
@@ -2429,7 +2452,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
             biwenger_collect_offer_entries((array)($userOffersData['offers'] ?? $userOffersData), $outgoingOffers, 'outgoing');
             $offerMap = biwenger_offer_map($outgoingOffers, $userId);
         } catch (Throwable $error) {
-            // The market remains usable even when outgoing offers are not exposed.
+            $offerReadStatus = 'partial';
         }
         $players = [];
         foreach (biwenger_market_entries($marketData) as $sale) {
@@ -2468,6 +2491,8 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
         'importedAt' => gmdate('c'),
         'finance' => $finance,
         'players' => array_values(array_filter($players)),
+        'marketStatus' => $kind === 'team' ? null : ($offerReadStatus === 'partial' ? 'partial' : ($rawMarketCount === 0 ? 'empty' : 'ready')),
+        'marketCounts' => $kind === 'team' ? null : ['raw' => $rawMarketCount, 'normalized' => count($players)],
         'departedPlayers' => $kind === 'team' ? $departedPlayers : [],
         'lineup' => $kind === 'team' ? $lineupPayload : null,
         'currentRound' => $kind === 'team' ? [
@@ -5854,9 +5879,9 @@ function sofascore_current_fixtures(array $session, int $timeoutSeconds, array $
 {
     $competition = trim((string)($session['competition'] ?? ''));
     $leagueName = trim((string)($session['leagueName'] ?? ''));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'fixtures-v7-' . slugify($competition ?: $leagueName) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . fixture_cache_key('sofascore', $session);
     $cached = read_json_file($cachePath, []);
-    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && fixture_payload_usable($cached, $session)) {
         $cached['cacheStatus'] = 'hit';
         return $cached;
     }
@@ -6087,9 +6112,9 @@ function resultados_futbol_current_fixtures(array $session, int $timeoutSeconds,
 function resultados_futbol_calendar_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
 {
     $competition = (string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? 'partidos'));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'calendar-v2-' . slugify($competition) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . fixture_cache_key('resultados-calendar', $session);
     $cached = read_json_file($cachePath, []);
-    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && !empty($cached['events'])) {
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && fixture_payload_usable($cached, $session)) {
         $cached['cacheStatus'] = 'hit-resultados-calendar';
         return $cached;
     }
@@ -6151,9 +6176,9 @@ function feeberse_current_fixtures(array $session, int $timeoutSeconds, bool $st
     if (fixture_competition_family($competition) !== 'la-liga') {
         throw new RuntimeException('Feeberse calendario solo está mapeado para LaLiga');
     }
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'feeberse-fixtures-la-liga-v3.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . fixture_cache_key('feeberse', $session);
     $cached = read_json_file($cachePath, []);
-    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && !empty($cached['events'])) {
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 1800 && fixture_payload_usable($cached, $session)) {
         $cached['cacheStatus'] = 'hit-feeberse-fixtures';
         return $cached;
     }
@@ -6218,109 +6243,80 @@ function feeberse_current_fixtures(array $session, int $timeoutSeconds, bool $st
     return $result;
 }
 
+function fixture_payload_usable(array $payload, array $session): bool
+{
+    if (($payload['ok'] ?? false) !== true || !is_array($payload['events'] ?? null)) return false;
+    $expected = fixture_competition_family((string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? '')));
+    $received = fixture_competition_family((string)($payload['competition'] ?? ''));
+    if ($expected !== '' && $received !== $expected) return false;
+    $season = (string)($payload['seasonName'] ?? '');
+    if ($season !== '' && preg_match('/20\d{2}/', $season, $matches)) {
+        $year = (int)$matches[0];
+        $current = (int)date('Y');
+        if ($year < $current - 1 || $year > $current + 1) return false;
+    }
+    foreach ($payload['events'] as $event) {
+        if (!is_array($event)) continue;
+        $family = fixture_competition_family((string)($event['competition'] ?? $event['competitionName'] ?? ''));
+        if ($expected !== '' && $family !== '' && $family !== $expected) continue;
+        if ((int)($event['timestamp'] ?? 0) < time() - 10800) continue;
+        if (in_array(strtolower((string)($event['status'] ?? '')), ['finished', 'postponed', 'cancelled', 'canceled', 'abandoned'], true)) continue;
+        if (trim((string)($event['home']['name'] ?? '')) !== '' && trim((string)($event['away']['name'] ?? '')) !== '') return true;
+    }
+    return false;
+}
+
+function fixture_cache_key(string $provider, array $session): string
+{
+    $competition = (string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? 'football'));
+    $season = (int)date('n') >= 7 ? date('Y') : (int)date('Y') - 1;
+    return $provider . '-v10-' . slugify($competition) . '-' . $season . '.json';
+}
+
 function fast_current_fixtures(array $session, int $timeoutSeconds, array $headers, bool $strictTls, string $dbDir, bool $forceRefresh = false): array
 {
     $startedAt = microtime(true);
-    $sourceStrategy = 'sofascore-primary';
     $fixtures = null;
+    $sources = [];
+    $sourceErrors = [];
+    $hadCalendarResponse = false;
     $usesFeeberse = in_array((int)($session['scoreId'] ?? 0), [7, 8], true)
         || in_array((string)($session['scoring'] ?? ''), ['feeberse', 'feeberse-mixed'], true);
-    if ($usesFeeberse) {
+    $providers = $usesFeeberse
+        ? ['feeberse', 'sofascore', 'api-football', 'espn', 'thesportsdb', 'resultados-futbol']
+        : ['sofascore', 'api-football', 'espn', 'thesportsdb', 'resultados-futbol'];
+    foreach ($providers as $provider) {
+        if ($fixtures !== null && fixture_upcoming_team_count($fixtures) >= 20) break;
         try {
-            $fixtures = feeberse_current_fixtures($session, max($timeoutSeconds, 10), $strictTls, $dbDir, $forceRefresh);
-            $sourceStrategy = 'feeberse-primary';
-        } catch (Throwable $feeberseError) {
-            $fixtures = null;
+            $candidate = match ($provider) {
+                'feeberse' => feeberse_current_fixtures($session, max($timeoutSeconds, 10), $strictTls, $dbDir, $forceRefresh),
+                'sofascore' => sofascore_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh),
+                'api-football' => api_football_current_fixtures($session, max($timeoutSeconds, 12), $headers, $strictTls, $dbDir, $forceRefresh),
+                'espn' => espn_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh),
+                'thesportsdb' => thesportsdb_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls),
+                default => resultados_futbol_calendar_fixtures($session, max($timeoutSeconds, 7), $headers, $strictTls, $dbDir, $forceRefresh)
+            };
+            $hadCalendarResponse = true;
+            if (!fixture_payload_usable($candidate, $session)) throw new RuntimeException('Sin proximos partidos validos');
+            $candidate = filter_fixture_payload_to_competition($candidate, $session);
+            $fixtures = $fixtures === null ? $candidate : merge_fixture_payloads($fixtures, $candidate);
+            $sources[] = $provider;
+        } catch (Throwable $error) {
+            $sourceErrors[$provider] = 'unavailable';
         }
     }
-    if (is_array($fixtures)) {
-        // Feeberse exposes a short rolling window. Compare it with a season calendar
-        // even when that window contains some valid upcoming matches.
-        try {
-            $sofaFixtures = sofascore_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh);
-            $fixtures = merge_fixture_payloads($fixtures, $sofaFixtures);
-            $sourceStrategy = 'feeberse+sofascore';
-        } catch (Throwable $sofaError) {
-            $fixtures['secondarySourceError'] = $sofaError->getMessage();
-        }
-    }
-    if (!is_array($fixtures)) try {
-        $fixtures = sofascore_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh);
-    } catch (Throwable $sofascoreError) {
-        try {
-            $fixtures = api_football_current_fixtures($session, max($timeoutSeconds, 12), $headers, $strictTls, $dbDir, $forceRefresh);
-            $sourceStrategy = 'api-football-fallback';
-            $fixtures['primarySourceError'] = $sofascoreError->getMessage();
-        } catch (Throwable $apiFootballError) {
-            try {
-                $fixtures = espn_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh);
-                $sourceStrategy = 'espn-fallback';
-                $fixtures['primarySourceError'] = $sofascoreError->getMessage();
-                $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
-            } catch (Throwable $espnError) {
-                try {
-                    $fixtures = thesportsdb_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls);
-                    $sourceStrategy = 'thesportsdb-fallback';
-                    $fixtures['primarySourceError'] = $sofascoreError->getMessage();
-                    $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
-                    $fixtures['tertiarySourceError'] = $espnError->getMessage();
-                } catch (Throwable $sportsDbError) {
-                    try {
-                        $fixtures = resultados_futbol_calendar_fixtures($session, min($timeoutSeconds, 7), $headers, $strictTls, $dbDir, $forceRefresh);
-                        $sourceStrategy = 'resultados-futbol-fallback';
-                        $fixtures['primarySourceError'] = $sofascoreError->getMessage();
-                        $fixtures['secondarySourceError'] = $apiFootballError->getMessage();
-                        $fixtures['tertiarySourceError'] = $espnError->getMessage();
-                        $fixtures['quaternarySourceError'] = $sportsDbError->getMessage();
-                    } catch (Throwable $resultadosError) {
-                        throw new RuntimeException(
-                            'SofaScore no ha devuelto el calendario: ' . $sofascoreError->getMessage()
-                            . '. Respaldo API-Football: ' . $apiFootballError->getMessage()
-                            . '. Respaldo ESPN: ' . $espnError->getMessage()
-                            . '. Respaldo TheSportsDB: ' . $sportsDbError->getMessage()
-                            . '. Respaldo Resultados-Futbol: ' . $resultadosError->getMessage()
-                        );
-                    }
-                }
-            }
-        }
-    }
-    if ($forceRefresh && $sourceStrategy === 'sofascore-primary') {
-        try {
-            $espnFixtures = espn_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, true);
-            $fixtures = merge_fixture_payloads($fixtures, $espnFixtures);
-            $sourceStrategy = 'sofascore+espn-refresh';
-        } catch (Throwable $mergeError) {
-            $fixtures['refreshMergeError'] = $mergeError->getMessage();
-        }
-    }
-    // A short Feeberse window can contain valid matches for only a few clubs.
-    // Keep looking for the season schedule even when that window is non-empty.
-    if (fixture_competition_family((string)($session['competition'] ?? $session['leagueName'] ?? '')) === 'la-liga'
-        && fixture_upcoming_team_count($fixtures) < 20) {
-        $coverageErrors = [];
-        foreach (['api-football', 'espn', 'thesportsdb'] as $provider) {
-            try {
-                $supplement = match ($provider) {
-                    'api-football' => api_football_current_fixtures($session, max($timeoutSeconds, 12), $headers, $strictTls, $dbDir, $forceRefresh),
-                    'espn' => espn_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls, $dbDir, $forceRefresh),
-                    default => thesportsdb_current_fixtures($session, max($timeoutSeconds, 10), $headers, $strictTls)
-                };
-                $before = fixture_upcoming_team_count($fixtures);
-                $fixtures = merge_fixture_payloads($fixtures, $supplement);
-                if (fixture_upcoming_team_count($fixtures) > $before) $sourceStrategy .= '+' . $provider . '-coverage';
-                if (fixture_upcoming_team_count($fixtures) >= 20) break;
-            } catch (Throwable $coverageError) {
-                $coverageErrors[$provider] = $coverageError->getMessage();
-            }
-        }
-        if ($coverageErrors) $fixtures['coverageFallbackErrors'] = $coverageErrors;
+    if ($fixtures === null || !fixture_payload_usable($fixtures, $session)) {
+        throw new RuntimeException($hadCalendarResponse
+            ? 'No hay proximos partidos confirmados de esta competicion'
+            : 'Los proveedores no han podido consultar los proximos partidos de esta competicion');
     }
     $fixtures = filter_fixture_payload_to_competition($fixtures, $session);
     $fixtures = decorate_fixture_competition_state($fixtures, $session);
-    $fixtures['schemaVersion'] = 9;
+    $fixtures['schemaVersion'] = 10;
     $fixtures['fetchedAtTs'] = (int)($fixtures['fetchedAtTs'] ?? time());
-    $fixtures['sourceStrategy'] = $sourceStrategy;
+    $fixtures['sourceStrategy'] = implode('+', $sources);
+    $fixtures['sourceDiagnostics'] = $sourceErrors;
+    $fixtures['coverageStatus'] = fixture_upcoming_team_count($fixtures) >= 20 ? 'complete' : 'partial';
     $fixtures['durationMs'] = (int)round((microtime(true) - $startedAt) * 1000);
     return $fixtures;
 }
@@ -6447,9 +6443,9 @@ function espn_current_fixtures(array $session, int $timeoutSeconds, array $heade
         default => ''
     };
     if ($slug === '') throw new RuntimeException('ESPN no reconoce la competicion');
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'espn-fixtures-' . slugify($competition) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . fixture_cache_key('espn', $session);
     $cached = read_json_file($cachePath, []);
-    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && !empty($cached['events'])) {
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 900 && fixture_payload_usable($cached, $session)) {
         $cached['cacheStatus'] = 'hit-espn';
         return $cached;
     }
@@ -6572,9 +6568,9 @@ function api_football_current_fixtures(array $session, int $timeoutSeconds, arra
     $key = api_football_key();
     if ($key === '') throw new RuntimeException('API-Football no configurada');
     $competition = trim((string)(($session['competition'] ?? '') ?: ($session['leagueName'] ?? 'football')));
-    $cachePath = $dbDir . DIRECTORY_SEPARATOR . 'api-football-fixtures-' . slugify($competition) . '.json';
+    $cachePath = $dbDir . DIRECTORY_SEPARATOR . fixture_cache_key('api-football', $session);
     $cached = read_json_file($cachePath, []);
-    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 3600 && !empty($cached['events'])) {
+    if (!$forceRefresh && !empty($cached['fetchedAtTs']) && (int)$cached['fetchedAtTs'] > time() - 3600 && fixture_payload_usable($cached, $session)) {
         $cached['cacheStatus'] = 'hit-api-football';
         return $cached;
     }
@@ -7371,9 +7367,13 @@ function merge_fixture_payloads(array $primary, array $fallback): array
     $family = fixture_competition_family((string)($primary['competition'] ?? ''));
     $fallbackFamily = fixture_competition_family((string)($fallback['competition'] ?? ''));
     if ($family !== '' && $fallbackFamily !== '' && $family !== $fallbackFamily) return $primary;
-    $seasonA = (string)($primary['seasonId'] ?? $primary['seasonName'] ?? '');
-    $seasonB = (string)($fallback['seasonId'] ?? $fallback['seasonName'] ?? '');
-    if ($seasonA !== '' && $seasonB !== '' && $seasonA !== $seasonB) return $primary;
+    $seasonA = (string)($primary['seasonName'] ?? '');
+    $seasonB = (string)($fallback['seasonName'] ?? '');
+    preg_match('/20\d{2}/', $seasonA, $yearA);
+    preg_match('/20\d{2}/', $seasonB, $yearB);
+    if (isset($yearA[0], $yearB[0]) && $yearA[0] !== $yearB[0]) return $primary;
+    if (!$yearA && !$yearB && !empty($primary['seasonId']) && !empty($fallback['seasonId'])
+        && (string)$primary['seasonId'] !== (string)$fallback['seasonId']) return $primary;
     $valid = static function ($event) use ($family): bool {
         if (!is_array($event)) return false;
         if (in_array(strtolower((string)($event['status'] ?? '')), ['postponed', 'cancelled', 'canceled', 'abandoned'], true)) return false;
@@ -7992,6 +7992,11 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
     $userId = (int)($session['userId'] ?? 0);
     $marketResponse = biwenger_private_get_json('https://biwenger.as.com/api/v2/market', $session, $timeoutSeconds, $headers, $strictTls);
     $market = is_array($marketResponse['data'] ?? null) ? $marketResponse['data'] : $marketResponse;
+    if (!is_array($market) || (!array_key_exists('market', $market) && !array_key_exists('players', $market) && !array_key_exists('sales', $market) && !array_key_exists('status', $market))) {
+        throw new RuntimeException('Biwenger market schema unavailable');
+    }
+    $stageStatus = ['market' => 'complete', 'owner' => 'error', 'offers' => 'error', 'board' => 'error'];
+    $stageErrors = [];
     $offers = [];
     $ownedPlayerIds = [];
     try {
@@ -8009,8 +8014,9 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
             if ($ownedId > 0) $ownedPlayerIds[$ownedId] = true;
         }
         biwenger_collect_offer_entries((array)$ownerData, $offers, 'owner');
+        $stageStatus['owner'] = 'complete';
     } catch (Throwable $error) {
-        // Continue with the other offer endpoints.
+        $stageErrors['owner'] = 'unavailable';
     }
     $offerSources = [];
     $offerUrls = [
@@ -8023,6 +8029,8 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
     foreach ($offerUrls as $offerUrl) {
         try {
             $userResponse = biwenger_private_get_json($offerUrl, $session, $timeoutSeconds, $headers, $strictTls);
+            $stageStatus['offers'] = 'complete';
+            unset($stageErrors['offers']);
             $userData = is_array($userResponse['data'] ?? null) ? $userResponse['data'] : $userResponse;
             $rootUser = is_array($userData['user'] ?? null) ? array_merge($userData, $userData['user']) : $userData;
             foreach ((array)($rootUser['players'] ?? []) as $ownedPlayer) {
@@ -8039,6 +8047,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
                 $offerSources[] = $offerUrl;
             }
         } catch (Throwable $error) {
+            if ($stageStatus['offers'] !== 'complete') $stageErrors['offers'] = 'unavailable';
             continue;
         }
     }
@@ -8242,14 +8251,17 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
         );
         $board = is_array($boardResponse['data'] ?? null) ? $boardResponse['data'] : $boardResponse;
         $activity = biwenger_activity_rows(array_values((array)($board['posts'] ?? $board['board'] ?? $board)), $catalog);
+        $stageStatus['board'] = 'complete';
     } catch (Throwable $error) {
-        // League activity is optional and depends on league permissions.
+        $stageErrors['board'] = 'unavailable';
     }
 
     $status = is_array($market['status'] ?? null) ? $market['status'] : [];
     $maximumBid = biwenger_maximum_bid_from_data($status, $market, $session);
     return [
         'ok' => true,
+        'status' => count($stageErrors) ? 'partial' : (count($normalizedOffers) || count($sales) || count($activity) ? 'complete' : 'empty'),
+        'updatedAt' => gmdate('c'),
         'offers' => $normalizedOffers,
         'sales' => $sales,
         'activity' => $activity,
@@ -8261,6 +8273,8 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
             'maximumBid' => $maximumBid ?? ($session['maximumBid'] ?? null)
         ],
         'diagnostics' => [
+            'stages' => $stageStatus,
+            'stageErrors' => $stageErrors,
             'rawOfferCandidates' => count($offers),
             'activeOffers' => count($normalizedOffers),
             'ownBids' => count(array_filter($normalizedOffers, static fn($offer) => !empty($offer['isMine']))),
@@ -8271,7 +8285,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
             'queriedBidCounts' => $queriedBidCounts,
             'marketShowBids' => array_key_exists('marketShowBids', $session) ? $session['marketShowBids'] : null,
             'bidCountFree' => !empty($session['bidCountFree']),
-            'offerSource' => $offerSources[0] ?? 'market'
+            'offerSource' => $offerSources[0] ?? ($stageStatus['offers'] === 'complete' || $stageStatus['owner'] === 'complete' ? 'market' : 'unconfirmed')
         ]
     ];
 }

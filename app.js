@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.3";
-const APP_VERSION_CODE = 61;
+const APP_VERSION = "3.13.4";
+const APP_VERSION_CODE = 62;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -664,6 +664,13 @@ const isBiwengerRateLimitError = (error) => /HTTP\s*429|too many requests|limita
 const friendlyBiwengerError = (error, fallback = "Biwenger no ha respondido.") => isBiwengerRateLimitError(error)
   ? "Biwenger está limitando temporalmente las consultas. Espera unos segundos; la conexión y los últimos datos siguen disponibles."
   : (error?.message || fallback);
+const operationalErrorMessage = (status, payload = {}) => {
+  if (status === 401 || status === 403) return "La sesión de Biwenger ha caducado. Vuelve a conectar tu cuenta.";
+  if (status === 404) return "La liga o el jugador ya no está disponible en Biwenger. Actualiza la liga.";
+  if (status === 429) return `Biwenger limita las consultas. Espera ${Number(payload.retryAfterSeconds || 60)} segundos antes de reintentar.`;
+  if (status >= 500) return "Biwenger no ha respondido. Se conservan los últimos datos, marcados como obsoletos.";
+  return payload.message || "No se pudieron actualizar los datos operativos.";
+};
 const OCR_ENGINE_OPTIONS = {
   workerPath: assetUrl("vendor/tesseract/worker.min.js"),
   corePath: APP_CONFIG.ocrCoreUrl || "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js",
@@ -1206,6 +1213,7 @@ const teamNameMatchScore = (left, right) => {
 };
 
 const hasUpcomingFixtureEvents = (fixtures = state.leagueFixtures) => {
+  if (fixtures?.stale) return false;
   const events = fixtures?.events || [];
   const nowSeconds = Date.now() / 1000;
   return Array.isArray(events) && events.some((event) => fixtureIsUpcoming(event, nowSeconds));
@@ -1220,7 +1228,7 @@ const fixtureDataNeedsRefresh = (fixtures = state.leagueFixtures) => {
   const partial = fixtures?.playerCoverage?.total > 0 && fixtures.playerCoverage.covered < fixtures.playerCoverage.total;
   const maxAge = partial ? 10 * 60 * 1000 : 45 * 60 * 1000;
   const stale = !Number.isFinite(fetchedAtMs) || fetchedAtMs <= 0 || Date.now() - fetchedAtMs > maxAge;
-  return Number(fixtures?.schemaVersion || 0) < 9 || stale || !hasUpcomingFixtureEvents(fixtures);
+  return Number(fixtures?.schemaVersion || 0) < 10 || stale || !hasUpcomingFixtureEvents(fixtures);
 };
 
 const fixtureCompetitionFamily = (value) => {
@@ -1261,7 +1269,7 @@ const filterFixturePayloadByCompetition = (fixtures, competition = selectedFixtu
   if (!fixtures || typeof fixtures !== "object") return fixtures;
   const events = Array.isArray(fixtures.events) ? fixtures.events : [];
   const expected = fixtureCompetitionFamily(competition);
-  if (expected && Number(fixtures.schemaVersion || 0) < 9) {
+  if (expected && Number(fixtures.schemaVersion || 0) < 10) {
     return { ...fixtures, events: [] };
   }
   return {
@@ -3365,6 +3373,15 @@ const updateTargetPlayerSelection = () => {
 const renderBidSaleAssistant = () => {
   const target = qs("#bid-sale-assistant");
   if (!target) return;
+  if (state.biwenger.connected && ["error", "partial"].includes(state.biwengerOperations?.status)) {
+    const status = state.biwengerOperations.status;
+    target.innerHTML = `<p class="muted-empty">${escapeHtml(status === "partial" ? "Biwenger solo ha entregado parte de las pujas y ofertas. Reintenta la sincronización antes de decidir." : state.biwengerOperations.diagnostics?.error || "Los datos operativos no están disponibles. Reintenta la sincronización.")}</p>`;
+    return;
+  }
+  if (state.biwenger.connected && !state.players.length) {
+    target.innerHTML = `<p class="muted-empty">El mercado aún no se ha confirmado. Importa el mercado de Biwenger o revisa los filtros activos.</p>`;
+    return;
+  }
   const plan = assistantPlanSnapshot();
   const { bids, sales, offerRows, incoming, myOffers, balance, committedNow, bidDelta, bidWinCost, allOfferAmount, recommendedOfferAmount, salePotential, roundReward } = plan;
   const bidBudgetMeta = bids.meta || {};
@@ -8484,6 +8501,18 @@ const importFromBiwenger = async (kind, options = {}) => {
     if (!response.ok) {
       throw new Error(payload.error || describeApiError(response.status, "/api/biwenger/import"));
     }
+    if (kind === "market") {
+      const raw = Number(payload.marketCounts?.raw);
+      const normalized = Number(payload.marketCounts?.normalized);
+      if (!["ready", "empty", "partial"].includes(payload.marketStatus)
+        || !Number.isFinite(raw) || !Number.isFinite(normalized)
+        || raw < 0 || normalized < 0 || (raw > 0 && normalized === 0)) {
+        throw new Error("El mercado de Biwenger no tiene un formato válido. Se conservan los jugadores guardados.");
+      }
+      if (payload.marketStatus === "partial") {
+        setBiwengerStatus("Mercado parcial: Biwenger no ha confirmado las ofertas. Reintenta la sincronización.", "error");
+      }
+    }
 
     const signature = biwengerImportSignature(kind, payload);
     const unchanged = Boolean(options.previousSignature && options.previousSignature === signature);
@@ -9241,6 +9270,16 @@ const renderBiwengerOperations = () => {
     return;
   }
   const operations = state.biwengerOperations || {};
+  if (["error", "partial"].includes(operations.status)) {
+    const message = operations.status === "partial"
+      ? "Biwenger ha entregado datos parciales; las pujas y ofertas no están confirmadas. Reintenta la actualización."
+      : (operations.diagnostics?.error || "No se pudieron comprobar las pujas y ofertas. Reintenta la actualización.");
+    bidsTarget.innerHTML = `<p class="muted-empty">${escapeHtml(message)}</p>`;
+    salesTarget.innerHTML = `<p class="muted-empty">${escapeHtml(message)}</p>`;
+    activityTarget.innerHTML = `<p class="muted-empty">${escapeHtml(message)}</p>`;
+    renderBidSaleAssistant();
+    return;
+  }
   const offers = operations.offers || [];
   const myOffers = activeOwnBidOffers(offers);
   const incoming = activeIncomingOffers(offers);
@@ -9407,24 +9446,39 @@ const renderBiwengerOperations = () => {
 };
 
 const loadBiwengerOperations = async (showFeedback = true) => {
-  if (!state.biwenger.connected) return;
+  if (!state.biwenger.connected) return false;
+  const leagueId = state.activeLeagueId;
+  const generation = state.biwenger.contextGeneration;
+  const stillCurrent = () => leagueId === state.activeLeagueId && generation === state.biwenger.contextGeneration;
   if (showFeedback) setLeagueOperationStatus("Actualizando datos operativos desde Biwenger...", "busy");
   try {
     const response = await apiFetch("/api/biwenger/operations");
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "No se pudo cargar el centro operativo");
+    if (!stillCurrent()) return false;
+    if (!response.ok) throw new Error(operationalErrorMessage(response.status, payload));
+    if (!Array.isArray(payload.offers) || !Array.isArray(payload.sales) || !payload.diagnostics || !["complete", "partial", "empty"].includes(payload.status)) {
+      throw new Error("Biwenger ha devuelto un formato de datos incompleto. Se conservan los últimos datos.");
+    }
+    if (payload.status === "partial" && state.biwengerOperations) {
+      payload.offers = payload.diagnostics.stages?.offers === "error" && payload.diagnostics.stages?.owner === "error"
+        ? state.biwengerOperations.offers : payload.offers;
+      payload.sales = payload.diagnostics.stages?.market === "error" ? state.biwengerOperations.sales : payload.sales;
+    }
     applyBiwengerOperations(payload);
     if (showFeedback) {
       const diagnostics = payload.diagnostics || {};
       const summary = Number.isFinite(diagnostics.ownBids)
         ? ` ${diagnostics.ownBids} pujas propias, ${diagnostics.receivedOffers} ofertas recibidas, ${diagnostics.sales} ventas y ${diagnostics.visibleBidCounts || 0} contadores rivales visibles.`
         : "";
-      setLeagueOperationStatus(`Centro operativo actualizado con datos actuales de Biwenger.${summary}`, "ready");
+      setLeagueOperationStatus(`${payload.status === "partial" ? "Datos parciales de Biwenger" : "Centro operativo actualizado"}.${summary}`, payload.status === "partial" ? "error" : "ready");
     }
     return payload;
   } catch (error) {
+    if (!stillCurrent()) return false;
     state.biwengerOperations = {
       ...(state.biwengerOperations || {}),
+      status: "error",
+      stale: true,
       diagnostics: { ...(state.biwengerOperations?.diagnostics || {}), refreshFailed: true, error: error.message || "operations-error" }
     };
     renderFinance();
@@ -9432,7 +9486,7 @@ const loadBiwengerOperations = async (showFeedback = true) => {
     const message = friendlyBiwengerError(error, "No se pudo actualizar el centro operativo.");
     qs("#bid-center").innerHTML = `<p class="muted-empty">${escapeHtml(message)}</p>`;
     setLeagueOperationStatus(message, "error");
-    return null;
+    return false;
   }
 };
 
@@ -9540,9 +9594,9 @@ const renderLeagueFixtures = () => {
   const target = qs("#league-fixtures");
   if (!target) return;
   const payload = filterFixturePayloadByCompetition(state.leagueFixtures);
-  const events = payload?.events || [];
+  const events = (payload?.events || []).filter((event) => fixtureIsUpcoming(event));
   if (!events.length) {
-    target.innerHTML = `<p class="muted-empty">No hay partidos disponibles para la jornada actual.</p>`;
+    target.innerHTML = `<p class="muted-empty">${escapeHtml(state.fixtureLoadError || "No hay próximos partidos confirmados para la jornada actual.")}</p>`;
     renderLiveLeagueFixtures();
     return;
   }
@@ -9557,6 +9611,7 @@ const renderLeagueFixtures = () => {
   target.innerHTML = `
     <div class="fixtures-heading">
       <strong>${escapeHtml(payload.competition || "Competicion")}</strong>
+      ${payload.stale ? `<span>Datos obsoletos · ${escapeHtml(state.fixtureLoadError || "pendiente de actualización")}</span>` : ""}
       <span>${visibleEvents.length} partidos actuales y próximos · ${videoCount} vídeos disponibles</span>
       ${payload.playerCoverage?.total ? `<span>${payload.playerCoverage.covered}/${payload.playerCoverage.total} jugadores con próximo rival${payload.coverageStatus === "partial" ? ` · Pendiente de enlazar: ${escapeHtml((payload.playerCoverage.unmatchedTeams || []).slice(0, 3).join(", "))}${(payload.playerCoverage.unmatchedTeams || []).length > 3 ? ` y ${(payload.playerCoverage.unmatchedTeams || []).length - 3} más` : ""}` : ""}</span>` : ""}
     </div>
@@ -10062,6 +10117,9 @@ const handleRecentDotHover = (event) => {
 const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
   const target = qs("#league-fixtures");
   const previousFixtures = state.leagueFixtures;
+  const leagueId = state.activeLeagueId;
+  const generation = state.biwenger.contextGeneration;
+  const stillCurrent = () => leagueId === state.activeLeagueId && generation === state.biwenger.contextGeneration;
   const forceRefresh = options.forceRefresh ?? showFeedback;
   beginDataSync("Actualizando próximos partidos y resultados...");
   if (showFeedback) setLeagueOperationStatus("Consultando partidos de la jornada...", "busy");
@@ -10077,6 +10135,7 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
           body: JSON.stringify({ preferredLeagueId: selectedBiwengerId, preferredLeagueName: activeLeagueName() })
         });
         const switchPayload = await switchResponse.json().catch(() => ({}));
+        if (!stillCurrent()) return false;
         if (!switchResponse.ok) throw new Error(switchPayload.error || "No se pudo seleccionar la competición de esta liga en Biwenger.");
         applyBiwengerSession(switchPayload);
         state.competition = biwengerCompetitionToLocal(switchPayload.competition);
@@ -10087,7 +10146,8 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
     if (forceRefresh) endpoint += `${endpoint.includes("?") ? "&" : "?"}refresh=1`;
     const response = await apiFetch(endpoint);
     let payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "No se pudo cargar la jornada actual");
+    if (!stillCurrent()) return false;
+    if (!response.ok) throw new Error(response.status === 401 ? "Conecta de nuevo Biwenger para consultar los partidos." : response.status === 429 ? "El proveedor limita las consultas. Espera antes de actualizar." : payload.code === "no_upcoming_confirmed" ? "Las fuentes consultadas no confirman próximos partidos de esta competición." : response.status >= 500 ? "No se ha podido consultar el calendario. Reintenta más tarde." : payload.message || payload.error || "No se pudo cargar la jornada actual");
     payload = filterFixturePayloadByCompetition(payload);
     let coverage = fixturePlayerCoverage(payload);
     if (state.biwenger.authenticated && (!fixturePayloadMatchesCompetition(payload)
@@ -10096,6 +10156,7 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
       const competition = String(state.biwenger.competition || payload.competition || activeLeagueName() || "la-liga");
       const fallbackResponse = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(competition)}${forceRefresh ? "&refresh=1" : ""}`);
       const fallbackPayload = filterFixturePayloadByCompetition(await fallbackResponse.json().catch(() => ({})));
+      if (!stillCurrent()) return false;
       if (fallbackResponse.ok && fixturePayloadMatchesCompetition(fallbackPayload) && hasUpcomingFixtureEvents(fallbackPayload)) {
         payload = fixturePayloadMatchesCompetition(payload) && hasUpcomingFixtureEvents(payload)
           ? mergeFixturePayloads(payload, fallbackPayload) : fallbackPayload;
@@ -10112,6 +10173,7 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
     payload.playerCoverage = coverage;
     payload.coverageStatus = coverage.total === 0 ? "unknown" : coverage.covered === coverage.total ? "complete" : "partial";
     state.leagueFixtures = payload;
+    state.fixtureLoadError = "";
     invalidateMarketAnalysisCache();
     saveLocalLeagueSnapshot();
     renderLeagueFixtures();
@@ -10120,9 +10182,11 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
     if (showFeedback) setLeagueOperationStatus(`Jornada ${payload.round || "actual"} actualizada: ${(payload.events || []).length} partidos y ${coverage.covered}/${coverage.total || coverage.covered} jugadores con próximo rival.`, "ready");
     return true;
   } catch (error) {
+    if (!stillCurrent()) return false;
     const previousMatchesCompetition = fixturePayloadMatchesCompetition(previousFixtures);
-    state.leagueFixtures = previousMatchesCompetition ? previousFixtures : null;
-    if (previousMatchesCompetition && previousFixtures?.events?.length) renderLeagueFixtures();
+    state.leagueFixtures = previousMatchesCompetition && hasUpcomingFixtureEvents(previousFixtures) ? { ...previousFixtures, stale: true } : null;
+    state.fixtureLoadError = error.message || "No se pudo cargar la jornada actual.";
+    if (state.leagueFixtures?.events?.length) renderLeagueFixtures();
     else if (target) target.innerHTML = `<p class="muted-empty">${escapeHtml(error.message || "No se pudo cargar la jornada actual.")}</p>`;
     if (showFeedback) setLeagueOperationStatus(error.message || "No se pudo cargar la jornada actual.", "error");
     return false;
@@ -10242,16 +10306,24 @@ const ensureLiveRoundForFinance = async (showFeedback = false) => {
 
 const waitForBiwengerSpacing = (milliseconds = 700) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 let biwengerContextRefreshPromise = null;
+let biwengerContextRefreshKey = "";
 const refreshBiwengerOperationalContext = ({ operations = true, liveRound = true, feedback = false } = {}) => {
-  if (biwengerContextRefreshPromise) return biwengerContextRefreshPromise;
+  const key = `${state.activeLeagueId}:${state.biwenger.contextGeneration}`;
+  if (biwengerContextRefreshPromise && biwengerContextRefreshKey === key) return biwengerContextRefreshPromise;
+  biwengerContextRefreshKey = key;
   biwengerContextRefreshPromise = (async () => {
     const allowLiveRound = liveRound && shouldShowExperimentalLiveRound();
-    if (operations) await loadBiwengerOperations(feedback);
+    const result = operations ? await loadBiwengerOperations(feedback) : true;
+    if (`${state.activeLeagueId}:${state.biwenger.contextGeneration}` !== key) return false;
     if (operations && allowLiveRound) await waitForBiwengerSpacing();
+    if (`${state.activeLeagueId}:${state.biwenger.contextGeneration}` !== key) return false;
     if (allowLiveRound) await ensureLiveRoundForFinance(feedback);
     return true;
   })().finally(() => {
-    biwengerContextRefreshPromise = null;
+    if (biwengerContextRefreshKey === key) {
+      biwengerContextRefreshPromise = null;
+      biwengerContextRefreshKey = "";
+    }
   });
   return biwengerContextRefreshPromise;
 };
@@ -13692,7 +13764,7 @@ const refreshAllSettingsManually = async ({ reason = "manual" } = {}) => {
     renderTeam();
     renderHome();
     setLeagueStatus("Sin conexión: se han recalculado los datos guardados en el dispositivo.", "ready");
-    return true;
+    return Boolean(result) && result.status !== "partial";
   }
   if (!activeLeague()) {
     setLeagueStatus("Selecciona una liga antes de actualizar todos los datos.");
@@ -14219,7 +14291,12 @@ const initEvents = () => {
   qs("#refresh-assistant").addEventListener("click", async () => {
     setLeagueOperationStatus("Recalculando asistente diario...", "busy");
     if (state.biwenger.connected) {
-      await loadBiwengerOperations(false);
+      const operations = await loadBiwengerOperations(false);
+      if (!operations || operations.status === "partial") {
+        renderBidSaleAssistant();
+        setLeagueOperationStatus("Puja inteligente pendiente: Biwenger no ha confirmado todos los datos.", "error");
+        return;
+      }
       await ensureLiveRoundForFinance(false);
       await refreshBiwengerStatus("Asistente sincronizado con Biwenger.");
     }

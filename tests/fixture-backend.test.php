@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 $source = str_replace("\r\n", "\n", file_get_contents(__DIR__ . '/../api/index.php'));
-foreach (['normalize_text', 'fixture_competition_family', 'identity_name_score', 'fixture_upcoming_team_count', 'merge_fixture_payloads', 'merge_recent_detail_payloads'] as $name) {
+foreach (['normalize_text', 'slugify', 'fixture_competition_family', 'identity_name_score', 'fixture_payload_usable', 'fixture_cache_key', 'fixture_upcoming_team_count', 'merge_fixture_payloads', 'filter_fixture_payload_to_competition', 'decorate_fixture_competition_state', 'fast_current_fixtures', 'merge_recent_detail_payloads'] as $name) {
     $start = strpos($source, "function $name(");
     if ($start === false) throw new RuntimeException("Missing production function $name");
     $end = $name === 'merge_recent_detail_payloads'
@@ -20,6 +20,16 @@ $event = static fn(string $home, string $away, string $id, int $at) => [
     'home' => ['name' => $home], 'away' => ['name' => $away]
 ];
 $first = ['competition' => 'LaLiga', 'seasonName' => '2026/27', 'events' => [$event('FC Barcelona', 'Real Madrid', 'fee-1', $time)]];
+$session = ['competition' => 'LaLiga'];
+$valid = ['ok' => true] + $first;
+check(fixture_payload_usable($valid, $session), 'Future event must be usable');
+$past = $valid;
+$past['events'][0]['timestamp'] = time() - 86400;
+check(!fixture_payload_usable($past, $session), 'Past-only 200 must trigger fallback');
+check(!fixture_payload_usable(['ok' => true, 'competition' => 'LaLiga', 'events' => []], $session), 'Empty 200 must trigger fallback');
+check(!fixture_payload_usable(['ok' => true, 'competition' => 'Premier League', 'events' => $valid['events']], $session), 'Wrong competition must trigger fallback');
+check(!fixture_payload_usable(['ok' => true, 'competition' => 'LaLiga', 'seasonName' => '2020/21', 'events' => $valid['events']], $session), 'Old season must trigger fallback');
+check(str_starts_with(fixture_cache_key('espn', $session), 'espn-v10-'), 'Provider and version must scope cache');
 $other = ['competition' => 'La Liga', 'seasonName' => '2026/27', 'events' => [
     $event('Barcelona', 'Real Madrid', 'sofa-1', $time + 900),
     $event('Betis', 'Sevilla', 'sofa-2', $time + 2000),
@@ -42,6 +52,31 @@ check(count(merge_fixture_payloads($first, ['competition' => 'LaLiga', 'seasonNa
 $cancelled = $event('Athletic', 'Getafe', 'x', $time);
 $cancelled['status'] = 'postponed';
 check(count(merge_fixture_payloads($first, ['competition' => 'LaLiga', 'events' => [$cancelled]])['events']) === 1, 'Postponed event must not survive');
+
+$providerRows = [];
+function test_fixture_source(string $name): array {
+    global $providerRows;
+    if (!isset($providerRows[$name])) throw new RuntimeException('unavailable');
+    return $providerRows[$name];
+}
+function sofascore_current_fixtures(): array { return test_fixture_source('sofascore'); }
+function api_football_current_fixtures(): array { return test_fixture_source('api-football'); }
+function espn_current_fixtures(): array { return test_fixture_source('espn'); }
+function thesportsdb_current_fixtures(): array { return test_fixture_source('thesportsdb'); }
+function resultados_futbol_calendar_fixtures(): array { return test_fixture_source('resultados-futbol'); }
+function feeberse_current_fixtures(): array { return test_fixture_source('feeberse'); }
+$providerRows = ['sofascore' => $past, 'espn' => $valid];
+$resolved = fast_current_fixtures($session, 1, [], true, sys_get_temp_dir());
+check(str_contains($resolved['sourceStrategy'], 'espn') && !str_contains($resolved['sourceStrategy'], 'sofascore'), 'Past-only first provider must fall back');
+$providerRows = ['sofascore' => ['ok' => true, 'competition' => 'LaLiga', 'events' => []], 'espn' => $valid];
+check(str_contains(fast_current_fixtures($session, 1, [], true, sys_get_temp_dir())['sourceStrategy'], 'espn'), 'Empty 200 must fall back');
+$providerRows = ['sofascore' => ['ok' => true, 'competition' => 'Premier League', 'events' => $valid['events']], 'espn' => $valid];
+check(str_contains(fast_current_fixtures($session, 1, [], true, sys_get_temp_dir())['sourceStrategy'], 'espn'), 'Wrong competition must fall back');
+$providerRows = ['sofascore' => $valid, 'espn' => ['ok' => true] + $other];
+check(count(fast_current_fixtures($session, 1, [], true, sys_get_temp_dir())['events']) === 3, 'Compatible partial calendars must merge');
+$providerRows = ['sofascore' => $past];
+try { fast_current_fixtures($session, 1, [], true, sys_get_temp_dir()); throw new RuntimeException('No-upcoming fixtures were accepted'); }
+catch (RuntimeException $error) { check(str_contains($error->getMessage(), 'proximos partidos'), 'All-past providers must yield a diagnostic error'); }
 
 $details = merge_recent_detail_payloads([
     ['provider' => 'feeberse', 'recentMatches' => [['date' => '2026-09-20', 'opponent' => 'Real Madrid', 'goals' => null]]],

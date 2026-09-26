@@ -667,9 +667,9 @@ state.teamPlayers = hydrateImportedPlayers([
     dataConfidence: 88,
     sourceSummary: {
       recentMatches: [
-        { provider: "biwenger", points: { biwenger: 8, mixed: 8 }, minutes: 83 },
-        { provider: "biwenger", points: { biwenger: 9, mixed: 9 }, minutes: 90 },
-        { provider: "biwenger", points: { biwenger: 7, mixed: 7 }, minutes: 76 }
+        { provider: "biwenger", scoreProvenance: "official-exact", points: { biwenger: 8, mixed: 8 }, minutes: 83 },
+        { provider: "biwenger", scoreProvenance: "official-exact", points: { biwenger: 9, mixed: 9 }, minutes: 90 },
+        { provider: "biwenger", scoreProvenance: "official-exact", points: { biwenger: 7, mixed: 7 }, minutes: 76 }
       ]
     }
   },
@@ -1064,9 +1064,29 @@ if (fixtureCompetitionFamily("LaLiga") !== "la-liga"
   || fixtureCompetitionFamily("La Liga Profesional de Fútbol") !== "argentina-primera") {
   throw new Error("Fixture competition families must keep LaLiga, LaLiga 2, and Argentina separate");
 }
+const fixtureSavedLeagues = state.leagues;
+const fixtureSavedLeagueId = state.activeLeagueId;
+const fixtureSavedCatalog = state.biwenger.availableLeagues;
+state.leagues = [{ id: "spanish", biwengerLeagueId: 17, name: "Liga amigos" }, { id: "german", biwengerLeagueId: 29, name: "Liga amigos" }];
+state.biwenger.availableLeagues = [{ id: 17, competition: "la-liga" }, { id: 29, competition: "bundesliga" }];
+state.activeLeagueId = "spanish";
+state.biwenger.competition = "bundesliga";
+if (activeFixtureContext().exactCompetitionSlug !== "la-liga" || selectedFixtureCompetition() !== "la-liga") {
+  throw new Error("Fixture competition must follow the exact linked league ID, not the stale session");
+}
+state.activeLeagueId = "german";
+if (activeFixtureContext().exactCompetitionSlug !== "bundesliga") throw new Error("Other league ID must resolve Bundesliga");
+state.biwenger.availableLeagues = [{ id: 29, competition: "bundesliga" }];
+state.activeLeagueId = "spanish";
+if (activeFixtureContext().exactCompetitionSlug !== "" || fixturePayloadMatchesCompetition({ competition: "Bundesliga" }, "")) {
+  throw new Error("Missing exact league metadata must not silently accept the current session or payload");
+}
+state.leagues = fixtureSavedLeagues;
+state.activeLeagueId = fixtureSavedLeagueId;
+state.biwenger.availableLeagues = fixtureSavedCatalog;
 state.biwenger.competition = "la-liga";
-if (fixturePayloadMatchesCompetition({ competition: "LaLiga 2" })
-  || fixturePayloadMatchesCompetition({ competition: "Liga Profesional de Fútbol" })) {
+if (fixturePayloadMatchesCompetition({ competition: "LaLiga 2" }, "la-liga")
+  || fixturePayloadMatchesCompetition({ competition: "Liga Profesional de Fútbol" }, "la-liga")) {
   throw new Error("A fixture payload from a different competition must be rejected for the selected Biwenger league");
 }
 const filteredCompetitionFixtures = filterFixturePayloadByCompetition({
@@ -1077,11 +1097,11 @@ const filteredCompetitionFixtures = filterFixturePayloadByCompetition({
     { id: 2, competition: "LaLiga 2" },
     { id: 3, competition: "Liga Profesional de Fútbol" }
   ]
-});
+}, "la-liga");
 if (filteredCompetitionFixtures.events.length !== 1 || filteredCompetitionFixtures.events[0].id !== 1) {
   throw new Error("Matchday and live views must remove events outside the exact selected competition");
 }
-if (filterFixturePayloadByCompetition({ schemaVersion: 8, competition: "LaLiga", events: [{ id: 1 }] }).events.length !== 0) {
+if (filterFixturePayloadByCompetition({ schemaVersion: 8, competition: "LaLiga", events: [{ id: 1 }] }, "la-liga").events.length !== 0) {
   throw new Error("Old fixture caches without per-event competition metadata must stay hidden until refreshed");
 }
 const signatureRound7 = biwengerImportSignature("team", { players: [hydratedCurrentRound[0]], lineup: { type: "4-4-2", playersID: [1] } });
@@ -1118,6 +1138,38 @@ for (const goals of [0, 1, 2, null]) {
   if (!detail.rows.includes(goals === null ? "Goles: sin dato" : "Goles: " + goals)) throw new Error("Goal detail missing: " + goals);
 }
 if (!recentMatchNeedsHydration({ provider: "biwenger", points: { biwenger: 0 }, goals: null }, 0)) throw new Error("Zero-point match must request missing goals once");
+const noOfficial = { provider: "biwenger", points: { biwenger: null }, goals: null };
+const exactZero = { provider: "biwenger", scoreProvenance: "official-exact", points: { biwenger: 0 }, goals: 0 };
+if (selectedRecentScore(noOfficial) !== null || selectedRecentScore(exactZero) !== 0
+  || !recentMatchDetail(noOfficial, null, false).rows.includes("Puntos: sin dato")
+  || !recentMatchDetail(noOfficial, null, false).rows.includes("Goles: sin dato")
+  || !recentMatchDetail(exactZero, 0, true).rows.includes("Puntos Biwenger: 0")
+  || !recentMatchDetail(exactZero, 0, true).rows.includes("Goles: 0")) throw new Error("Recent details must distinguish real zero from missing points and goals");
+const recentToday = new Date().toISOString().slice(0, 10);
+const orderedRecent = recentMatchesNewestFirst([
+  { id: "old", timestamp: 1700000000 },
+  { id: "new", timestamp: 1700002000000 },
+  { id: "postponed", timestamp: 1700003000, status: "postponed" }
+]);
+if (orderedRecent.map((match) => match.id).join(",") !== "new,old") throw new Error("Recent seconds and milliseconds must sort newest first and omit postponed matches");
+const sameRawId = mergeRecentMatchArrays(
+  [{ provider: "biwenger", eventId: 7, date: recentToday, opponent: "Betis", goals: null, scoreProvenance: "official-exact", points: { biwenger: 0 } }],
+  [{ provider: "api-football", eventId: 7, date: recentToday, opponent: "Sevilla", goals: 1, points: { mixed: 4 } }]
+);
+if (sameRawId.length !== 2) throw new Error("Raw event IDs from different providers must not merge unrelated matches");
+const matchedRecent = mergeRecentMatchArrays(
+  [{ provider: "biwenger", eventId: 7, date: recentToday, opponent: "Betis", goals: null, scoreProvenance: "official-exact", points: { biwenger: 0 } }],
+  [{ provider: "api-football", eventId: 9, date: recentToday, opponent: "Betis", goals: 2, points: { mixed: 4 } }]
+);
+if (matchedRecent.length !== 1 || matchedRecent[0].goals !== 2 || matchedRecent[0].points.biwenger !== 0
+  || recentMatchKey(matchedRecent[0]) !== recentMatchKey({ provider: "biwenger", eventId: 7, date: recentToday, opponent: "Betis" })) throw new Error("Hydration must add reliable goals without losing exact zero or changing the selected match key");
+const streakHtml = renderRecentFormDots({ id: "streak", name: "Jugador", sourceSummary: { recentMatches: [
+  { provider: "api-football", date: recentToday, timestamp: Math.floor(Date.now() / 1000) - 900, opponent: "Betis", goals: 0, points: { mixed: 5 } },
+  { provider: "api-football", date: recentToday, timestamp: Date.now(), opponent: "Sevilla", goals: 1, points: { mixed: 7 } }
+] } });
+if (!streakHtml.includes('recent-form-dots') || streakHtml.indexOf('Sevilla') > streakHtml.indexOf('Betis')
+  || (streakHtml.match(/recent-dot missing/g) || []).length !== 3
+  || streakHtml.indexOf('recent-dot missing') < streakHtml.indexOf('Sevilla')) throw new Error("Every streak group must place the newest match left and placeholders right");
 const totals = teamAccumulatedPoints([{ id: 1, points: 0 }, { id: 1, points: 0 }, { id: 2, points: -2 }, { id: 3, points: 12 }, { id: 4, points: null }]);
 if (totals.total !== 10 || totals.known !== 3 || totals.count !== 4) throw new Error("Season squad points must dedupe and retain unknowns");
 

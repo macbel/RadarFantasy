@@ -4181,7 +4181,8 @@ tbody tr.selected .player-cell span {
 }
 
 .recent-dot.missing,
-.recent-dot.zero {
+.recent-dot.zero,
+.recent-dot.unknown {
   background: #9aa3a7;
 }
 

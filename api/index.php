@@ -334,7 +334,9 @@ if ($route === '/biwenger/status' && $requestMethod === 'GET') {
                 (string)($_SESSION['biwenger']['leagueName'] ?? ''),
                 $sourceTimeoutSeconds,
                 $biwengerJsonHeaders,
-                $strictTls
+                $strictTls,
+                (int)($_SESSION['biwenger']['leagueId'] ?? 0) > 0,
+                (int)($_SESSION['biwenger']['leagueId'] ?? 0)
             );
             $_SESSION['biwenger'] = array_merge($_SESSION['biwenger'], $freshSession);
             if (!auth_mobile_request()) persist_biwenger_device_session($biwengerSessionsDb, $biwengerSessionsPath, $_SESSION['biwenger']);
@@ -947,6 +949,7 @@ if ($route === '/biwenger/fixtures' && $requestMethod === 'GET') {
     $forceRefresh = filter_var($_GET['refresh'] ?? false, FILTER_VALIDATE_BOOLEAN);
     close_request_session();
     try {
+        $sessionState = biwenger_fixture_session_context($sessionState);
         send_json(200, fast_current_fixtures($sessionState, $sourceTimeoutSeconds, $sourceHeaders, $strictTls, $dbDir, $forceRefresh));
     } catch (Throwable $error) {
         $confirmedEmpty = str_starts_with($error->getMessage(), 'No hay proximos partidos confirmados');
@@ -1355,36 +1358,44 @@ function merge_recent_detail_payloads(array $payloads): array
     foreach (array_slice($payloads, 1) as $supplemental) {
         foreach ((array)($supplemental['recentMatches'] ?? []) as $candidate) {
             if (!is_array($candidate)) continue;
-            $candidateDate = (string)($candidate['date'] ?? '');
-            $candidateOpponent = normalize_text((string)($candidate['opponent'] ?? ''));
             $bestIndex = null;
-            $bestScore = -1;
             foreach ($primaryMatches as $index => $match) {
                 if (!is_array($match)) continue;
-                $score = 0;
-                $matchDate = (string)($match['date'] ?? '');
-                if ($candidateDate !== '' && $matchDate !== '' && substr($candidateDate, 0, 10) === substr($matchDate, 0, 10)) $score += 100;
-                $matchOpponent = normalize_text((string)($match['opponent'] ?? ''));
-                if ($candidateOpponent !== '' && $matchOpponent !== '') $score += (int)round(identity_name_score($candidateOpponent, $matchOpponent) * 0.4);
-                if ($score > $bestScore) {
-                    $bestIndex = $index;
-                    $bestScore = $score;
+                $candidateDate = substr((string)($candidate['date'] ?? ''), 0, 10);
+                $matchDate = substr((string)($match['date'] ?? ''), 0, 10);
+                $sameProviderId = !empty($candidate['provider']) && ($candidate['provider'] ?? '') === ($match['provider'] ?? '')
+                    && !empty($candidate['eventId']) && (string)$candidate['eventId'] === (string)($match['eventId'] ?? '');
+                $sameDateOpponent = $candidateDate !== '' && $candidateDate === $matchDate
+                    && !empty($candidate['opponent']) && !empty($match['opponent'])
+                    && identity_name_score((string)$candidate['opponent'], (string)$match['opponent']) >= 70;
+                if (!$sameProviderId && !$sameDateOpponent) continue;
+                $compatible = true;
+                foreach (['seasonId', 'seasonName', 'round', 'competition', 'tournamentName'] as $field) {
+                    if (!empty($candidate[$field]) && !empty($match[$field])
+                        && normalize_text((string)$candidate[$field]) !== normalize_text((string)$match[$field])) $compatible = false;
                 }
+                if ($compatible) { $bestIndex = $index; break; }
             }
-            $candidateEventId = (string)($candidate['eventId'] ?? '');
-            $matchedEventId = $bestIndex !== null ? (string)($primaryMatches[$bestIndex]['eventId'] ?? '') : '';
-            $sameEvent = $candidateEventId !== '' && $matchedEventId !== '' && $candidateEventId === $matchedEventId;
-            $sameDateAndOpponent = $candidateDate !== '' && $bestIndex !== null
-                && substr($candidateDate, 0, 10) === substr((string)($primaryMatches[$bestIndex]['date'] ?? ''), 0, 10)
-                && $candidateOpponent !== '' && identity_name_score($candidateOpponent, (string)($primaryMatches[$bestIndex]['opponent'] ?? '')) >= 70;
-            if ($bestIndex === null || (!$sameEvent && !$sameDateAndOpponent)) continue;
+            if ($bestIndex === null) { $primaryMatches[] = $candidate; continue; }
             foreach (['starter', 'minuteIn', 'minuteOut', 'minuteInLabel', 'minuteOutLabel', 'lineupSource', 'minutesSource', 'goals'] as $key) {
-                if (array_key_exists($key, $candidate) && $candidate[$key] !== null && $candidate[$key] !== '') $primaryMatches[$bestIndex][$key] = $candidate[$key];
+                if (array_key_exists($key, $candidate) && $candidate[$key] !== null && $candidate[$key] !== ''
+                    && (!array_key_exists($key, $primaryMatches[$bestIndex]) || $primaryMatches[$bestIndex][$key] === null || $primaryMatches[$bestIndex][$key] === '')) {
+                    $primaryMatches[$bestIndex][$key] = $candidate[$key];
+                }
             }
         }
         if (empty($primary['health']) && !empty($supplemental['health'])) $primary['health'] = $supplemental['health'];
     }
-    $primary['recentMatches'] = $primaryMatches;
+    usort($primaryMatches, static function ($a, $b) {
+        $timestamp = static function ($match) {
+            $raw = (int)($match['timestamp'] ?? 0);
+            if ($raw > 0) return $raw >= 1000000000000 ? $raw : $raw * 1000;
+            $date = strtotime((string)($match['date'] ?? ''));
+            return $date ? $date * 1000 : 0;
+        };
+        return $timestamp($b) <=> $timestamp($a);
+    });
+    $primary['recentMatches'] = array_slice($primaryMatches, 0, 5);
     $primary['providers'] = array_values(array_unique(array_filter(array_map(static fn($payload) => (string)($payload['provider'] ?? ''), $payloads))));
     return $primary;
 }
@@ -5467,14 +5478,14 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
     ];
 }
 
-function biwenger_player_round_goals(array $player): int
+function biwenger_player_round_goals(array $player): ?int
 {
     foreach (['roundGoals', 'goals', 'stats.goals', 'statistics.goals', 'currentRound.goals'] as $path) {
         $value = biwenger_path_value($player, $path);
         if (is_numeric($value)) return max(0, (int)$value);
         if (is_array($value) && is_numeric($value['total'] ?? null)) return max(0, (int)$value['total']);
     }
-    return 0;
+    return null;
 }
 
 function biwenger_player_is_ideal(array $player): bool
@@ -6264,6 +6275,25 @@ function fixture_payload_usable(array $payload, array $session): bool
         if (trim((string)($event['home']['name'] ?? '')) !== '' && trim((string)($event['away']['name'] ?? '')) !== '') return true;
     }
     return false;
+}
+
+function biwenger_fixture_session_context(array $session): array
+{
+    $leagueId = (int)($session['leagueId'] ?? 0);
+    if ($leagueId <= 0) throw new RuntimeException('No se ha identificado la liga activa de Biwenger');
+    foreach ((array)($session['availableLeagues'] ?? []) as $league) {
+        if ((int)($league['id'] ?? 0) !== $leagueId) continue;
+        $competition = (string)($league['competition'] ?? '');
+        $expected = fixture_competition_family($competition);
+        if ($expected === '') throw new RuntimeException('Biwenger no ha identificado la competicion de la liga activa');
+        $received = fixture_competition_family((string)($session['competition'] ?? ''));
+        if ($received !== '' && $received !== $expected) {
+            throw new RuntimeException('La sesion Biwenger corresponde a otra competicion');
+        }
+        $session['competition'] = $competition;
+        return $session;
+    }
+    throw new RuntimeException('La liga activa no figura en el catalogo de Biwenger');
 }
 
 function fixture_cache_key(string $provider, array $session): string
@@ -7319,7 +7349,7 @@ function fixture_competition_match_score(string $competitionLabel, array $querie
 
 function fixture_competition_family(string $value): string
 {
-    $value = normalize_text($value);
+    $value = str_replace('-', ' ', normalize_text($value));
     if ($value === '') return '';
     if (preg_match('/worldcup|world cup|copa del mundo|mundial/', $value)) return 'world-cup';
     if (preg_match('/champions/', $value)) return 'champions-league';
@@ -8456,18 +8486,12 @@ function biwenger_recent_matches_from_fitness(array $fitness): array
         return [
             'provider' => 'biwenger',
             'label' => 'Partido reciente ' . ($index + 1),
+            'recentOrder' => $index,
             'minutes' => null,
             'played' => $points !== 0 ? true : null,
             'goals' => null,
-            'points' => [
-                'biwenger' => $points,
-                'mixed' => $points,
-                'as' => $points,
-                'sofascore' => $points,
-                'feeberse' => $points,
-                'feeberse-mixed' => $points,
-                'stats' => $points
-            ]
+            'fitnessEstimate' => $points,
+            'points' => []
         ];
     }, $values, array_keys($values)));
 }
@@ -9286,6 +9310,7 @@ function rating_to_score(?float $rating): float
 
 function recent_match_points(array $row): array
 {
+    if (!isset($row['minutes']) || !is_numeric($row['minutes'])) return [];
     $minutes = (int)round((float)($row['minutes'] ?? 0));
     $rating = isset($row['rating']) && is_numeric($row['rating']) ? (float)$row['rating'] : null;
     $incidents = is_array($row['incidents'] ?? null) ? $row['incidents'] : [];
@@ -9378,10 +9403,13 @@ function recent_match_summary(array $row): array
         $outMinute = $minutes;
     }
     return [
+        'provider' => 'sofascore',
         'eventId' => $event['id'] ?? null,
         'date' => !empty($event['startTimestamp']) ? gmdate('Y-m-d', (int)$event['startTimestamp']) : null,
+        'timestamp' => !empty($event['startTimestamp']) ? (int)$event['startTimestamp'] : null,
         'seasonId' => isset($season['id']) ? (int)$season['id'] : null,
         'seasonName' => (string)($season['name'] ?? $season['year'] ?? ''),
+        'round' => (string)($event['roundInfo']['round'] ?? $event['roundInfo']['name'] ?? ''),
         'tournamentId' => isset($uniqueTournament['id']) ? (int)$uniqueTournament['id'] : (isset($tournament['id']) ? (int)$tournament['id'] : null),
         'tournamentName' => (string)($uniqueTournament['name'] ?? $tournament['name'] ?? ''),
         'opponent' => $opponent,

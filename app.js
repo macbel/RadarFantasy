@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   auth: {
     authenticated: false,
     user: null,
@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.4";
-const APP_VERSION_CODE = 62;
+const APP_VERSION = "3.13.5";
+const APP_VERSION_CODE = 63;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -1248,12 +1248,24 @@ const fixtureCompetitionFamily = (value) => {
   return "";
 };
 
-const selectedFixtureCompetition = () => String(state.biwenger.competition || state.competition || "");
+const selectedFixtureCompetition = () => activeFixtureContext().exactCompetitionSlug;
+
+const activeFixtureContext = () => {
+  const activeLeagueId = state.activeLeagueId;
+  const biwengerLeagueId = Number(activeLeague()?.biwengerLeagueId || 0);
+  const remote = biwengerLeagueId > 0
+    ? (state.biwenger.availableLeagues || []).find((league) => Number(league.id || 0) === biwengerLeagueId)
+    : null;
+  const exactCompetitionSlug = biwengerLeagueId > 0
+    ? String(remote?.competition || "")
+    : String(state.competition || activeLeague()?.competition || "");
+  return { activeLeagueId, biwengerLeagueId, exactCompetitionSlug };
+};
 
 const fixturePayloadMatchesCompetition = (fixtures, competition = selectedFixtureCompetition()) => {
   const expected = fixtureCompetitionFamily(competition);
   const received = fixtureCompetitionFamily(fixtures?.competition || "");
-  if (!expected) return true;
+  if (!expected) return false;
   return received !== "" && expected === received;
 };
 
@@ -5575,16 +5587,15 @@ const renderScoringBadge = (player, options = {}) => {
 
 const selectedRecentScore = (match) => {
   const points = match?.points || {};
-  const biwenger = Number(points.biwenger);
-  if (Number.isFinite(biwenger)) return biwenger;
+  const validNumber = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+  if (match?.scoreProvenance === "official-exact" && validNumber(points.biwenger)) return Number(points.biwenger);
   const key = state.scoring === "mixed" ? "mixed" : state.scoring;
-  const direct = Number(points[key]);
-  if (Number.isFinite(direct)) return direct;
-  const fallback = Number(points["feeberse-mixed"] ?? points.feeberse ?? points.mixed ?? points.sofascore ?? points.as ?? points.stats);
-  return Number.isFinite(fallback) ? fallback : 0;
+  if (match?.provider !== "biwenger" && validNumber(points[key])) return Number(points[key]);
+  return null;
 };
 
 const recentDotClass = (score, played) => {
+  if (score === null) return "unknown";
   if (!played || score === 0) return "zero";
   if (score < 0) return "negative";
   if (score <= 5) return "low";
@@ -5594,7 +5605,43 @@ const recentDotClass = (score, played) => {
 
 const matchHasMinutes = (match) => match?.minutes !== null
   && match?.minutes !== undefined
+  && match?.minutes !== ""
   && Number.isFinite(Number(match.minutes));
+
+const recentTimestampMs = (match) => {
+  const raw = match?.timestamp;
+  if (raw !== null && raw !== undefined && raw !== "" && Number.isFinite(Number(raw))) {
+    const value = Number(raw);
+    return value >= 1e12 ? value : value > 0 ? value * 1000 : 0;
+  }
+  const dated = Date.parse(String(match?.date || ""));
+  return Number.isFinite(dated) ? dated : 0;
+};
+
+const recentMatchDate = (match) => /^\d{4}-\d{2}-\d{2}/.test(String(match?.date || ""))
+  ? String(match.date).slice(0, 10)
+  : recentTimestampMs(match) ? new Date(recentTimestampMs(match)).toISOString().slice(0, 10) : "";
+
+const recentMatchKey = (match) => {
+  if (!match) return "";
+  if (match.matchKey) return String(match.matchKey);
+  const date = recentMatchDate(match);
+  const opponent = normalize(match.opponent || "");
+  const competition = normalize(match.competition || match.tournamentName || "");
+  const season = normalize(match.seasonName || String(match.seasonId || ""));
+  const round = normalize(String(match.round || ""));
+  if (date && opponent) return `match:${competition}:${season}:${round}:${date}:${opponent}`;
+  if (match.provider && match.eventId) return `provider:${match.provider}:${match.eventId}`;
+  return `undated:${match.provider || "unknown"}:${match.label || ""}`;
+};
+
+const recentMatchesNewestFirst = (matches) => [...(Array.isArray(matches) ? matches : [])]
+  .filter((match) => match && !["postponed", "cancelled", "canceled", "abandoned"].includes(String(match.status || "").toLowerCase()))
+  .map((match, index) => ({ match, index }))
+  .sort((a, b) => recentTimestampMs(b.match) - recentTimestampMs(a.match)
+    || (recentTimestampMs(a.match) === 0 ? Number(b.match.recentOrder ?? 0) - Number(a.match.recentOrder ?? 0) : 0)
+    || a.index - b.index)
+  .map(({ match }) => match);
 
 const currentSeasonStartMs = () => {
   const now = new Date();
@@ -5610,7 +5657,7 @@ const currentSeasonMatches = (matches = []) => {
     if (match?.historyScope === "previous-season") return false;
     if (seasonId && String(match?.seasonId || "") === seasonId) return true;
     if (seasonName && normalize(match?.seasonName || "") === seasonName) return true;
-    const timestamp = Number(match?.timestamp || 0) * 1000;
+    const timestamp = recentTimestampMs(match);
     const dated = timestamp > 0 ? timestamp : Date.parse(String(match?.date || ""));
     return Number.isFinite(dated) && dated >= currentSeasonStartMs() && dated <= Date.now() + 86400000;
   });
@@ -5618,15 +5665,14 @@ const currentSeasonMatches = (matches = []) => {
 
 const recommendationHistoryMatches = (player) => {
   const summary = player?.sourceSummary || {};
-  const primary = Array.isArray(summary.recentMatches) ? summary.recentMatches.slice(-5) : [];
-  const external = Array.isArray(summary.sourceRecentMatches) ? summary.sourceRecentMatches.slice(-5) : [];
+  const primary = recentMatchesNewestFirst(summary.recentMatches).slice(0, 5);
+  const external = recentMatchesNewestFirst(summary.sourceRecentMatches).slice(0, 5);
+  const combined = mergeRecentMatchArrays(primary, external);
   const explicitPrevious = Array.isArray(summary.previousSeasonRecentMatches)
-    ? summary.previousSeasonRecentMatches.slice(-5)
+    ? recentMatchesNewestFirst(summary.previousSeasonRecentMatches).slice(0, 5)
     : [];
-  const currentExternal = currentSeasonMatches(external);
-  const currentPrimary = currentSeasonMatches(primary);
-  if (currentExternal.length) return { matches: currentExternal.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
-  if (currentPrimary.length) return { matches: currentPrimary.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
+  const currentCombined = currentSeasonMatches(combined);
+  if (currentCombined.length) return { matches: recentMatchesNewestFirst(currentCombined).slice(0, 5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
   const context = competitionMarketContext();
   const events = Array.isArray(state.leagueFixtures?.events) ? state.leagueFixtures.events : [];
   const completedCurrentRound = events.some((event) => {
@@ -5637,15 +5683,15 @@ const recommendationHistoryMatches = (player) => {
       && Number.isFinite(Number(event.homeScore)) && Number.isFinite(Number(event.awayScore));
   });
   const firstRoundWithoutHistory = context.currentRound === 1 && !completedCurrentRound;
-  if (!firstRoundWithoutHistory) return { matches: primary, usesPreviousSeason: false, seasonLabel: "" };
+  if (!firstRoundWithoutHistory) return { matches: combined, usesPreviousSeason: false, seasonLabel: "" };
 
-  const candidates = explicitPrevious.length ? explicitPrevious : (external.length ? external : primary);
+  const candidates = explicitPrevious.length ? explicitPrevious : combined;
   if (!candidates.length) return { matches: [], usesPreviousSeason: false, seasonLabel: "" };
   const currentSeasonId = Number(state.leagueFixtures?.seasonId || 0);
   const priorSeason = currentSeasonId > 0
     ? candidates.filter((match) => Number(match?.seasonId || 0) > 0 && Number(match.seasonId) !== currentSeasonId)
     : [];
-  const matches = (priorSeason.length ? priorSeason : candidates).slice(-5);
+  const matches = recentMatchesNewestFirst(priorSeason.length ? priorSeason : candidates).slice(0, 5);
   const seasonLabel = String(matches.find((match) => match?.seasonName)?.seasonName || "temporada anterior");
   return { matches, usesPreviousSeason: true, seasonLabel };
 };
@@ -5654,12 +5700,11 @@ const recentDisplayHistoryMatches = (player) => {
   const summary = player?.sourceSummary || {};
   const external = Array.isArray(summary.sourceRecentMatches) ? summary.sourceRecentMatches : [];
   const primary = Array.isArray(summary.recentMatches) ? summary.recentMatches : [];
-  const current = currentSeasonMatches(external);
-  if (current.length) return { matches: current.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
-  const currentPrimary = currentSeasonMatches(primary);
-  if (currentPrimary.length) return { matches: currentPrimary.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
+  const combined = mergeRecentMatchArrays(primary, external);
+  const current = currentSeasonMatches(combined);
+  if (current.length) return { matches: recentMatchesNewestFirst(current).slice(0, 5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
   const hasSeasonMetadata = [...external, ...primary].some((match) => match?.date || match?.timestamp || match?.seasonId || match?.seasonName || match?.historyScope);
-  return { matches: hasSeasonMetadata ? [] : primary.slice(-5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
+  return { matches: hasSeasonMetadata ? [] : recentMatchesNewestFirst(combined).slice(0, 5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
 };
 
 const recentFormProfile = (player) => {
@@ -5668,18 +5713,19 @@ const recentFormProfile = (player) => {
   const scored = matches.map((match) => {
     const score = selectedRecentScore(match);
     const hasMinutes = matchHasMinutes(match);
-    const played = hasMinutes ? Number(match.minutes) > 0 : score !== 0 || match?.played === true;
+    const played = hasMinutes ? Number(match.minutes) > 0 : match?.played === true || (score !== null && score !== 0);
     return { match, score, played, minutes: hasMinutes ? Number(match.minutes) : null };
   });
   const playedRows = scored.filter((row) => row.played);
-  const lastThree = scored.slice(-3);
+  const knownScores = playedRows.filter((row) => row.score !== null);
+  const lastThree = scored.slice(0, 3);
   const playedCount = playedRows.length;
   const missedCount = scored.length - playedCount;
-  const average = playedCount
-    ? playedRows.reduce((sum, row) => sum + Number(row.score || 0), 0) / playedCount
+  const average = knownScores.length
+    ? knownScores.reduce((sum, row) => sum + row.score, 0) / knownScores.length
     : null;
-  const totalAverage = scored.length
-    ? scored.reduce((sum, row) => sum + Number(row.played ? row.score : 0), 0) / scored.length
+  const totalAverage = knownScores.length
+    ? knownScores.reduce((sum, row) => sum + row.score, 0) / knownScores.length
     : null;
   const lastThreePlayed = lastThree.filter((row) => row.played).length;
   const score = scored.length
@@ -5691,8 +5737,8 @@ const recentFormProfile = (player) => {
       + (lastThreePlayed - Math.min(3, lastThree.length - lastThreePlayed)) * 4
     )
     : 50;
-  const noRecentMinutes = scored.length >= 3 && playedCount === 0;
-  const cold = scored.length >= 3 && (lastThreePlayed === 0 || (Number.isFinite(totalAverage) && totalAverage <= 1.2));
+  const noRecentMinutes = scored.length >= 3 && scored.every((row) => row.match?.played === false || (matchHasMinutes(row.match) && row.minutes === 0));
+  const cold = scored.length >= 3 && (noRecentMinutes || (Number.isFinite(totalAverage) && totalAverage <= 1.2));
   const hot = playedCount >= 3 && Number.isFinite(average) && average >= 6;
   return {
     matches: scored.length,
@@ -5720,8 +5766,9 @@ const recentFormProfile = (player) => {
 const recentMatchDetail = (match, score, played) => {
   if (!match) return { title: "Sin dato", rows: ["No hay puntuacion disponible para este partido."] };
   const rows = [];
+  const official = match.scoreProvenance === "official-exact" && score !== null;
+  rows.push(score === null ? "Puntos: sin dato" : official ? `Puntos Biwenger: ${score}` : `Puntos estimados (${match.provider || "fuente externa"}): ${score}`);
   if (played) {
-    rows.push(`${score} pts`);
     if (matchHasMinutes(match)) rows.push(`${Number(match.minutes)} min jugados`);
     const minuteIn = match.minuteIn === null || match.minuteIn === undefined || match.minuteIn === "" ? null : Number(match.minuteIn);
     const minuteOut = match.minuteOut === null || match.minuteOut === undefined || match.minuteOut === "" ? null : Number(match.minuteOut);
@@ -5735,13 +5782,13 @@ const recentMatchDetail = (match, score, played) => {
     }
     if (match.minutesSource === "estimated") rows.push("Minutos de cambio estimados");
   } else {
-    rows.push(score === 0 && !matchHasMinutes(match) ? "0 pts · minutos sin dato" : "No jugó");
+    rows.push(match.played === false ? "No jugó" : "Minutos sin confirmar");
   }
   const goals = match.goals === null || match.goals === undefined || match.goals === "" ? null : Number(match.goals);
   rows.push(Number.isInteger(goals) && goals >= 0 ? `Goles: ${goals}` : "Goles: sin dato");
   if (match.opponent) rows.push(`Rival: ${match.opponent}`);
   if (match.date) rows.push(`Fecha: ${match.date}`);
-  if (match.provider === "biwenger" || Number.isFinite(Number(match.points?.biwenger))) {
+  if (official) {
     rows.push("Dato Biwenger de la liga");
   } else if (match.provider === "api-football") {
     rows.push("Fuente: API-Football");
@@ -5751,7 +5798,7 @@ const recentMatchDetail = (match, score, played) => {
     rows.push("Fuente: FutbolFantasy");
   }
   return {
-    title: match.provider === "biwenger" || Number.isFinite(Number(match.points?.biwenger))
+    title: official
       ? "Partido reciente"
       : (match.label || `Último partido ${scoringLabel()}`),
     rows
@@ -5761,7 +5808,7 @@ const recentMatchDetail = (match, score, played) => {
 const recentMatchTitle = (detail) => detail.rows.join(" · ");
 
 const recentMatchWasPlayed = (match, score) => matchHasMinutes(match)
-  ? Number(match.minutes) > 0 : match?.played === true || score !== 0;
+  ? Number(match.minutes) > 0 : match?.played === true || (score !== null && score !== 0);
 
 const recentMatchNeedsHydration = (match, score) => {
   const played = recentMatchWasPlayed(match, score);
@@ -5775,7 +5822,7 @@ const recentMatchNeedsHydration = (match, score) => {
 const renderRecentFormDots = (player) => {
   const history = recentDisplayHistoryMatches(player);
   const matches = history.matches;
-  const padded = [...Array(Math.max(0, 5 - matches.length)).fill(null), ...matches];
+  const padded = [...recentMatchesNewestFirst(matches).slice(0, 5), ...Array(Math.max(0, 5 - matches.length)).fill(null)];
   const playerAttrs = `data-recent-player-id="${escapeHtml(player?.id || "")}" data-recent-biwenger-id="${escapeHtml(player?.biwengerPlayerId || "")}" data-recent-player-name="${escapeHtml(player?.name || "")}"`;
   return `
     <span class="recent-form-dots" title="${escapeHtml(`Partidos jugados esta temporada según ${scoringLabel()}`)}">
@@ -5785,8 +5832,9 @@ const renderRecentFormDots = (player) => {
         const played = recentMatchWasPlayed(match, score);
         const detail = recentMatchDetail(match, score, played);
         const label = recentMatchTitle(detail);
-        const needsHydration = recentMatchNeedsHydration(match, score);
-        return `<span class="recent-dot ${recentDotClass(score, played)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" ${playerAttrs} data-recent-index="${index}" data-recent-needs-hydration="${needsHydration ? "true" : "false"}" data-recent-detail="${escapeHtml(encodeURIComponent(JSON.stringify(detail)))}"></span>`;
+        const needsHydration = recentMatchNeedsHydration(match, score)
+          && !state.recentDetailsCache[`${recentPlayerKey(player)}:deep`];
+        return `<span class="recent-dot ${recentDotClass(score, played)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" ${playerAttrs} data-recent-match-key="${escapeHtml(recentMatchKey(match))}" data-recent-needs-hydration="${needsHydration ? "true" : "false"}" data-recent-detail="${escapeHtml(encodeURIComponent(JSON.stringify(detail)))}"></span>`;
       }).join("")}
     </span>
   `;
@@ -8646,7 +8694,13 @@ const syncSelectedLeagueWithBiwenger = async (options = {}) => {
       payload = await response.json().catch(() => ({}));
       throwIfDataSyncCancelled();
       if (!response.ok) throw new Error(payload.error || "No se pudo cambiar la liga activa de Biwenger.");
+      if (preferredLeagueId > 0 && Number(payload.leagueId || 0) !== preferredLeagueId) {
+        throw new Error("Biwenger ha seleccionado otra liga.");
+      }
       applyBiwengerSession(payload);
+      if (isNativeRuntime() && window.RadarLocalFirst && payload.mobileCredential) {
+        await window.RadarLocalFirst.setSecure(BIWENGER_SESSION_KEY, payload.mobileCredential);
+      }
       if (payload.competition) {
         state.competition = biwengerCompetitionToLocal(payload.competition);
         if (activeLeague()) activeLeague().competition = state.competition;
@@ -9909,20 +9963,39 @@ const findRecentPlayer = (button) => {
 const mergeRecentMatchArrays = (current = [], fresh = []) => {
   const rows = Array.isArray(current) ? current.slice() : [];
   for (const match of Array.isArray(fresh) ? fresh : []) {
-    const date = String(match?.date || "").slice(0, 10);
+    if (!match || ["postponed", "cancelled", "canceled", "abandoned"].includes(String(match.status || "").toLowerCase())) continue;
+    const key = recentMatchKey(match);
     const index = rows.findIndex((old) => {
-      if (match?.eventId && old?.eventId && String(match.eventId) === String(old.eventId)) return true;
-      const oldDate = String(old?.date || "").slice(0, 10);
-      return Boolean(date && oldDate && date === oldDate && match?.opponent && old?.opponent
-        && teamNameMatchScore(match.opponent, old.opponent) >= 70);
+      if (key.startsWith("provider:")) return key === recentMatchKey(old);
+      const date = recentMatchDate(match);
+      const oldDate = recentMatchDate(old);
+      if (!date || !oldDate || date !== oldDate || !match.opponent || !old?.opponent
+        || teamNameMatchScore(match.opponent, old.opponent) < 70) return false;
+      for (const field of ["seasonId", "seasonName", "round", "competition", "tournamentName"]) {
+        if (match[field] && old[field] && normalize(String(match[field])) !== normalize(String(old[field]))) return false;
+      }
+      return true;
     });
     if (index < 0) { rows.push(match); continue; }
     const old = rows[index];
-    rows[index] = { ...old, ...match,
-      goals: match.goals === null || match.goals === undefined ? old.goals ?? null : match.goals,
-      points: { ...(match.points || {}), ...(old.points || {}) } };
+    const oldOfficial = old.scoreProvenance === "official-exact";
+    const freshOfficial = match.scoreProvenance === "official-exact";
+    const points = { ...(old.points || {}) };
+    for (const [system, value] of Object.entries(match.points || {})) {
+      if (value === null || value === undefined || value === "") continue;
+      if (system === "biwenger" && !freshOfficial) continue;
+      if (points[system] === null || points[system] === undefined || points[system] === "" || (system === "biwenger" && freshOfficial)) points[system] = value;
+    }
+    rows[index] = {
+      ...old,
+      ...Object.fromEntries(Object.entries(match).filter(([field, value]) => value !== null && value !== undefined && value !== "" && field !== "points" && field !== "goals" && field !== "scoreProvenance")),
+      goals: old.goals === null || old.goals === undefined ? match.goals ?? null : old.goals,
+      points,
+      matchKey: recentMatchKey(old),
+      scoreProvenance: oldOfficial || freshOfficial ? "official-exact" : old.scoreProvenance || match.scoreProvenance || null
+    };
   }
-  return rows.sort((a, b) => (Number(a.timestamp || Date.parse(a.date) || 0) - Number(b.timestamp || Date.parse(b.date) || 0))).slice(-5);
+  return recentMatchesNewestFirst(rows).slice(0, 5);
 };
 
 const recentProviderLabel = (provider) => ({
@@ -9987,7 +10060,7 @@ const enrichRivalRecentDetails = async (players, options = {}) => {
   for (const [index, player] of candidates.entries()) {
     if (onProgress) onProgress(index + 1, candidates.length, player);
     try {
-      const key = recentPlayerKey(player);
+      const key = `${recentPlayerKey(player)}:quick`;
       let payload = state.recentDetailsCache[key];
       if (payload && payload.ok === false) throw new Error(payload.error || "Fuentes de minutos no disponibles");
       if (!payload) {
@@ -10042,11 +10115,36 @@ const updateRecentButtonDetail = (button, match) => {
   if (!qs("#recent-form-popover")?.hidden) openRecentFormPopover(button);
 };
 
+const rerenderRecentFormForPlayer = (player, selectedMatchKey = "") => {
+  const groups = [...document.querySelectorAll(".recent-form-dots")].filter((group) => {
+    const dot = group.querySelector(".recent-dot[data-recent-player-id]");
+    return dot && (dot.dataset.recentPlayerId === String(player.id || "")
+      || (Number(player.biwengerPlayerId || 0) > 0 && Number(dot.dataset.recentBiwengerId || 0) === Number(player.biwengerPlayerId)));
+  });
+  const wasOpen = !qs("#recent-form-popover")?.hidden;
+  let replacement = null;
+  for (const group of groups) {
+    group.outerHTML = renderRecentFormDots(player);
+  }
+  if (selectedMatchKey) {
+    replacement = [...document.querySelectorAll(".recent-dot[data-recent-match-key]")].find((dot) =>
+      dot.dataset.recentMatchKey === selectedMatchKey && (dot.dataset.recentPlayerId === String(player.id || "")
+        || (Number(player.biwengerPlayerId || 0) > 0 && Number(dot.dataset.recentBiwengerId || 0) === Number(player.biwengerPlayerId))));
+  }
+  if (wasOpen && replacement) {
+    replacement.dataset.recentHydrated = "true";
+    openRecentFormPopover(replacement);
+  } else if (wasOpen && selectedMatchKey) {
+    closeRecentFormPopover();
+  }
+};
+
 const hydrateRecentFormButton = async (button) => {
   if (button.dataset.recentNeedsHydration !== "true" || button.dataset.recentHydrated === "true" || button.dataset.recentLoading === "true") return;
   const player = findRecentPlayer(button);
   if (!player) return;
-  const key = recentPlayerKey(player);
+  const key = `${recentPlayerKey(player)}:deep`;
+  const matchKey = button.dataset.recentMatchKey || "";
   button.dataset.recentLoading = "true";
   try {
     let payload = state.recentDetailsCache[key];
@@ -10074,10 +10172,10 @@ const hydrateRecentFormButton = async (button) => {
       state.recentDetailsCache[key] = payload;
     }
     const merged = applyRecentDetailsToPlayer(player, payload);
-    const index = Number(button.dataset.recentIndex || 0);
-    const padded = [...Array(Math.max(0, 5 - merged.length)).fill(null), ...merged.slice(-5)];
     button.dataset.recentHydrated = "true";
-    updateRecentButtonDetail(button, padded[index]);
+    const current = recentMatchesNewestFirst(merged).find((match) => recentMatchKey(match) === matchKey);
+    if (current) updateRecentButtonDetail(button, current);
+    rerenderRecentFormForPlayer(player, matchKey);
   } catch (error) {
     state.recentDetailsCache[key] = { ok: false, error: error.message || "Fuentes de minutos no disponibles" };
     button.dataset.recentHydrated = "true";
@@ -10117,29 +10215,45 @@ const handleRecentDotHover = (event) => {
 const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
   const target = qs("#league-fixtures");
   const previousFixtures = state.leagueFixtures;
-  const leagueId = state.activeLeagueId;
+  const context = activeFixtureContext();
   const generation = state.biwenger.contextGeneration;
-  const stillCurrent = () => leagueId === state.activeLeagueId && generation === state.biwenger.contextGeneration;
+  const stillCurrent = () => {
+    const current = activeFixtureContext();
+    return generation === state.biwenger.contextGeneration
+      && context.activeLeagueId === current.activeLeagueId
+      && context.biwengerLeagueId === current.biwengerLeagueId
+      && context.exactCompetitionSlug === current.exactCompetitionSlug;
+  };
   const forceRefresh = options.forceRefresh ?? showFeedback;
   beginDataSync("Actualizando próximos partidos y resultados...");
   if (showFeedback) setLeagueOperationStatus("Consultando partidos de la jornada...", "busy");
   if (target) target.innerHTML = `<p class="muted-empty">Cargando partidos y resultados...</p>`;
   try {
-    const selectedBiwengerId = Number(activeLeague()?.biwengerLeagueId || 0);
-    let endpoint = `/api/fixtures?competition=${encodeURIComponent(state.competition || "world-cup")}`;
-    if (state.biwenger.authenticated && selectedBiwengerId > 0) {
-      if (Number(state.biwenger.leagueId || 0) !== selectedBiwengerId) {
+    const { biwengerLeagueId, exactCompetitionSlug } = context;
+    if (!exactCompetitionSlug || !fixtureCompetitionFamily(exactCompetitionSlug)) {
+      throw new Error("Biwenger no ha identificado la competición de esta liga. Actualiza la conexión.");
+    }
+    let endpoint = `/api/fixtures?competition=${encodeURIComponent(exactCompetitionSlug)}`;
+    if (state.biwenger.authenticated && biwengerLeagueId > 0) {
+      if (Number(state.biwenger.leagueId || 0) !== biwengerLeagueId
+        || fixtureCompetitionFamily(state.biwenger.competition) !== fixtureCompetitionFamily(exactCompetitionSlug)) {
         const switchResponse = await apiFetch("/api/biwenger/switch-league", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ preferredLeagueId: selectedBiwengerId, preferredLeagueName: activeLeagueName() })
+          body: JSON.stringify({ preferredLeagueId: biwengerLeagueId })
         });
         const switchPayload = await switchResponse.json().catch(() => ({}));
         if (!stillCurrent()) return false;
         if (!switchResponse.ok) throw new Error(switchPayload.error || "No se pudo seleccionar la competición de esta liga en Biwenger.");
+        if (Number(switchPayload.leagueId || 0) !== biwengerLeagueId
+          || fixtureCompetitionFamily(switchPayload.competition) !== fixtureCompetitionFamily(exactCompetitionSlug)) {
+          throw new Error("Biwenger ha seleccionado otra liga o competición.");
+        }
         applyBiwengerSession(switchPayload);
-        state.competition = biwengerCompetitionToLocal(switchPayload.competition);
-        if (activeLeague()) activeLeague().competition = state.competition;
+        if (isNativeRuntime() && window.RadarLocalFirst && switchPayload.mobileCredential) {
+          await window.RadarLocalFirst.setSecure(BIWENGER_SESSION_KEY, switchPayload.mobileCredential);
+        }
+        if (!stillCurrent()) return false;
       }
       endpoint = "/api/biwenger/fixtures";
     }
@@ -10147,23 +10261,25 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
     const response = await apiFetch(endpoint);
     let payload = await response.json().catch(() => ({}));
     if (!stillCurrent()) return false;
-    if (!response.ok) throw new Error(response.status === 401 ? "Conecta de nuevo Biwenger para consultar los partidos." : response.status === 429 ? "El proveedor limita las consultas. Espera antes de actualizar." : payload.code === "no_upcoming_confirmed" ? "Las fuentes consultadas no confirman próximos partidos de esta competición." : response.status >= 500 ? "No se ha podido consultar el calendario. Reintenta más tarde." : payload.message || payload.error || "No se pudo cargar la jornada actual");
-    payload = filterFixturePayloadByCompetition(payload);
+    if (!response.ok && (response.status === 401 || response.status === 429 || !state.biwenger.authenticated)) {
+      throw new Error(response.status === 401 ? "Conecta de nuevo Biwenger para consultar los partidos." : response.status === 429 ? "El proveedor limita las consultas. Espera antes de actualizar." : payload.message || payload.error || "No se pudo cargar la jornada actual");
+    }
+    if (!response.ok) payload = {};
+    payload = filterFixturePayloadByCompetition(payload, exactCompetitionSlug);
     let coverage = fixturePlayerCoverage(payload);
-    if (state.biwenger.authenticated && (!fixturePayloadMatchesCompetition(payload)
+    if (state.biwenger.authenticated && (!fixturePayloadMatchesCompetition(payload, exactCompetitionSlug)
       || !hasUpcomingFixtureEvents(payload)
       || (coverage.total > 0 && coverage.covered < coverage.total))) {
-      const competition = String(state.biwenger.competition || payload.competition || activeLeagueName() || "la-liga");
-      const fallbackResponse = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(competition)}${forceRefresh ? "&refresh=1" : ""}`);
-      const fallbackPayload = filterFixturePayloadByCompetition(await fallbackResponse.json().catch(() => ({})));
+      const fallbackResponse = await apiFetch(`/api/fixtures?competition=${encodeURIComponent(exactCompetitionSlug)}${forceRefresh ? "&refresh=1" : ""}`);
+      const fallbackPayload = filterFixturePayloadByCompetition(await fallbackResponse.json().catch(() => ({})), exactCompetitionSlug);
       if (!stillCurrent()) return false;
-      if (fallbackResponse.ok && fixturePayloadMatchesCompetition(fallbackPayload) && hasUpcomingFixtureEvents(fallbackPayload)) {
-        payload = fixturePayloadMatchesCompetition(payload) && hasUpcomingFixtureEvents(payload)
+      if (fallbackResponse.ok && fixturePayloadMatchesCompetition(fallbackPayload, exactCompetitionSlug) && hasUpcomingFixtureEvents(fallbackPayload)) {
+        payload = fixturePayloadMatchesCompetition(payload, exactCompetitionSlug) && hasUpcomingFixtureEvents(payload)
           ? mergeFixturePayloads(payload, fallbackPayload) : fallbackPayload;
         coverage = fixturePlayerCoverage(payload);
       }
     }
-    if (!fixturePayloadMatchesCompetition(payload)) {
+    if (!fixturePayloadMatchesCompetition(payload, exactCompetitionSlug)) {
       throw new Error(`El proveedor devolvió ${payload.competition || "otra competición"} en vez de la competición seleccionada.`);
     }
     if (!hasUpcomingFixtureEvents(payload)) throw new Error("Las fuentes no han devuelto próximos partidos de la competición seleccionada.");
@@ -10183,7 +10299,7 @@ const loadLeagueFixtures = async (showFeedback = true, options = {}) => {
     return true;
   } catch (error) {
     if (!stillCurrent()) return false;
-    const previousMatchesCompetition = fixturePayloadMatchesCompetition(previousFixtures);
+    const previousMatchesCompetition = fixturePayloadMatchesCompetition(previousFixtures, context.exactCompetitionSlug);
     state.leagueFixtures = previousMatchesCompetition && hasUpcomingFixtureEvents(previousFixtures) ? { ...previousFixtures, stale: true } : null;
     state.fixtureLoadError = error.message || "No se pudo cargar la jornada actual.";
     if (state.leagueFixtures?.events?.length) renderLeagueFixtures();

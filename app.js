@@ -10032,6 +10032,7 @@ const openRecentFormPopover = (button) => {
     <strong>${escapeHtml(detail.title || "Detalle")}</strong>
     <div>${(detail.rows || []).map(renderRecentPopoverRow).join("")}</div>
   `;
+  popover.dataset.recentMatchKey = button.dataset.recentMatchKey || "";
   popover.hidden = false;
   const popoverRect = popover.getBoundingClientRect();
   const left = Math.min(window.innerWidth - popoverRect.width - 10, Math.max(10, rect.left + rect.width / 2 - popoverRect.width / 2));
@@ -10220,7 +10221,8 @@ const rerenderRecentFormForPlayer = (player, selectedMatchKey = "") => {
     return dot && (dot.dataset.recentPlayerId === String(player.id || "")
       || (Number(player.biwengerPlayerId || 0) > 0 && Number(dot.dataset.recentBiwengerId || 0) === Number(player.biwengerPlayerId)));
   });
-  const wasOpen = !qs("#recent-form-popover")?.hidden;
+  const popover = qs("#recent-form-popover");
+  const wasOpen = !popover?.hidden && popover?.dataset.recentMatchKey === selectedMatchKey;
   let replacement = null;
   for (const group of groups) {
     group.outerHTML = renderRecentFormDots(player);

@@ -4243,6 +4243,8 @@ tbody tr.selected .player-cell span {
   font-size: 12px;
 }
 
+.recent-form-popover .recent-contributions { white-space: normal; overflow-wrap: anywhere; }
+
 .recent-form-popover .sub-minute {
   font-weight: 800;
 }
@@ -9534,14 +9536,16 @@ html[data-theme="day"] .home-opportunity-list {
     height: clamp(420px, 145vw, 560px);
     overflow: hidden;
   }
-  #team-view .pitch-player { z-index: 1; width: clamp(38px, 11vw, 55px); }
-  #team-view .pitch-player .player-media.sm { width: clamp(29px, 8vw, 36px); height: clamp(29px, 8vw, 36px); }
+  #team-view .pitch-player { z-index: 1; width: clamp(54px, 13vw, 64px); overflow: visible; }
+  #team-view .pitch-player .player-media.sm { width: clamp(40px, 10vw, 46px); height: clamp(40px, 10vw, 46px); overflow: visible; }
+  #team-view .pitch-player .player-media.sm img { object-position: center 15%; }
+  #team-view .pitch-player .player-emblem { right: -7px; bottom: -5px; }
   #team-view .pitch-player-name { display: block; width: 100%; min-width: 0; max-width: 100%; margin-top: 2px; padding-top: 8px; }
   #team-view .pitch-player .pitch-player-name > strong { display: block; width: 100%; max-width: 100%; padding: 2px; font-size: 9px; }
   #team-view .pitch-player-round-points {
     z-index: 4;
-    bottom: -5px;
-    left: -7px;
+    bottom: -7px;
+    left: -9px;
     width: 23px;
     height: 23px;
     min-width: 23px;
@@ -9556,6 +9560,8 @@ html[data-theme="day"] .home-opportunity-list {
 }
 
 @media (max-width: 360px) {
-  #team-view .pitch-player-round-points { width: 20px; height: 20px; min-width: 20px; font-size: 9px; left: -6px; bottom: -4px; }
+  #team-view .pitch-player { width: 50px; }
+  #team-view .pitch-player .player-media.sm { width: 39px; height: 39px; }
+  #team-view .pitch-player-round-points { width: 20px; height: 20px; min-width: 20px; font-size: 9px; left: -8px; bottom: -6px; }
   #team-view .pitch-role-badge { width: 18px; height: 18px; }
 }

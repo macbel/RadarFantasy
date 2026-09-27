@@ -787,7 +787,7 @@ const insolventRecommendation = analyzePlayer(state.players[0], state.players);
 if (insolventRecommendation.marketDecision.type !== "avoid"
   || insolventRecommendation.marketDecision.recommendedBid !== 0
   || !insolventRecommendation.marketDecision.solvencyGuard?.blocksBid
-  || !insolventRecommendation.marketDecision.solvencyGuard?.message.includes("se resolvería antes")) {
+  || !insolventRecommendation.marketDecision.solvencyGuard?.message.includes("faltan")) {
   throw new Error("A signing that causes a negative balance at the next matchday must be blocked: " + JSON.stringify(insolventRecommendation.marketDecision));
 }
 const activeRoundStart = Math.floor(Date.now() / 1000) - 86400;
@@ -797,9 +797,9 @@ state.leagueFixtures = { events: [
   { timestamp: Math.floor(Date.now() / 1000) + 7 * 86400, round: "Jornada 2", home: { name: "E" }, away: { name: "F" } }
 ] };
 const activeRoundGuard = matchdaySolvencyGuard(state.players[0], 2200000);
-if (activeRoundGuard.blocksBid || !activeRoundGuard.deadline.active || activeRoundGuard.deadline.timestamp !== activeRoundStart
-  || !activeRoundGuard.message.includes("Puja posible")) {
-  throw new Error("An active round must keep its real first kickoff and allow bids settled the following day: " + JSON.stringify(activeRoundGuard));
+if (!activeRoundGuard.blocksBid || !activeRoundGuard.deadline.active || activeRoundGuard.deadline.timestamp !== activeRoundStart
+  || !activeRoundGuard.message.includes("jornada en curso")) {
+  throw new Error("An active round must block new bids at its real first kickoff: " + JSON.stringify(activeRoundGuard));
 }
 
 state.leagueFixtures = { seasonId: 2026, seasonName: "2026/27", events: [] };
@@ -1158,8 +1158,8 @@ if (selectedRecentScore(noOfficial) !== null || selectedRecentScore(exactZero) !
   || !recentMatchDetail(noOfficial, null, false).rows.includes("Puntos: sin dato")
   || !recentMatchDetail(noOfficial, null, false).rows.includes("Goles: sin dato")
   || !recentMatchDetail(fitnessZero, 0, false).rows.includes("Puntos de racha Biwenger: 0")
-  || !recentMatchDetail(fitnessZero, 0, false).rows.includes("Partido sin identificar")
-  || recentMatchDetail(fitnessZero, 0, false).title !== "Partido sin identificar"
+  || !recentMatchDetail(fitnessZero, 0, false).rows.includes("Biwenger no vincula esta puntuación con un partido concreto")
+  || !recentMatchDetail(fitnessZero, 0, false).title.includes("Racha Biwenger")
   || recentMatchDetail(fitnessZero, 0, false).rows.some((row) => row.startsWith("Goles:"))
   || !recentMatchDetail(exactZero, 0, true).rows.includes("Puntos Biwenger: 0")
   || !recentMatchDetail(exactZero, 0, true).rows.includes("Goles: 0")) throw new Error("Recent details must distinguish real zero from missing points and goals");
@@ -1193,11 +1193,76 @@ if (!streakHtml.includes('recent-form-dots') || streakHtml.indexOf('Sevilla') > 
 const fitnessHtml = renderRecentFormDots({ id: "fitness", name: "Fitness", sourceSummary: { recentMatches: [
   { ...fitnessNull, recentOrder: 1 }, { ...fitnessZero, recentOrder: 2 }, { ...fitnessPositive, recentOrder: 3 }
 ] } });
-if (!["fitness:2:3", "fitness:2:2", "fitness:2:1"].every((key, index, keys) => fitnessHtml.indexOf('data-recent-match-key="' + key + '"') < (index < keys.length - 1 ? fitnessHtml.indexOf('data-recent-match-key="' + keys[index + 1] + '"') : fitnessHtml.indexOf("recent-dot missing")))
+if (!["fitness:2:1", "fitness:2:2", "fitness:2:3"].every((key, index, keys) => fitnessHtml.indexOf('data-recent-match-key="' + key + '"') < (index < keys.length - 1 ? fitnessHtml.indexOf('data-recent-match-key="' + keys[index + 1] + '"') : fitnessHtml.indexOf("recent-dot missing")))
   || (fitnessHtml.match(/recent-dot missing/g) || []).length !== 2) throw new Error("Fitness streak must render newest to oldest, left to right, with placeholders on the right");
 const mergedFitness = mergeSourceSummaries({ recentMatches: [{ ...fitnessPositive, recentOrder: 1 }] }, { recentMatches: [{ provider: "api-football", date: recentToday, opponent: "Betis", goals: 0 }] });
 if (!mergedFitness.recentMatches.some((match) => match.scoreProvenance === "biwenger-fitness" && match.streakPoints === 8)
   || !mergedFitness.sourceRecentMatches.some((match) => match.opponent === "Betis")) throw new Error("External recent matches must preserve the independent Biwenger fitness streak");
+const identified = { provider: "api-football", date: recentToday, opponent: "Betis", minutes: 90, starter: true, goals: 2, assists: 1 };
+const identifiedDetail = recentMatchDetail({ ...fitnessZero, recentOrder: 1 }, 0, false, [identified]);
+if (!identifiedDetail.rows.some((row) => row.includes("Partidos recientes identificados"))
+  || !identifiedDetail.rows.some((row) => row.includes("Betis") && row.includes("Goles: 2 · Asistencias: 1"))
+  || identifiedDetail.rows.some((row) => row.includes("Rival: Betis"))) throw new Error("Identified matches must stay separate from ordinal fitness");
+for (const count of [0, 1, 2]) {
+  const row = renderRecentPopoverRow("Betis · Goles: " + count + " · Asistencias: " + count);
+  if (!row.includes(count + " goles") || !row.includes(count + " asistencias")
+    || (count > 0 && (row.match(/⚽/g) || []).length !== count) || (count === 0 && row.includes("⚽"))
+    || !row.includes("👟 " + count)) throw new Error("Goal and assist icons must preserve real zero and counts");
+  if (!renderRecentPopoverRow("Asistencias: " + count).includes(count + " asistencias")) throw new Error("Standalone assists must have an accessible count");
+}
+if (!renderRecentPopoverRow("Goles: sin dato · Asistencias: sin dato").includes("asistencias: sin dato")) throw new Error("Unknown contributions must remain explicit");
+const mergedAssists = mergeRecentMatchArrays([{ ...identified, assists: 0 }], [{ ...identified, provider: "feeberse", assists: null }]);
+if (mergedAssists[0].assists !== 0) throw new Error("A reliable zero assist must survive a null refresh");
+const liquiditySavedNow = Date.now;
+const liquiditySavedTeam = state.teamPlayers;
+const liquiditySavedFixtures = state.leagueFixtures;
+const liquiditySavedFinance = state.finance;
+const liquiditySavedOperations = state.biwengerOperations;
+Date.now = () => Date.parse("2026-10-05T08:00:00Z");
+state.leagueFixtures = { events: [{ timestamp: Date.parse("2026-10-09T19:00:00Z") / 1000, round: "Jornada 9/10" }] };
+state.finance = { ...state.finance, balance: 500000, maximumBid: 4000000, nextMarketExecution: Date.parse("2026-10-06T05:00:00Z") / 1000 };
+state.biwengerOperations = { offers: [], sales: [], finance: { ...state.finance } };
+state.teamPlayers = ["POR", "POR", "DF", "DF", "DF", "DF", "DF", "MC", "MC", "MC", "MC", "DL", "DL", "DL"]
+  .map((position, index) => ({ id: "liquidity-" + index, biwengerPlayerId: 6000 + index, name: "Jugador " + index, position, biwengerValue: 2000000, recommendation: index === 4 ? 28 : 55, starter: 65, health: { status: "ok" } }));
+const bidTarget = { id: "liquidity-target", biwengerPlayerId: 8000, price: 1800000 };
+const viableLiquidity = matchdaySolvencyGuard(bidTarget, 1800000);
+if (viableLiquidity.blocksBid || viableLiquidity.hours < 48 || viableLiquidity.cycles < 2 || viableLiquidity.sales.length < 1
+  || viableLiquidity.projectedAfterBid >= 0 || viableLiquidity.projectedAtDeadline < 0) throw new Error("A safe sale with two market cycles must recover the kickoff balance: " + JSON.stringify(viableLiquidity));
+state.finance.balance = -100000;
+state.biwengerOperations.finance.balance = -100000;
+const assistantTarget = { ...bidTarget, price: 700000, biwengerValue: 700000, recommendation: 90, starter: 90, squadFitScore: 80,
+  health: { status: "ok" }, marketIntelligence: { role: "Titular inmediato", contextualRisk: 0 },
+  recentForm: { score: 75, label: "racha fuerte" }, marketDecision: { type: "buy", recommendedBid: 750000, reasonableLimit: 900000 } };
+if (assistantBidBudget() <= 0 || assistantBidCandidates([assistantTarget]).length !== 1) throw new Error("A negative balance with safe sales must leave a viable assistant candidate");
+state.finance.balance = 500000;
+state.biwengerOperations.finance.balance = 500000;
+state.finance.maximumBid = 1000000;
+state.biwengerOperations.finance.maximumBid = 1000000;
+if (!matchdaySolvencyGuard(bidTarget, 1800000).blocksBid) throw new Error("Biwenger legal maximum must always block an excessive bid");
+state.finance.maximumBid = 4000000;
+state.biwengerOperations.finance.maximumBid = 4000000;
+state.leagueFixtures.events[0].timestamp = Date.parse("2026-10-06T19:00:00Z") / 1000;
+const shortLiquidity = matchdaySolvencyGuard(bidTarget, 1800000);
+if (!shortLiquidity.blocksBid || shortLiquidity.sales.length) throw new Error("Under 48 hours, speculative sales cannot fund a bid");
+state.biwengerOperations.offers = [{ offerId: 9001, playerId: 6004, fromId: 300, toId: 1, isIncoming: true, status: "waiting", amount: 1600000 }];
+const firmLiquidity = matchdaySolvencyGuard(bidTarget, 1800000);
+if (firmLiquidity.blocksBid || firmLiquidity.offers.length !== 1 || firmLiquidity.sales.length) throw new Error("A firm offer can fund a short-deadline bid");
+state.leagueFixtures.events[0].timestamp = Date.parse("2026-10-05T07:00:00Z") / 1000;
+if (!matchdaySolvencyGuard(bidTarget, 1800000).blocksBid) throw new Error("An active matchday must block new bids");
+state.leagueFixtures.events[0].timestamp = Date.parse("2026-10-09T19:00:00Z") / 1000;
+state.biwengerOperations.offers = [];
+state.biwengerOperations.finance.balance = 300000;
+state.finance.balance = 300000;
+state.finance.bidTotal = 200000;
+const withCommitment = matchdaySolvencyGuard(bidTarget, 1800000);
+if (withCommitment.otherCommitments !== 0) throw new Error("An authoritative empty offer list must not double-count stale bid totals");
+state.teamPlayers = state.teamPlayers.slice(0, 11);
+if (!matchdaySolvencyGuard(bidTarget, 1800000).blocksBid) throw new Error("An exact eleven must not fund a bid with speculative sales");
+state.teamPlayers = liquiditySavedTeam;
+state.finance = liquiditySavedFinance;
+state.biwengerOperations = liquiditySavedOperations;
+state.leagueFixtures = liquiditySavedFixtures;
+Date.now = liquiditySavedNow;
 const totals = teamAccumulatedPoints([{ id: 1, points: 0 }, { id: 1, points: 0 }, { id: 2, points: -2 }, { id: 3, points: 12 }, { id: 4, points: null }]);
 if (totals.total !== 10 || totals.known !== 3 || totals.count !== 4) throw new Error("Season squad points must dedupe and retain unknowns");
 

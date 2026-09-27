@@ -1377,7 +1377,7 @@ function merge_recent_detail_payloads(array $payloads): array
                 if ($compatible) { $bestIndex = $index; break; }
             }
             if ($bestIndex === null) { $primaryMatches[] = $candidate; continue; }
-            foreach (['starter', 'minuteIn', 'minuteOut', 'minuteInLabel', 'minuteOutLabel', 'lineupSource', 'minutesSource', 'goals'] as $key) {
+            foreach (['starter', 'minuteIn', 'minuteOut', 'minuteInLabel', 'minuteOutLabel', 'lineupSource', 'minutesSource', 'goals', 'assists'] as $key) {
                 if (array_key_exists($key, $candidate) && $candidate[$key] !== null && $candidate[$key] !== ''
                     && (!array_key_exists($key, $primaryMatches[$bestIndex]) || $primaryMatches[$bestIndex][$key] === null || $primaryMatches[$bestIndex][$key] === '')) {
                     $primaryMatches[$bestIndex][$key] = $candidate[$key];
@@ -2017,6 +2017,7 @@ function futbol_fantasy_parse_minutes_row(string $row, string $playerName, strin
         'minuteOutLabel' => $outMinute !== null ? (string)$outMinute : null,
         'lineupInMinute' => $inMinute,
         'substitutionOutMinute' => $outMinute,
+        'assists' => null,
         'points' => [],
         'sourceUrl' => $trackingUrl,
         'rawText' => substr($text, 0, 360),
@@ -6875,6 +6876,8 @@ function feeberse_player_recent_details(array $player, string $competition, int 
             'goals' => isset($stats['goals']) && is_numeric($stats['goals']) ? (int)$stats['goals']
                 : (isset($stats['goals']['total']) && is_numeric($stats['goals']['total']) ? (int)$stats['goals']['total']
                 : (isset($stats['goalsScored']) && is_numeric($stats['goalsScored']) ? (int)$stats['goalsScored'] : null)),
+            'assists' => isset($stats['assists']) && is_numeric($stats['assists']) ? (int)$stats['assists']
+                : (isset($stats['goals']['assists']) && is_numeric($stats['goals']['assists']) ? (int)$stats['goals']['assists'] : null),
             'starter' => $starter,
             'minuteIn' => $estimatedMinuteIn,
             'minuteInLabel' => $estimatedMinuteIn !== null ? (string)$estimatedMinuteIn : null,
@@ -7097,6 +7100,7 @@ function api_football_recent_match_from_fixture(array $fixtureRow, int $playerId
         'lineupSource' => $lineupStatus['source'],
         'played' => $minutes > 0,
         'goals' => isset($stat['goals']['total']) && is_numeric($stat['goals']['total']) ? (int)$stat['goals']['total'] : null,
+        'assists' => isset($stat['goals']['assists']) && is_numeric($stat['goals']['assists']) ? (int)$stat['goals']['assists'] : null,
         'rating' => $rating !== null ? round($rating, 2) : null,
         'points' => api_football_points_from_statistics($stat, $minutes, $rating)
     ];
@@ -8484,15 +8488,15 @@ function biwenger_recent_matches_from_fitness(array $fitness, int $scoreSystemId
     $values = array_reverse($values);
     $scoreSystemId = $scoreSystemId > 0 ? $scoreSystemId : null;
     $scoreSystem = $scoreSystemId !== null ? biwenger_score_name($scoreSystemId) : null;
-    $count = count($values);
-    return array_values(array_map(static function ($points, $index) use ($scoreSystemId, $scoreSystem, $count) {
+    return array_values(array_map(static function ($points, $index) use ($scoreSystemId, $scoreSystem) {
         return [
             'provider' => 'biwenger',
             'label' => 'Puntos de racha Biwenger',
-            'recentOrder' => $count - $index,
+            'recentOrder' => $index + 1,
             'minutes' => null,
             'played' => null,
             'goals' => null,
+            'assists' => null,
             'streakPoints' => $points,
             'scoreProvenance' => 'biwenger-fitness',
             'scoreScope' => 'ordinal-unbound',
@@ -9424,6 +9428,7 @@ function recent_match_summary(array $row): array
         'minuteOut' => $outMinute,
         'played' => $minutes > 0,
         'goals' => isset($row['incidents']['goals']) && is_numeric($row['incidents']['goals']) ? (int)$row['incidents']['goals'] : null,
+        'assists' => isset($row['incidents']['assists']) && is_numeric($row['incidents']['assists']) ? (int)$row['incidents']['assists'] : null,
         'rating' => isset($row['rating']) && is_numeric($row['rating']) ? round((float)$row['rating'], 2) : null,
         'points' => recent_match_points($row)
     ];

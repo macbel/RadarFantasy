@@ -17,6 +17,7 @@ function check(bool $condition, string $message): void { if (!$condition) throw 
 $time = time() + 86400;
 $fitnessRows = biwenger_recent_matches_from_fitness([1, 4, 8], 2);
 check(count($fitnessRows) === 3 && array_column($fitnessRows, 'streakPoints') === [8, 4, 1], 'Fitness streak must be newest first');
+check(array_column($fitnessRows, 'recentOrder') === [1, 2, 3], 'The leftmost newest fitness score must be labelled first');
 check($fitnessRows[0]['provider'] === 'biwenger' && $fitnessRows[0]['scoreProvenance'] === 'biwenger-fitness'
     && $fitnessRows[0]['scoreScope'] === 'ordinal-unbound' && $fitnessRows[0]['scoreSystemId'] === 2
     && !array_key_exists('points', $fitnessRows[0]) && !array_key_exists('fitnessEstimate', $fitnessRows[0]),
@@ -105,6 +106,16 @@ $details = merge_recent_detail_payloads([
     ['provider' => 'api-football', 'recentMatches' => [['date' => '2026-09-20', 'opponent' => 'Real Madrid', 'goals' => 2]]]
 ]);
 check($details['recentMatches'][0]['goals'] === 2, 'Goals must merge by match identity');
+$assists = merge_recent_detail_payloads([
+    ['provider' => 'feeberse', 'recentMatches' => [['date' => '2026-09-20', 'opponent' => 'Real Madrid', 'assists' => 0]]],
+    ['provider' => 'api-football', 'recentMatches' => [['date' => '2026-09-20', 'opponent' => 'Real Madrid', 'assists' => null]]]
+]);
+check($assists['recentMatches'][0]['assists'] === 0, 'Reliable zero assists must survive null supplemental data');
+$assists = merge_recent_detail_payloads([
+    ['provider' => 'feeberse', 'recentMatches' => [['date' => '2026-09-20', 'opponent' => 'Real Madrid', 'assists' => null]]],
+    ['provider' => 'api-football', 'recentMatches' => [['date' => '2026-09-20', 'opponent' => 'Real Madrid', 'assists' => 2]]]
+]);
+check($assists['recentMatches'][0]['assists'] === 2, 'A confirmed assist count must fill unknown data');
 $unmatched = merge_recent_detail_payloads([
     ['provider' => 'biwenger', 'recentMatches' => [['points' => ['biwenger' => 0], 'goals' => null]]],
     ['provider' => 'api-football', 'recentMatches' => [['date' => '2026-09-20', 'opponent' => 'Real Madrid', 'goals' => 2]]]

@@ -1048,6 +1048,11 @@ if (!pitchHtml.includes("Puntos en Jornada 3") || !pitchHtml.includes('round-sco
   || !pitchHtml.includes('class="pitch-player-name"') || pitchHtml.includes("player-points-overlay") || pitchHtml.includes("scoring-badge")) {
   throw new Error("Pitch cards must show the current-round score circle with the recent-form color scale, without accumulated points below");
 }
+const rolePitchHtml = renderLineupPitch({ POR: [{ ...hydratedCurrentRound[0], isCaptain: true, isStriker: true, roundPoints: 12 }], DF: [], MC: [], DL: [] });
+if (!rolePitchHtml.includes('class="pitch-player-portrait"') || !rolePitchHtml.includes('class="pitch-role-badges"')
+  || !rolePitchHtml.includes('pitch-role-badge captain') || !rolePitchHtml.includes('pitch-role-badge striker')
+  || !rolePitchHtml.includes('class="pitch-player-round-points round-score')
+  || !rolePitchHtml.includes('class="pitch-player-name"')) throw new Error("Pitch portrait must group media, score and both roles separately from the player name");
 state.biwenger.scoreId = 8;
 state.currentRoundPoints = { id: 4901, name: "Jornada 3", scoreId: 8, pointsByPlayer: { "1": 8 } };
 const correctedOfficialPitchHtml = renderLineupPitch({ POR: [{ ...hydratedCurrentRound[0], roundPoints: 12 }], DF: [], MC: [], DL: [] });
@@ -1140,11 +1145,26 @@ for (const goals of [0, 1, 2, null]) {
 if (!recentMatchNeedsHydration({ provider: "biwenger", points: { biwenger: 0 }, goals: null }, 0)) throw new Error("Zero-point match must request missing goals once");
 const noOfficial = { provider: "biwenger", points: { biwenger: null }, goals: null };
 const exactZero = { provider: "biwenger", scoreProvenance: "official-exact", points: { biwenger: 0 }, goals: 0 };
+const savedBiwengerScoring = { scoreId: state.biwenger.scoreId, scoreName: state.biwenger.scoreName };
+state.biwenger.scoreId = 2;
+state.biwenger.scoreName = "SofaScore";
+const fitnessNull = { provider: "biwenger", scoreProvenance: "biwenger-fitness", scoreScope: "ordinal-unbound", scoreSystemId: 2, scoreSystem: "SofaScore", streakPoints: null };
+const fitnessZero = { ...fitnessNull, streakPoints: 0 };
+const fitnessPositive = { ...fitnessNull, streakPoints: 8 };
+const fitnessMismatch = { ...fitnessPositive, scoreSystemId: 1, scoreSystem: "Diario AS" };
 if (selectedRecentScore(noOfficial) !== null || selectedRecentScore(exactZero) !== 0
+  || selectedRecentScore(fitnessNull) !== null || selectedRecentScore(fitnessZero) !== 0
+  || selectedRecentScore(fitnessPositive) !== 8 || selectedRecentScore(fitnessMismatch) !== null
   || !recentMatchDetail(noOfficial, null, false).rows.includes("Puntos: sin dato")
   || !recentMatchDetail(noOfficial, null, false).rows.includes("Goles: sin dato")
+  || !recentMatchDetail(fitnessZero, 0, false).rows.includes("Puntos de racha Biwenger: 0")
+  || !recentMatchDetail(fitnessZero, 0, false).rows.includes("Partido sin identificar")
+  || recentMatchDetail(fitnessZero, 0, false).title !== "Partido sin identificar"
+  || recentMatchDetail(fitnessZero, 0, false).rows.some((row) => row.startsWith("Goles:"))
   || !recentMatchDetail(exactZero, 0, true).rows.includes("Puntos Biwenger: 0")
   || !recentMatchDetail(exactZero, 0, true).rows.includes("Goles: 0")) throw new Error("Recent details must distinguish real zero from missing points and goals");
+state.biwenger.scoreId = savedBiwengerScoring.scoreId;
+state.biwenger.scoreName = savedBiwengerScoring.scoreName;
 const recentToday = new Date().toISOString().slice(0, 10);
 const orderedRecent = recentMatchesNewestFirst([
   { id: "old", timestamp: 1700000000 },
@@ -1170,6 +1190,14 @@ const streakHtml = renderRecentFormDots({ id: "streak", name: "Jugador", sourceS
 if (!streakHtml.includes('recent-form-dots') || streakHtml.indexOf('Sevilla') > streakHtml.indexOf('Betis')
   || (streakHtml.match(/recent-dot missing/g) || []).length !== 3
   || streakHtml.indexOf('recent-dot missing') < streakHtml.indexOf('Sevilla')) throw new Error("Every streak group must place the newest match left and placeholders right");
+const fitnessHtml = renderRecentFormDots({ id: "fitness", name: "Fitness", sourceSummary: { recentMatches: [
+  { ...fitnessNull, recentOrder: 1 }, { ...fitnessZero, recentOrder: 2 }, { ...fitnessPositive, recentOrder: 3 }
+] } });
+if (!["fitness:2:3", "fitness:2:2", "fitness:2:1"].every((key, index, keys) => fitnessHtml.indexOf('data-recent-match-key="' + key + '"') < (index < keys.length - 1 ? fitnessHtml.indexOf('data-recent-match-key="' + keys[index + 1] + '"') : fitnessHtml.indexOf("recent-dot missing")))
+  || (fitnessHtml.match(/recent-dot missing/g) || []).length !== 2) throw new Error("Fitness streak must render newest to oldest, left to right, with placeholders on the right");
+const mergedFitness = mergeSourceSummaries({ recentMatches: [{ ...fitnessPositive, recentOrder: 1 }] }, { recentMatches: [{ provider: "api-football", date: recentToday, opponent: "Betis", goals: 0 }] });
+if (!mergedFitness.recentMatches.some((match) => match.scoreProvenance === "biwenger-fitness" && match.streakPoints === 8)
+  || !mergedFitness.sourceRecentMatches.some((match) => match.opponent === "Betis")) throw new Error("External recent matches must preserve the independent Biwenger fitness streak");
 const totals = teamAccumulatedPoints([{ id: 1, points: 0 }, { id: 1, points: 0 }, { id: 2, points: -2 }, { id: 3, points: 12 }, { id: 4, points: null }]);
 if (totals.total !== 10 || totals.known !== 3 || totals.count !== 4) throw new Error("Season squad points must dedupe and retain unknowns");
 

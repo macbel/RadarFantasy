@@ -2379,7 +2379,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
             $playerId = (int)($entry['id'] ?? 0);
             $catalogEntry = is_array($catalog['playersById'][$playerId] ?? null) ? $catalog['playersById'][$playerId] : [];
             $merged = array_merge($catalogEntry, $entry);
-            $player = biwenger_normalize_player($merged, $catalog, $competition, true);
+            $player = biwenger_normalize_player($merged, $catalog, $competition, true, null, (int)($session['scoreId'] ?? 0));
             $player['roundPoints'] = array_key_exists($playerId, (array)$currentRound['pointsByPlayer'])
                 ? (float)$currentRound['pointsByPlayer'][$playerId]
                 : null;
@@ -2482,7 +2482,7 @@ function biwenger_import_players(array $session, string $kind, int $timeoutSecon
                 $sale['bidInfo']['bidCountSource'] = $visibleBidDetail['source'];
                 $sale['bidInfo']['rivalBidVisibility'] = 'count';
             }
-            $players[] = biwenger_normalize_player($entry, $catalog, $competition, false, $sale);
+            $players[] = biwenger_normalize_player($entry, $catalog, $competition, false, $sale, (int)($session['scoreId'] ?? 0));
         }
         $status = is_array($marketData['status'] ?? null) ? $marketData['status'] : [];
         $finance['balance'] = isset($status['balance']) ? (int)$status['balance'] : $finance['balance'];
@@ -2633,7 +2633,7 @@ function biwenger_public_catalog_payload(string $competition, int $scoreId, int 
     $players = [];
     foreach ($catalog['playersById'] as $entry) {
         if (!is_array($entry)) continue;
-        $player = biwenger_normalize_player($entry, $catalog, $slug, false);
+        $player = biwenger_normalize_player($entry, $catalog, $slug, false, null, $scoreId);
         $players[] = [
             'id' => $player['id'],
             'biwengerPlayerId' => $player['biwengerPlayerId'],
@@ -2701,7 +2701,7 @@ function biwenger_watchlist_catalog(array $session, int $timeoutSeconds, array $
 
     $players = [];
     foreach ($catalog['playersById'] as $playerId => $entry) {
-        $normalized = biwenger_normalize_player((array)$entry, $catalog, $competition, false);
+        $normalized = biwenger_normalize_player((array)$entry, $catalog, $competition, false, null, (int)($session['scoreId'] ?? 0));
         $marketPlayer = $marketById[(int)$playerId] ?? null;
         if (is_array($marketPlayer)) {
             $normalized = array_merge($normalized, $marketPlayer);
@@ -5281,7 +5281,7 @@ function biwenger_rival_team(array $session, int $rivalUserId, int $timeoutSecon
         $playerId = (int)($entryData['id'] ?? 0);
         if ($playerId <= 0) continue;
         $merged = array_merge((array)($catalog['playersById'][$playerId] ?? []), $entryData);
-        $players[] = biwenger_normalize_player($merged, $catalog, (string)($session['competition'] ?? ''), true);
+        $players[] = biwenger_normalize_player($merged, $catalog, (string)($session['competition'] ?? ''), true, null, (int)($session['scoreId'] ?? 0));
     }
     $clauses = [];
     try {
@@ -5421,7 +5421,7 @@ function biwenger_live_round(array $session, int $timeoutSeconds, array $headers
             if ($playerId <= 0) continue;
             $merged = array_merge((array)($catalog['playersById'][$playerId] ?? []), (array)($playersById[$playerId] ?? []));
             if (!$merged) continue;
-            $player = biwenger_normalize_player($merged, $catalog, (string)($session['competition'] ?? ''), true);
+            $player = biwenger_normalize_player($merged, $catalog, (string)($session['competition'] ?? ''), true, null, (int)($session['scoreId'] ?? 0));
             $publicRoundPoints = (array)($currentRound['pointsByPlayer'] ?? []);
             $player['roundPoints'] = array_key_exists($playerId, $publicRoundPoints)
                 ? (float)$publicRoundPoints[$playerId]
@@ -7893,7 +7893,7 @@ function biwenger_activity_player_payload(int $playerId, array $entry, array $ca
         ?? ($playerId > 0 ? 'https://cdn.biwenger.com/i/p/' . $playerId . '.png' : null);
     $teamImage = biwenger_media_url($team, ['shield', 'badge', 'logo', 'image', 'flag', 'crest', 'photo', 'icon'])
         ?? ($teamId > 0 ? 'https://cdn.biwenger.com/i/t/' . $teamId . '.png' : null);
-    $fitness = array_values(array_filter((array)($player['fitness'] ?? []), 'is_numeric'));
+    $fitness = array_values(array_map(static fn($value) => is_numeric($value) ? (int)round((float)$value) : null, (array)($player['fitness'] ?? [])));
     $points = (int)($player['points'] ?? 0);
     $position = biwenger_position((int)($player['position'] ?? 3));
     return [
@@ -7912,7 +7912,7 @@ function biwenger_activity_player_payload(int $playerId, array $entry, array $ca
             'emblemKind' => 'club'
         ],
         'sourceSummary' => [
-            'recentMatches' => biwenger_recent_matches_from_fitness($fitness)
+            'recentMatches' => biwenger_recent_matches_from_fitness($fitness, (int)($entry['scoreID'] ?? $entry['scoreId'] ?? $entry['score']['id'] ?? 0))
         ]
     ];
 }
@@ -8101,7 +8101,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
         $marketPlayer = is_array($offer['_marketPlayer'] ?? null) ? $offer['_marketPlayer'] : [];
         $catalogPlayer = array_merge($marketPlayer, (array)($catalog['playersById'][$playerId] ?? []));
         $normalizedPlayer = $playerId > 0
-            ? biwenger_normalize_player($catalogPlayer ?: ['id' => $playerId], $catalog, (string)($session['competition'] ?? ''), false)
+            ? biwenger_normalize_player($catalogPlayer ?: ['id' => $playerId], $catalog, (string)($session['competition'] ?? ''), false, null, (int)($session['scoreId'] ?? 0))
             : [];
         $fromValue = $offer['from'] ?? $offer['buyer'] ?? $offer['bidder'] ?? null;
         $toValue = $offer['to'] ?? $offer['owner'] ?? $offer['seller'] ?? null;
@@ -8256,7 +8256,7 @@ function biwenger_operations_center(array $session, int $timeoutSeconds, array $
             $marketBidCountSources[$salePlayerId] = $bidDetail['source'] ?? null;
             continue;
         }
-        $player = biwenger_normalize_player($entry, $catalog, (string)($session['competition'] ?? ''), true, $sale);
+        $player = biwenger_normalize_player($entry, $catalog, (string)($session['competition'] ?? ''), true, $sale, (int)($session['scoreId'] ?? 0));
         $sales[] = [
             'playerId' => (int)($player['biwengerPlayerId'] ?? 0),
             'playerName' => (string)($player['name'] ?? 'Jugador'),
@@ -8368,7 +8368,7 @@ function biwenger_offer_map(array $offers, int $userId): array
     return $mapped;
 }
 
-function biwenger_normalize_player(array $entry, array $catalog, string $competition, bool $owned, ?array $sale = null): array
+function biwenger_normalize_player(array $entry, array $catalog, string $competition, bool $owned, ?array $sale = null, int $scoreSystemId = 0): array
 {
     $playerId = (int)($entry['id'] ?? 0);
     $teamId = (int)($entry['teamID'] ?? ($entry['team']['id'] ?? 0));
@@ -8387,7 +8387,7 @@ function biwenger_normalize_player(array $entry, array $catalog, string $competi
         ?? ($teamId > 0 ? 'https://cdn.biwenger.com/i/t/' . $teamId . '.png' : null);
     $eligiblePositions = biwenger_player_positions($entry);
     $position = $eligiblePositions[0] ?? biwenger_position((int)($entry['position'] ?? 3));
-    $fitness = array_values(array_filter((array)($entry['fitness'] ?? []), 'is_numeric'));
+    $fitness = array_values(array_map(static fn($value) => is_numeric($value) ? (int)round((float)$value) : null, (array)($entry['fitness'] ?? [])));
     $fitnessAverage = $fitness ? average($fitness) : null;
     $form = $fitnessAverage !== null ? (int)round(clamp(48 + $fitnessAverage * 5.2, 35, 92)) : 56;
     $starter = $position === 'ENT' ? ($status === 'ok' ? 94 : 62) : 58;
@@ -8462,7 +8462,7 @@ function biwenger_normalize_player(array $entry, array $catalog, string $competi
         ])),
         'sources' => ['Biwenger directo'],
         'sourceSummary' => [
-            'recentMatches' => biwenger_recent_matches_from_fitness($fitness),
+            'recentMatches' => biwenger_recent_matches_from_fitness($fitness, $scoreSystemId),
             'biwenger' => [
                 'status' => $status,
                 'statusText' => $statusText,
@@ -8478,20 +8478,26 @@ function biwenger_normalize_player(array $entry, array $catalog, string $competi
     ];
 }
 
-function biwenger_recent_matches_from_fitness(array $fitness): array
+function biwenger_recent_matches_from_fitness(array $fitness, int $scoreSystemId = 0): array
 {
-    $values = array_slice(array_values(array_map(static fn($value) => (float)$value, $fitness)), -5);
-    return array_values(array_map(static function ($value, $index) {
-        $points = (int)round($value);
+    $values = array_slice(array_values(array_map(static fn($value) => is_numeric($value) ? (int)round((float)$value) : null, $fitness)), -5);
+    $values = array_reverse($values);
+    $scoreSystemId = $scoreSystemId > 0 ? $scoreSystemId : null;
+    $scoreSystem = $scoreSystemId !== null ? biwenger_score_name($scoreSystemId) : null;
+    $count = count($values);
+    return array_values(array_map(static function ($points, $index) use ($scoreSystemId, $scoreSystem, $count) {
         return [
             'provider' => 'biwenger',
-            'label' => 'Partido reciente ' . ($index + 1),
-            'recentOrder' => $index,
+            'label' => 'Puntos de racha Biwenger',
+            'recentOrder' => $count - $index,
             'minutes' => null,
-            'played' => $points !== 0 ? true : null,
+            'played' => null,
             'goals' => null,
-            'fitnessEstimate' => $points,
-            'points' => []
+            'streakPoints' => $points,
+            'scoreProvenance' => 'biwenger-fitness',
+            'scoreScope' => 'ordinal-unbound',
+            'scoreSystemId' => $scoreSystemId,
+            'scoreSystem' => $scoreSystem
         ];
     }, $values, array_keys($values)));
 }

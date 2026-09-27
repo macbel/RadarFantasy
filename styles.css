@@ -3150,9 +3150,9 @@ input[type="range"] {
 
 .pitch-role-badges {
   position: absolute;
-  z-index: 2;
-  top: 20px;
-  right: -2px;
+  z-index: 5;
+  top: -7px;
+  right: -7px;
   display: flex;
   gap: 2px;
 }
@@ -3184,6 +3184,13 @@ input[type="range"] {
   color: var(--red);
 }
 
+.pitch-player-portrait {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  overflow: visible;
+}
+
 .pitch-player strong {
   width: 100%;
   margin-top: 3px;
@@ -3204,6 +3211,7 @@ input[type="range"] {
   justify-content: center;
   max-width: 98px;
   margin-top: 3px;
+  padding-top: 8px;
   gap: 4px;
 }
 
@@ -3216,7 +3224,10 @@ input[type="range"] {
 }
 
 .pitch-player-round-points {
-  z-index: 2;
+  position: absolute;
+  z-index: 4;
+  bottom: -5px;
+  left: -7px;
   display: inline-grid;
   flex: 0 0 26px;
   width: 26px;
@@ -9525,13 +9536,12 @@ html[data-theme="day"] .home-opportunity-list {
   }
   #team-view .pitch-player { z-index: 1; width: clamp(38px, 11vw, 55px); }
   #team-view .pitch-player .player-media.sm { width: clamp(29px, 8vw, 36px); height: clamp(29px, 8vw, 36px); }
-  #team-view .pitch-player-name { display: block; width: 100%; min-width: 0; max-width: 100%; margin-top: 2px; }
+  #team-view .pitch-player-name { display: block; width: 100%; min-width: 0; max-width: 100%; margin-top: 2px; padding-top: 8px; }
   #team-view .pitch-player .pitch-player-name > strong { display: block; width: 100%; max-width: 100%; padding: 2px; font-size: 9px; }
   #team-view .pitch-player-round-points {
-    position: absolute;
     z-index: 4;
-    top: 0;
-    right: -4px;
+    bottom: -5px;
+    left: -7px;
     width: 23px;
     height: 23px;
     min-width: 23px;
@@ -9539,4 +9549,13 @@ html[data-theme="day"] .home-opportunity-list {
   }
   #team-view .pitch-role-badges { z-index: 5; top: -7px; right: -7px; }
   #team-view .pitch-player-meta { display: none; }
+}
+
+@media (max-width: 900px) {
+  #team-view .pitch-player-round-points { width: 23px; height: 23px; min-width: 23px; font-size: 10px; }
+}
+
+@media (max-width: 360px) {
+  #team-view .pitch-player-round-points { width: 20px; height: 20px; min-width: 20px; font-size: 9px; left: -6px; bottom: -4px; }
+  #team-view .pitch-role-badge { width: 18px; height: 18px; }
 }

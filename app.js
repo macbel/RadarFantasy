@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.5";
-const APP_VERSION_CODE = 63;
+const APP_VERSION = "3.13.6";
+const APP_VERSION_CODE = 64;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -5589,6 +5589,15 @@ const selectedRecentScore = (match) => {
   const points = match?.points || {};
   const validNumber = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
   if (match?.scoreProvenance === "official-exact" && validNumber(points.biwenger)) return Number(points.biwenger);
+  if (match?.provider === "biwenger" && match?.scoreProvenance === "biwenger-fitness"
+    && match?.scoreScope === "ordinal-unbound" && validNumber(match.streakPoints)) {
+    const matchId = Number(match.scoreSystemId || 0);
+    const activeId = Number(state.biwenger.scoreId || 0);
+    const matchSystem = normalize(match.scoreSystem || "");
+    const activeSystem = normalize(state.biwenger.scoreName || "");
+    if ((!matchId || !activeId || matchId === activeId)
+      && (!matchSystem || !activeSystem || matchSystem === activeSystem)) return Number(match.streakPoints);
+  }
   const key = state.scoring === "mixed" ? "mixed" : state.scoring;
   if (match?.provider !== "biwenger" && validNumber(points[key])) return Number(points[key]);
   return null;
@@ -5624,6 +5633,7 @@ const recentMatchDate = (match) => /^\d{4}-\d{2}-\d{2}/.test(String(match?.date 
 
 const recentMatchKey = (match) => {
   if (!match) return "";
+  if (match.scoreScope === "ordinal-unbound" && match.scoreProvenance === "biwenger-fitness") return `fitness:${match.scoreSystemId || "active"}:${match.recentOrder ?? ""}`;
   if (match.matchKey) return String(match.matchKey);
   const date = recentMatchDate(match);
   const opponent = normalize(match.opponent || "");
@@ -5766,9 +5776,11 @@ const recentFormProfile = (player) => {
 const recentMatchDetail = (match, score, played) => {
   if (!match) return { title: "Sin dato", rows: ["No hay puntuacion disponible para este partido."] };
   const rows = [];
+  const fitnessStreak = match.provider === "biwenger" && match.scoreProvenance === "biwenger-fitness" && match.scoreScope === "ordinal-unbound";
   const official = match.scoreProvenance === "official-exact" && score !== null;
-  rows.push(score === null ? "Puntos: sin dato" : official ? `Puntos Biwenger: ${score}` : `Puntos estimados (${match.provider || "fuente externa"}): ${score}`);
-  if (played) {
+  rows.push(score === null ? "Puntos: sin dato" : fitnessStreak ? `Puntos de racha Biwenger: ${score}` : official ? `Puntos Biwenger: ${score}` : `Puntos estimados (${match.provider || "fuente externa"}): ${score}`);
+  if (fitnessStreak && !match.date && !match.opponent) rows.push("Partido sin identificar");
+  if (played && !fitnessStreak) {
     if (matchHasMinutes(match)) rows.push(`${Number(match.minutes)} min jugados`);
     const minuteIn = match.minuteIn === null || match.minuteIn === undefined || match.minuteIn === "" ? null : Number(match.minuteIn);
     const minuteOut = match.minuteOut === null || match.minuteOut === undefined || match.minuteOut === "" ? null : Number(match.minuteOut);
@@ -5781,11 +5793,11 @@ const recentMatchDetail = (match, score, played) => {
       if (Number.isFinite(minuteOut) && minuteOut > 0) rows.push(`↓ Sustituido en el ${match.minuteOutLabel || minuteOut}'`);
     }
     if (match.minutesSource === "estimated") rows.push("Minutos de cambio estimados");
-  } else {
+  } else if (!fitnessStreak) {
     rows.push(match.played === false ? "No jugó" : "Minutos sin confirmar");
   }
   const goals = match.goals === null || match.goals === undefined || match.goals === "" ? null : Number(match.goals);
-  rows.push(Number.isInteger(goals) && goals >= 0 ? `Goles: ${goals}` : "Goles: sin dato");
+  if (!fitnessStreak) rows.push(Number.isInteger(goals) && goals >= 0 ? `Goles: ${goals}` : "Goles: sin dato");
   if (match.opponent) rows.push(`Rival: ${match.opponent}`);
   if (match.date) rows.push(`Fecha: ${match.date}`);
   if (official) {
@@ -5798,7 +5810,9 @@ const recentMatchDetail = (match, score, played) => {
     rows.push("Fuente: FutbolFantasy");
   }
   return {
-    title: official
+    title: fitnessStreak && !match.date && !match.opponent
+      ? "Partido sin identificar"
+      : official
       ? "Partido reciente"
       : (match.label || `Último partido ${scoringLabel()}`),
     rows
@@ -5811,6 +5825,7 @@ const recentMatchWasPlayed = (match, score) => matchHasMinutes(match)
   ? Number(match.minutes) > 0 : match?.played === true || (score !== null && score !== 0);
 
 const recentMatchNeedsHydration = (match, score) => {
+  if (match?.scoreScope === "ordinal-unbound" && match?.scoreProvenance === "biwenger-fitness") return false;
   const played = recentMatchWasPlayed(match, score);
   const lacksRole = played && typeof match.starter !== "boolean";
   const lacksSubstitution = played && (match.minutesSource === "estimated"
@@ -13112,6 +13127,7 @@ const renderLineupPitch = (groups, options = {}) => {
           : "–";
         return `
         <div class="pitch-player ${player.health?.status === "injured" || player.health?.status === "doubtful" ? "alert" : ""}" style="--x: ${x}%; --y: ${y}%">
+          <span class="pitch-player-portrait">
           ${(player.isCaptain || String(player.id) === String(options.captainId || "")) || (player.isStriker || String(player.id) === String(options.strikerId || "")) ? `
             <span class="pitch-role-badges">
               ${player.isCaptain || String(player.id) === String(options.captainId || "") ? `<b class="pitch-role-badge captain" title="Capitan">C</b>` : ""}
@@ -13119,9 +13135,10 @@ const renderLineupPitch = (groups, options = {}) => {
             </span>
           ` : ""}
           ${renderPlayerMedia(player, "sm", { showPoints: false })}
+          <span class="pitch-player-round-points round-score ${liveRoundScoreClass(roundPoints)}" title="${escapeHtml(currentRoundPointsTitle(player))}">${escapeHtml(pointsText)}</span>
+          </span>
           <span class="pitch-player-name">
             <strong>${escapeHtml(player.name)}</strong>
-            <span class="pitch-player-round-points round-score ${liveRoundScoreClass(roundPoints)}" title="${escapeHtml(currentRoundPointsTitle(player))}">${escapeHtml(pointsText)}</span>
           </span>
           <div class="pitch-player-meta">${renderPositionBadge(player.lineupPosition || player.position)}</div>
           ${renderRecentFormDots(player)}

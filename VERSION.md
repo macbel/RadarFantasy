@@ -1,3 +1,16 @@
+# Versión 3.13.8
+
+Fecha de publicación: 2026-09-30
+
+## Notas de versión
+
+- La racha usa los informes oficiales por partido de Biwenger y ordena los cinco encuentros de más reciente a más antiguo.
+- Los partidos en los que el jugador no participó se conservan en su posición cronológica como un punto gris; el relleno sin partido queda al extremo derecho.
+- Cada punto abre el partido exacto y muestra puntos, minutos calculados, entrada o salida, expulsión, goles y asistencias disponibles.
+- La caché queda separada por liga, competición, temporada, sistema de puntuación y jugador para evitar cruces entre contextos.
+
+## Historial
+
 # Version 3.13.1
 
 Fecha de preparación: 2026-09-19

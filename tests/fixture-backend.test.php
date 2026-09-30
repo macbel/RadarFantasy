@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 $source = str_replace("\r\n", "\n", file_get_contents(__DIR__ . '/../api/index.php'));
-foreach (['normalize_text', 'slugify', 'fixture_competition_family', 'identity_name_score', 'fixture_payload_usable', 'biwenger_fixture_session_context', 'fixture_cache_key', 'fixture_upcoming_team_count', 'merge_fixture_payloads', 'filter_fixture_payload_to_competition', 'decorate_fixture_competition_state', 'fast_current_fixtures', 'biwenger_path_value', 'biwenger_player_round_goals', 'merge_recent_detail_payloads', 'biwenger_score_name', 'biwenger_recent_matches_from_fitness'] as $name) {
+foreach (['normalize_text', 'slugify', 'fixture_competition_family', 'identity_name_score', 'fixture_payload_usable', 'biwenger_fixture_session_context', 'fixture_cache_key', 'fixture_upcoming_team_count', 'merge_fixture_payloads', 'filter_fixture_payload_to_competition', 'decorate_fixture_competition_state', 'fast_current_fixtures', 'biwenger_path_value', 'biwenger_player_round_goals', 'merge_recent_detail_payloads', 'biwenger_score_name'] as $name) {
     $start = strpos($source, "function $name(");
     if ($start === false) throw new RuntimeException("Missing production function $name");
     $end = $name === 'merge_recent_detail_payloads'
@@ -15,15 +15,6 @@ foreach (['normalize_text', 'slugify', 'fixture_competition_family', 'identity_n
 function check(bool $condition, string $message): void { if (!$condition) throw new RuntimeException($message); }
 
 $time = time() + 86400;
-$fitnessRows = biwenger_recent_matches_from_fitness([1, 4, 8], 2);
-check(count($fitnessRows) === 3 && array_column($fitnessRows, 'streakPoints') === [8, 4, 1], 'Fitness streak must be newest first');
-check(array_column($fitnessRows, 'recentOrder') === [1, 2, 3], 'The leftmost newest fitness score must be labelled first');
-check($fitnessRows[0]['provider'] === 'biwenger' && $fitnessRows[0]['scoreProvenance'] === 'biwenger-fitness'
-    && $fitnessRows[0]['scoreScope'] === 'ordinal-unbound' && $fitnessRows[0]['scoreSystemId'] === 2
-    && !array_key_exists('points', $fitnessRows[0]) && !array_key_exists('fitnessEstimate', $fitnessRows[0]),
-    'Fitness must retain its own provenance/system without appearing as official match points');
-$fitnessNullZero = biwenger_recent_matches_from_fitness([null, 0, 5]);
-check(array_column($fitnessNullZero, 'streakPoints') === [5, 0, null], 'Fitness must preserve unknown, real zero, and positive values');
 $event = static fn(string $home, string $away, string $id, int $at) => [
     'id' => $id, 'competition' => 'LaLiga', 'timestamp' => $at, 'status' => 'notstarted',
     'home' => ['name' => $home], 'away' => ['name' => $away]

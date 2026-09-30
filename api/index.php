@@ -10,6 +10,7 @@ session_set_cookie_params([
 session_start();
 
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'auth.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'biwenger-player-history.php';
 
 $root = dirname(__DIR__);
 $dbDir = $root . DIRECTORY_SEPARATOR . '.fantasy-db';
@@ -1278,6 +1279,21 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
     $competition = (string)($payload['competition'] ?? $sessionState['competition'] ?? '');
     if ($competition !== '') $sessionState['competition'] = $competition;
     $errors = [];
+    $biwengerPlayerId = (int)($player['biwengerPlayerId'] ?? 0);
+    if ($biwengerPlayerId > 0) {
+        try {
+            $official = biwenger_player_history(
+                $competition,
+                (string)($payload['seasonId'] ?? ''),
+                $biwengerPlayerId,
+                max(1, (int)($sessionState['scoreId'] ?? $payload['scoreId'] ?? 2)),
+                max($sourceTimeoutSeconds, 10), $biwengerJsonHeaders, $strictTls, $dbDir
+            );
+            send_json(200, array_merge(['ok' => true], $official));
+        } catch (Throwable $error) {
+            $errors[] = 'Biwenger: ' . $error->getMessage();
+        }
+    }
     $detailPayloads = [];
     $includeSubstitutions = !empty($payload['includeSubstitutions']);
     $usesFeeberse = in_array((int)($sessionState['scoreId'] ?? 0), [7, 8], true)
@@ -7916,7 +7932,7 @@ function biwenger_activity_player_payload(int $playerId, array $entry, array $ca
             'emblemKind' => 'club'
         ],
         'sourceSummary' => [
-            'recentMatches' => biwenger_recent_matches_from_fitness($fitness, (int)($entry['scoreID'] ?? $entry['scoreId'] ?? $entry['score']['id'] ?? 0))
+            'recentMatches' => []
         ]
     ];
 }
@@ -8466,7 +8482,7 @@ function biwenger_normalize_player(array $entry, array $catalog, string $competi
         ])),
         'sources' => ['Biwenger directo'],
         'sourceSummary' => [
-            'recentMatches' => biwenger_recent_matches_from_fitness($fitness, $scoreSystemId),
+            'recentMatches' => [],
             'biwenger' => [
                 'status' => $status,
                 'statusText' => $statusText,
@@ -8480,30 +8496,6 @@ function biwenger_normalize_player(array $entry, array $catalog, string $competi
             ]
         ]
     ];
-}
-
-function biwenger_recent_matches_from_fitness(array $fitness, int $scoreSystemId = 0): array
-{
-    $values = array_slice(array_values(array_map(static fn($value) => is_numeric($value) ? (int)round((float)$value) : null, $fitness)), -5);
-    $values = array_reverse($values);
-    $scoreSystemId = $scoreSystemId > 0 ? $scoreSystemId : null;
-    $scoreSystem = $scoreSystemId !== null ? biwenger_score_name($scoreSystemId) : null;
-    return array_values(array_map(static function ($points, $index) use ($scoreSystemId, $scoreSystem) {
-        return [
-            'provider' => 'biwenger',
-            'label' => 'Puntos de racha Biwenger',
-            'recentOrder' => $index + 1,
-            'minutes' => null,
-            'played' => null,
-            'goals' => null,
-            'assists' => null,
-            'streakPoints' => $points,
-            'scoreProvenance' => 'biwenger-fitness',
-            'scoreScope' => 'ordinal-unbound',
-            'scoreSystemId' => $scoreSystemId,
-            'scoreSystem' => $scoreSystem
-        ];
-    }, $values, array_keys($values)));
 }
 
 function biwenger_position(int $position): string

@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.7";
-const APP_VERSION_CODE = 65;
+const APP_VERSION = "3.13.8";
+const APP_VERSION_CODE = 66;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -5585,24 +5585,18 @@ const renderScoringBadge = (player, options = {}) => {
 const selectedRecentScore = (match) => {
   const points = match?.points || {};
   const validNumber = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
-  if (match?.scoreProvenance === "official-exact" && validNumber(points.biwenger)) return Number(points.biwenger);
-  if (match?.provider === "biwenger" && match?.scoreProvenance === "biwenger-fitness"
-    && match?.scoreScope === "ordinal-unbound" && validNumber(match.streakPoints)) {
-    const matchId = Number(match.scoreSystemId || 0);
-    const activeId = Number(state.biwenger.scoreId || 0);
-    const matchSystem = normalize(match.scoreSystem || "");
-    const activeSystem = normalize(state.biwenger.scoreName || "");
-    if ((!matchId || !activeId || matchId === activeId)
-      && (!matchSystem || !activeSystem || matchSystem === activeSystem)) return Number(match.streakPoints);
-  }
+  if (match?.scoreProvenance === "official-exact" && match?.scoreScope === "match"
+    && (!match.scoreSystemId || Number(match.scoreSystemId) === Number(state.biwenger.scoreId))
+    && validNumber(points.biwenger)) return Number(points.biwenger);
   const key = state.scoring === "mixed" ? "mixed" : state.scoring;
   if (match?.provider !== "biwenger" && validNumber(points[key])) return Number(points[key]);
   return null;
 };
 
 const recentDotClass = (score, played) => {
+  if (!played) return "dnp";
   if (score === null) return "unknown";
-  if (!played || score === 0) return "zero";
+  if (score === 0) return "zero";
   if (score < 0) return "negative";
   if (score <= 5) return "low";
   if (score <= 9) return "good";
@@ -5630,7 +5624,6 @@ const recentMatchDate = (match) => /^\d{4}-\d{2}-\d{2}/.test(String(match?.date 
 
 const recentMatchKey = (match) => {
   if (!match) return "";
-  if (match.scoreScope === "ordinal-unbound" && match.scoreProvenance === "biwenger-fitness") return `fitness:${match.scoreSystemId || "active"}:${match.recentOrder ?? ""}`;
   if (match.matchKey) return String(match.matchKey);
   const date = recentMatchDate(match);
   const opponent = normalize(match.opponent || "");
@@ -5705,16 +5698,12 @@ const recommendationHistoryMatches = (player) => {
 
 const recentDisplayHistoryMatches = (player) => {
   const summary = player?.sourceSummary || {};
-  const external = Array.isArray(summary.sourceRecentMatches) ? summary.sourceRecentMatches : [];
   const primary = Array.isArray(summary.recentMatches) ? summary.recentMatches : [];
-  if (primary.some((match) => match.scoreScope === "ordinal-unbound" && match.scoreProvenance === "biwenger-fitness")) {
-    return { matches: recentMatchesNewestFirst(primary).slice(0, 5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
-  }
-  const combined = mergeRecentMatchArrays(primary, external);
-  const current = currentSeasonMatches(combined);
-  if (current.length) return { matches: recentMatchesNewestFirst(current).slice(0, 5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
-  const hasSeasonMetadata = [...external, ...primary].some((match) => match?.date || match?.timestamp || match?.seasonId || match?.seasonName || match?.historyScope);
-  return { matches: hasSeasonMetadata ? [] : recentMatchesNewestFirst(combined).slice(0, 5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
+  const context = activeFixtureContext();
+  const season = String(summary.biwengerHistorySeasonId || "");
+  const official = primary.filter((match) => match?.matchKey?.startsWith(`biwenger:${context.exactCompetitionSlug}:`)
+    && (!season || String(match.seasonId) === season) && match.scoreScope === "match");
+  return { matches: recentMatchesNewestFirst(official).slice(0, 5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
 };
 
 const recentFormProfile = (player) => {
@@ -5788,17 +5777,12 @@ const identifiedRecentMatchRows = (matches = []) => {
 const recentMatchDetail = (match, score, played, sourceRecentMatches = []) => {
   if (!match) return { title: "Sin dato", rows: ["No hay puntuacion disponible para este partido."] };
   const rows = [];
-  const fitnessStreak = match.provider === "biwenger" && match.scoreProvenance === "biwenger-fitness" && match.scoreScope === "ordinal-unbound";
   const official = match.scoreProvenance === "official-exact" && score !== null;
-  rows.push(score === null ? "Puntos: sin dato" : fitnessStreak ? `Puntos de racha Biwenger: ${score}` : official ? `Puntos Biwenger: ${score}` : `Puntos estimados (${match.provider || "fuente externa"}): ${score}`);
-  if (fitnessStreak) {
-    rows.push(`Racha Biwenger · ${Number(match.recentOrder || 1)}.º más reciente · ${match.scoreSystem || scoringLabel()}`);
-    rows.push("Biwenger no vincula esta puntuación con un partido concreto");
-    rows.push("Partidos recientes identificados");
-    rows.push(...identifiedRecentMatchRows(sourceRecentMatches));
-  }
-  if (played && !fitnessStreak) {
-    if (matchHasMinutes(match)) rows.push(`${Number(match.minutes)} min jugados`);
+  rows.push(score === null ? `Puntos (${match.scoreSystem || scoringLabel()}): sin dato` : `Puntos (${match.scoreSystem || scoringLabel()}): ${score}`);
+  if (match.round) rows.push(`Jornada: ${match.round}`);
+  if (played) {
+    if (matchHasMinutes(match)) rows.push(`${Number(match.minutes)} min ${match.minutesSource === "derived-regulation" ? "aproximados por reglamento" : "jugados"}`);
+    else rows.push("Minutos: sin dato");
     const minuteIn = match.minuteIn === null || match.minuteIn === undefined || match.minuteIn === "" ? null : Number(match.minuteIn);
     const minuteOut = match.minuteOut === null || match.minuteOut === undefined || match.minuteOut === "" ? null : Number(match.minuteOut);
     if (match.starter === true) {
@@ -5809,16 +5793,14 @@ const recentMatchDetail = (match, score, played, sourceRecentMatches = []) => {
       if (Number.isFinite(minuteIn) && minuteIn > 0) rows.push(`↑ Entró en el ${match.minuteInLabel || minuteIn}'`);
       if (Number.isFinite(minuteOut) && minuteOut > 0) rows.push(`↓ Sustituido en el ${match.minuteOutLabel || minuteOut}'`);
     }
-    if (match.minutesSource === "estimated") rows.push("Minutos de cambio estimados");
-  } else if (!fitnessStreak) {
+    if (match.dismissalMinute) rows.push(`Expulsado en el ${match.dismissalLabel || match.dismissalMinute}'`);
+  } else {
     rows.push(match.played === false ? "No jugó" : "Minutos sin confirmar");
   }
   const goals = match.goals === null || match.goals === undefined || match.goals === "" ? null : Number(match.goals);
-  if (!fitnessStreak) {
-    rows.push(Number.isInteger(goals) && goals >= 0 ? `Goles: ${goals}` : "Goles: sin dato");
-    const assists = match.assists === null || match.assists === undefined || match.assists === "" ? null : Number(match.assists);
-    rows.push(Number.isInteger(assists) && assists >= 0 ? `Asistencias: ${assists}` : "Asistencias: sin dato");
-  }
+  rows.push(Number.isInteger(goals) && goals >= 0 ? `Goles: ${goals}` : "Goles: sin dato");
+  const assists = match.assists === null || match.assists === undefined || match.assists === "" ? null : Number(match.assists);
+  rows.push(Number.isInteger(assists) && assists >= 0 ? `Asistencias: ${assists}` : "Asistencias: sin dato");
   if (match.opponent) rows.push(`Rival: ${match.opponent}`);
   if (match.date) rows.push(`Fecha: ${match.date}`);
   if (official) {
@@ -5831,11 +5813,7 @@ const recentMatchDetail = (match, score, played, sourceRecentMatches = []) => {
     rows.push("Fuente: FutbolFantasy");
   }
   return {
-    title: fitnessStreak && !match.date && !match.opponent
-      ? `Racha Biwenger · ${Number(match.recentOrder || 1)}.º más reciente`
-      : official
-      ? "Partido reciente"
-      : (match.label || `Último partido ${scoringLabel()}`),
+    title: match.opponent ? `Partido contra ${match.opponent}` : "Partido reciente",
     rows
   };
 };
@@ -5846,31 +5824,32 @@ const recentMatchWasPlayed = (match, score) => matchHasMinutes(match)
   ? Number(match.minutes) > 0 : match?.played === true || (score !== null && score !== 0);
 
 const recentMatchNeedsHydration = (match, score) => {
-  if (match?.scoreScope === "ordinal-unbound" && match?.scoreProvenance === "biwenger-fitness") return true;
+  if (match?.provider === "biwenger" && match?.played === false && match?.scoreScope === "match") return false;
   const played = recentMatchWasPlayed(match, score);
   const lacksRole = played && typeof match.starter !== "boolean";
   const lacksSubstitution = played && (match.minutesSource === "estimated"
-    || (match.starter === true && Number(match.minutes) < 85 && !(Number(match.minuteOut) > 0))
+    || (match.starter === true && Number(match.minutes) < 85 && !(Number(match.minuteOut) > 0) && !(Number(match.dismissalMinute) > 0))
     || (match.starter === false && !(Number(match.minuteIn) > 0)));
-  return !matchHasMinutes(match) || match.goals === null || match.goals === undefined || lacksRole || lacksSubstitution;
+  return !matchHasMinutes(match) || match.goals === null || match.goals === undefined || match.assists === null || match.assists === undefined || lacksRole || lacksSubstitution;
 };
 
 const renderRecentFormDots = (player) => {
   const history = recentDisplayHistoryMatches(player);
   const matches = history.matches;
+  const loading = Number(player?.biwengerPlayerId || 0) > 0 && !player?.sourceSummary?.biwengerHistoryLoaded;
   const padded = [...recentMatchesNewestFirst(matches).slice(0, 5), ...Array(Math.max(0, 5 - matches.length)).fill(null)];
   const playerAttrs = `data-recent-player-id="${escapeHtml(player?.id || "")}" data-recent-biwenger-id="${escapeHtml(player?.biwengerPlayerId || "")}" data-recent-player-name="${escapeHtml(player?.name || "")}"`;
   return `
     <span class="recent-form-dots" title="${escapeHtml(`Partidos jugados esta temporada según ${scoringLabel()}`)}">
       ${padded.map((match, index) => {
-        if (!match) return `<span class="recent-dot missing" title="Sin dato" aria-label="Sin dato"></span>`;
+        if (!match) return `<span class="recent-dot ${loading ? "unknown" : "missing"}" title="${loading ? "Cargando partidos" : "Sin dato"}" aria-label="${loading ? "Cargando partidos" : "Sin dato"}" ${loading ? playerAttrs : ""}></span>`;
         const score = selectedRecentScore(match);
         const played = recentMatchWasPlayed(match, score);
         const detail = recentMatchDetail(match, score, played, player.sourceSummary?.sourceRecentMatches || []);
         const label = recentMatchTitle(detail);
         const needsHydration = recentMatchNeedsHydration(match, score)
           && !state.recentDetailsCache[`${recentPlayerKey(player)}:deep`];
-        return `<span class="recent-dot ${recentDotClass(score, played)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" ${playerAttrs} data-recent-match-key="${escapeHtml(recentMatchKey(match))}" data-recent-needs-hydration="${needsHydration ? "true" : "false"}" data-recent-detail="${escapeHtml(encodeURIComponent(JSON.stringify(detail)))}"></span>`;
+        return `<span tabindex="0" role="button" class="recent-dot ${recentDotClass(score, played)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" ${playerAttrs} data-recent-match-key="${escapeHtml(recentMatchKey(match))}" data-recent-needs-hydration="${needsHydration ? "true" : "false"}" data-recent-detail="${escapeHtml(encodeURIComponent(JSON.stringify(detail)))}"></span>`;
       }).join("")}
     </span>
   `;
@@ -7943,22 +7922,20 @@ const deleteActiveLeague = async () => {
 };
 
 const mergeSourceSummaries = (localSummary = {}, sourceSummary = {}) => {
-  const localRecent = Array.isArray(localSummary.recentMatches) ? localSummary.recentMatches : [];
-  const sourceRecent = Array.isArray(sourceSummary.recentMatches) ? sourceSummary.recentMatches : [];
-  const localHasBiwengerRecent = localRecent.some((match) => match?.provider === "biwenger" || Number.isFinite(Number(match?.points?.biwenger)));
+  const exact = (rows) => (Array.isArray(rows) ? rows : []).filter((match) => match?.scoreScope === "match" && match?.matchKey?.startsWith("biwenger:"));
+  const localRecent = exact(localSummary.recentMatches);
+  const sourceRecent = exact(sourceSummary.recentMatches);
   return {
     ...localSummary,
     ...sourceSummary,
     biwenger: { ...(localSummary.biwenger || {}), ...(sourceSummary.biwenger || {}) },
     fantasy: { ...(localSummary.fantasy || {}), ...(sourceSummary.fantasy || {}) },
     identity: sourceSummary.identity || localSummary.identity || null,
-    biwengerRecentMatches: localRecent.some((match) => match?.provider === "biwenger")
-      ? localRecent
-      : (Array.isArray(localSummary.biwengerRecentMatches) ? localSummary.biwengerRecentMatches : []),
-    sourceRecentMatches: sourceRecent.length
-      ? sourceRecent
-      : (Array.isArray(localSummary.sourceRecentMatches) ? localSummary.sourceRecentMatches : []),
-    recentMatches: localHasBiwengerRecent ? localRecent : (sourceRecent.length ? sourceRecent : localRecent)
+    biwengerRecentMatches: sourceRecent.length ? sourceRecent : localRecent,
+    sourceRecentMatches: Array.isArray(sourceSummary.sourceRecentMatches) ? sourceSummary.sourceRecentMatches : (localSummary.sourceRecentMatches || []),
+    recentMatches: sourceRecent.length ? sourceRecent : localRecent,
+    biwengerHistoryLoaded: Boolean(sourceSummary.biwengerHistoryLoaded || localSummary.biwengerHistoryLoaded),
+    biwengerHistorySeasonId: sourceSummary.biwengerHistorySeasonId || localSummary.biwengerHistorySeasonId || null
   };
 };
 
@@ -10042,7 +10019,75 @@ const openRecentFormPopover = (button) => {
   hydrateRecentFormButton(button);
 };
 
-const recentPlayerKey = (player) => `${state.competition}:${player?.biwengerPlayerId || player?.id || normalize(player?.name || "")}`;
+const recentPlayerKey = (player) => {
+  const context = activeFixtureContext();
+  return [state.activeLeagueId, context.biwengerLeagueId, context.exactCompetitionSlug,
+    player?.sourceSummary?.biwengerHistorySeasonId || "selected", state.biwenger.scoreId, player?.biwengerPlayerId || player?.id || normalize(player?.name || ""),
+    "biwenger-player-history-v1"].join(":");
+};
+
+const recentHistoryQueue = [];
+const recentHistoryQueued = new Set();
+let recentHistoryRunning = 0;
+const preloadRecentHistory = (player) => {
+  if (!player?.biwengerPlayerId || !canUseApi() || !state.biwenger.connected || player.sourceSummary?.biwengerHistoryLoaded) return;
+  const key = recentPlayerKey(player);
+  const cached = state.recentDetailsCache[key];
+  if (cached?.expiresAt > Date.now() && cached.payload) {
+    applyRecentDetailsToPlayer(player, cached.payload);
+    rerenderRecentFormForPlayer(player);
+    return;
+  }
+  if (recentHistoryQueued.has(key) || cached?.pending || cached?.retryAt > Date.now()) return;
+  recentHistoryQueued.add(key);
+  recentHistoryQueue.push({ player, key, generation: state.biwenger.contextGeneration });
+  void drainRecentHistoryQueue();
+};
+
+const drainRecentHistoryQueue = async () => {
+  while (recentHistoryRunning < 3 && recentHistoryQueue.length) {
+    const task = recentHistoryQueue.shift();
+    recentHistoryRunning++;
+    void (async () => {
+      try {
+        const response = await apiFetch("/api/player/recent-details", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ competition: activeFixtureContext().exactCompetitionSlug,
+            seasonId: "", scoreId: state.biwenger.scoreId,
+            player: { biwengerPlayerId: task.player.biwengerPlayerId, name: task.player.name } })
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok || payload.provider !== "biwenger") throw new Error(payload.error || "Historial oficial no disponible");
+        if (task.generation !== state.biwenger.contextGeneration || task.key !== recentPlayerKey(task.player)) return;
+        state.recentDetailsCache[task.key] = { payload, expiresAt: Date.now() + 600000 };
+        applyRecentDetailsToPlayer(task.player, payload);
+        rerenderRecentFormForPlayer(task.player);
+      } catch (error) {
+        state.recentDetailsCache[task.key] = { retryAt: Date.now() + 45000, error: error.message };
+      } finally {
+        recentHistoryQueued.delete(task.key);
+        recentHistoryRunning--;
+        void drainRecentHistoryQueue();
+      }
+    })();
+  }
+};
+
+const scanVisibleRecentHistory = () => {
+  const seen = new Set();
+  for (const dot of document.querySelectorAll(".recent-dot[data-recent-biwenger-id]")) {
+    const rect = dot.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) continue;
+    const player = findRecentPlayer(dot);
+    if (player && !seen.has(player.biwengerPlayerId)) { seen.add(player.biwengerPlayerId); preloadRecentHistory(player); }
+  }
+};
+let recentScanScheduled = false;
+const scheduleRecentHistoryScan = () => {
+  if (recentScanScheduled) return;
+  recentScanScheduled = true;
+  requestAnimationFrame(() => { recentScanScheduled = false; scanVisibleRecentHistory(); });
+};
 
 const findRecentPlayer = (button) => {
   const clientId = button.dataset.recentPlayerId || "";
@@ -10116,12 +10161,10 @@ const replaceRecentPlayer = (target, recentMatches, payload = {}) => ({
 });
 
 const applyRecentDetailsToPlayer = (player, payload) => {
-  const current = player.sourceSummary?.recentMatches || [];
-  const hasOrdinalFitness = current.some((match) => match.scoreScope === "ordinal-unbound" && match.scoreProvenance === "biwenger-fitness");
-  const recentMatches = hasOrdinalFitness ? current : mergeRecentMatchArrays(current, payload.recentMatches || []);
-  const sourceRecentMatches = mergeRecentMatchArrays(player.sourceSummary?.sourceRecentMatches || [], payload.recentMatches || []);
+  const recentMatches = (payload.recentMatches || []).filter((match) => match?.scoreScope === "match" && match?.matchKey?.startsWith("biwenger:"));
+  const sourceRecentMatches = player.sourceSummary?.sourceRecentMatches || [];
   const matchesPlayer = (item) => item.id === player.id || (player.biwengerPlayerId && Number(item.biwengerPlayerId || 0) === Number(player.biwengerPlayerId));
-  const replace = (item) => ({ ...replaceRecentPlayer(item, recentMatches, payload), sourceSummary: { ...replaceRecentPlayer(item, recentMatches, payload).sourceSummary, sourceRecentMatches } });
+  const replace = (item) => ({ ...replaceRecentPlayer(item, recentMatches, payload), sourceSummary: { ...replaceRecentPlayer(item, recentMatches, payload).sourceSummary, sourceRecentMatches, biwengerHistoryLoaded: true, biwengerHistorySeasonId: payload.seasonId } });
   state.players = state.players.map((item) => matchesPlayer(item) ? replace(item) : item);
   state.teamPlayers = state.teamPlayers.map((item) => matchesPlayer(item) ? replace(item) : item);
   if (state.rivalTeam?.players) {
@@ -10134,6 +10177,8 @@ const applyRecentDetailsToPlayer = (player, payload) => {
     ...(player.sourceSummary || {}),
     recentMatches,
     sourceRecentMatches,
+    biwengerHistoryLoaded: true,
+    biwengerHistorySeasonId: payload.seasonId,
     apiFootball: payload.apiFootball || player.sourceSummary?.apiFootball || null,
     feeberse: payload.feeberse || player.sourceSummary?.feeberse || null
   };
@@ -10241,66 +10286,9 @@ const rerenderRecentFormForPlayer = (player, selectedMatchKey = "") => {
 };
 
 const hydrateRecentFormButton = async (button) => {
-  if (button.dataset.recentNeedsHydration !== "true" || button.dataset.recentHydrated === "true" || button.dataset.recentLoading === "true") return;
   const player = findRecentPlayer(button);
-  if (!player) return;
-  const key = `${recentPlayerKey(player)}:deep`;
-  const matchKey = button.dataset.recentMatchKey || "";
-  button.dataset.recentLoading = "true";
-  try {
-    let payload = state.recentDetailsCache[key];
-    if (payload && payload.ok === false) throw new Error(payload.error || "Fuentes de minutos no disponibles");
-    if (payload?.pending) payload = await payload.pending;
-    if (!payload) {
-      const pending = (async () => {
-      const response = await apiFetch("/api/player/recent-details", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          competition: state.competition,
-          includeSubstitutions: true,
-          player: {
-            id: player.id,
-            biwengerPlayerId: player.biwengerPlayerId,
-            name: player.name,
-            team: player.team,
-            clubTeam: player.clubTeam,
-            nationalTeam: player.nationalTeam,
-            position: player.position
-          }
-        })
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.ok) throw new Error(result.error || "Las fuentes de minutos no han devuelto datos");
-      return result;
-      })();
-      state.recentDetailsCache[key] = { pending };
-      payload = await pending;
-      state.recentDetailsCache[key] = payload;
-    }
-    const merged = applyRecentDetailsToPlayer(player, payload);
-    button.dataset.recentHydrated = "true";
-    const current = recentMatchesNewestFirst(merged).find((match) => recentMatchKey(match) === matchKey);
-    if (current) updateRecentButtonDetail(button, current);
-    rerenderRecentFormForPlayer(player, matchKey);
-  } catch (error) {
-    state.recentDetailsCache[key] = { ok: false, error: error.message || "Fuentes de minutos no disponibles" };
-    button.dataset.recentHydrated = "true";
-    let currentDetail = null;
-    try {
-      currentDetail = JSON.parse(decodeURIComponent(button.dataset.recentDetail || "%7B%7D"));
-    } catch (parseError) {
-      currentDetail = { title: "Detalle", rows: [] };
-    }
-    currentDetail.rows = [...(currentDetail.rows || []).filter((row) => !row.startsWith("No se ha localizado todavía")), "No se ha localizado todavía el detalle de partidos recientes."];
-    button.dataset.recentDetail = encodeURIComponent(JSON.stringify(currentDetail));
-    button.title = recentMatchTitle(currentDetail);
-    if (!qs("#recent-form-popover")?.hidden) openRecentFormPopover(button);
-  } finally {
-    button.dataset.recentLoading = "false";
-  }
+  if (player && !player.sourceSummary?.biwengerHistoryLoaded) preloadRecentHistory(player);
 };
-
 const handleRecentDotInteraction = (event) => {
   const button = event.target.closest?.(".recent-dot");
   if (!button) {
@@ -10309,13 +10297,13 @@ const handleRecentDotInteraction = (event) => {
   }
   event.preventDefault();
   event.stopPropagation();
-  if (button.classList.contains("missing") && !button.dataset.recentDetail) return;
+  if (!button.dataset.recentDetail) { const player = findRecentPlayer(button); if (player) preloadRecentHistory(player); return; }
   openRecentFormPopover(button);
 };
 
 const handleRecentDotHover = (event) => {
   const button = event.target.closest?.(".recent-dot");
-  if (!button || button.classList.contains("missing")) return;
+  if (!button || !button.dataset.recentDetail) return;
   openRecentFormPopover(button);
 };
 
@@ -14871,7 +14859,14 @@ const initEvents = () => {
     toggleTrackedTeamSourceFilter(button.dataset.teamTrackingSource || "");
   }, true);
   document.addEventListener("mouseover", handleRecentDotHover, true);
+  new MutationObserver(scheduleRecentHistoryScan).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener("scroll", scheduleRecentHistoryScan, true);
+  scheduleRecentHistoryScan();
   document.addEventListener("keydown", (event) => {
+    if ((event.key === "Enter" || event.key === " ") && event.target.matches?.(".recent-dot[data-recent-match-key]")) {
+      handleRecentDotInteraction(event);
+      return;
+    }
     if (event.key === "Escape") {
       closeMobileSidebar();
       closeRecentFormPopover();

@@ -803,10 +803,12 @@ if (!activeRoundGuard.blocksBid || !activeRoundGuard.deadline.active || activeRo
 }
 
 state.leagueFixtures = { seasonId: 2026, seasonName: "2026/27", events: [] };
+state.competition = "la-liga";
 const currentSeasonHistory = recentDisplayHistoryMatches({ sourceSummary: {
+  biwengerHistorySeasonId: "2027",
   recentMatches: [
-    { provider: "biwenger", points: { biwenger: 8 } },
-    { provider: "biwenger", points: { biwenger: 6 } }
+    { provider: "biwenger", matchKey: "biwenger:la-liga:2027:1", scoreScope: "match", seasonId: "2027", timestamp: 1787241600, date: "2026-08-20", played: true, points: { biwenger: 8 } },
+    { provider: "biwenger", matchKey: "biwenger:la-liga:2026:2", scoreScope: "match", seasonId: "2026", timestamp: 1748102400, date: "2025-05-24", played: true, points: { biwenger: 6 } }
   ],
   sourceRecentMatches: [
     { date: "2026-08-20", seasonName: "2026/27", historyScope: "current-season", minutes: 90, played: true },
@@ -1144,25 +1146,14 @@ for (const goals of [0, 1, 2, null]) {
 }
 if (!recentMatchNeedsHydration({ provider: "biwenger", points: { biwenger: 0 }, goals: null }, 0)) throw new Error("Zero-point match must request missing goals once");
 const noOfficial = { provider: "biwenger", points: { biwenger: null }, goals: null };
-const exactZero = { provider: "biwenger", scoreProvenance: "official-exact", points: { biwenger: 0 }, goals: 0 };
+const exactZero = { provider: "biwenger", scoreScope: "match", scoreProvenance: "official-exact", points: { biwenger: 0 }, goals: 0 };
 const savedBiwengerScoring = { scoreId: state.biwenger.scoreId, scoreName: state.biwenger.scoreName };
 state.biwenger.scoreId = 2;
 state.biwenger.scoreName = "SofaScore";
-const fitnessNull = { provider: "biwenger", scoreProvenance: "biwenger-fitness", scoreScope: "ordinal-unbound", scoreSystemId: 2, scoreSystem: "SofaScore", streakPoints: null };
-const fitnessZero = { ...fitnessNull, streakPoints: 0 };
-const fitnessPositive = { ...fitnessNull, streakPoints: 8 };
-const fitnessMismatch = { ...fitnessPositive, scoreSystemId: 1, scoreSystem: "Diario AS" };
 if (selectedRecentScore(noOfficial) !== null || selectedRecentScore(exactZero) !== 0
-  || selectedRecentScore(fitnessNull) !== null || selectedRecentScore(fitnessZero) !== 0
-  || selectedRecentScore(fitnessPositive) !== 8 || selectedRecentScore(fitnessMismatch) !== null
-  || !recentMatchDetail(noOfficial, null, false).rows.includes("Puntos: sin dato")
-  || !recentMatchDetail(noOfficial, null, false).rows.includes("Goles: sin dato")
-  || !recentMatchDetail(fitnessZero, 0, false).rows.includes("Puntos de racha Biwenger: 0")
-  || !recentMatchDetail(fitnessZero, 0, false).rows.includes("Biwenger no vincula esta puntuación con un partido concreto")
-  || !recentMatchDetail(fitnessZero, 0, false).title.includes("Racha Biwenger")
-  || recentMatchDetail(fitnessZero, 0, false).rows.some((row) => row.startsWith("Goles:"))
-  || !recentMatchDetail(exactZero, 0, true).rows.includes("Puntos Biwenger: 0")
-  || !recentMatchDetail(exactZero, 0, true).rows.includes("Goles: 0")) throw new Error("Recent details must distinguish real zero from missing points and goals");
+  || !recentMatchDetail(noOfficial, null, false).rows.some((row) => row.includes("sin dato"))
+  || !recentMatchDetail(exactZero, 0, true).rows.some((row) => row.includes(": 0"))
+  || !recentMatchDetail(exactZero, 0, true).rows.includes("Goles: 0")) throw new Error("Official zero and missing scores must differ");
 state.biwenger.scoreId = savedBiwengerScoring.scoreId;
 state.biwenger.scoreName = savedBiwengerScoring.scoreName;
 const recentToday = new Date().toISOString().slice(0, 10);
@@ -1171,38 +1162,44 @@ const orderedRecent = recentMatchesNewestFirst([
   { id: "new", timestamp: 1700002000000 },
   { id: "postponed", timestamp: 1700003000, status: "postponed" }
 ]);
-if (orderedRecent.map((match) => match.id).join(",") !== "new,old") throw new Error("Recent seconds and milliseconds must sort newest first and omit postponed matches");
-const sameRawId = mergeRecentMatchArrays(
-  [{ provider: "biwenger", eventId: 7, date: recentToday, opponent: "Betis", goals: null, scoreProvenance: "official-exact", points: { biwenger: 0 } }],
-  [{ provider: "api-football", eventId: 7, date: recentToday, opponent: "Sevilla", goals: 1, points: { mixed: 4 } }]
-);
-if (sameRawId.length !== 2) throw new Error("Raw event IDs from different providers must not merge unrelated matches");
-const matchedRecent = mergeRecentMatchArrays(
-  [{ provider: "biwenger", eventId: 7, date: recentToday, opponent: "Betis", goals: null, scoreProvenance: "official-exact", points: { biwenger: 0 } }],
-  [{ provider: "api-football", eventId: 9, date: recentToday, opponent: "Betis", goals: 2, points: { mixed: 4 } }]
-);
-if (matchedRecent.length !== 1 || matchedRecent[0].goals !== 2 || matchedRecent[0].points.biwenger !== 0
-  || recentMatchKey(matchedRecent[0]) !== recentMatchKey({ provider: "biwenger", eventId: 7, date: recentToday, opponent: "Betis" })) throw new Error("Hydration must add reliable goals without losing exact zero or changing the selected match key");
-const streakHtml = renderRecentFormDots({ id: "streak", name: "Jugador", sourceSummary: { recentMatches: [
-  { provider: "api-football", date: recentToday, timestamp: Math.floor(Date.now() / 1000) - 900, opponent: "Betis", goals: 0, points: { mixed: 5 } },
-  { provider: "api-football", date: recentToday, timestamp: Date.now(), opponent: "Sevilla", goals: 1, points: { mixed: 7 } }
-] } });
-if (!streakHtml.includes('recent-form-dots') || streakHtml.indexOf('Sevilla') > streakHtml.indexOf('Betis')
+if (orderedRecent.map((match) => match.id).join(",") !== "new,old") throw new Error("Seconds and milliseconds must sort newest first, omitting postponed");
+const officialMatch = (id, seconds, score, goals = 0, assists = 0) => ({
+  provider: "biwenger", matchKey: "biwenger:la-liga:2027:" + id, scoreScope: "match",
+  scoreProvenance: score === null ? "official-pending" : "official-exact", seasonId: "2027",
+  timestamp: seconds, date: recentToday, opponent: "Equipo " + id, played: true,
+  points: { biwenger: score }, goals, assists, minutes: 90, starter: true
+});
+const twoPlayed = [officialMatch(1, 1700000000, 0), officialMatch(2, 1700002000000, -2)];
+const streakHtml = renderRecentFormDots({ id: "streak", name: "Jugador", sourceSummary: {
+  biwengerHistorySeasonId: "2027", biwengerHistoryLoaded: true, recentMatches: twoPlayed
+} });
+if (streakHtml.indexOf('biwenger:la-liga:2027:2') > streakHtml.indexOf('biwenger:la-liga:2027:1')
   || (streakHtml.match(/recent-dot missing/g) || []).length !== 3
-  || streakHtml.indexOf('recent-dot missing') < streakHtml.indexOf('Sevilla')) throw new Error("Every streak group must place the newest match left and placeholders right");
-const fitnessHtml = renderRecentFormDots({ id: "fitness", name: "Fitness", sourceSummary: { recentMatches: [
-  { ...fitnessNull, recentOrder: 1 }, { ...fitnessZero, recentOrder: 2 }, { ...fitnessPositive, recentOrder: 3 }
-] } });
-if (!["fitness:2:1", "fitness:2:2", "fitness:2:3"].every((key, index, keys) => fitnessHtml.indexOf('data-recent-match-key="' + key + '"') < (index < keys.length - 1 ? fitnessHtml.indexOf('data-recent-match-key="' + keys[index + 1] + '"') : fitnessHtml.indexOf("recent-dot missing")))
-  || (fitnessHtml.match(/recent-dot missing/g) || []).length !== 2) throw new Error("Fitness streak must render newest to oldest, left to right, with placeholders on the right");
-const mergedFitness = mergeSourceSummaries({ recentMatches: [{ ...fitnessPositive, recentOrder: 1 }] }, { recentMatches: [{ provider: "api-football", date: recentToday, opponent: "Betis", goals: 0 }] });
-if (!mergedFitness.recentMatches.some((match) => match.scoreProvenance === "biwenger-fitness" && match.streakPoints === 8)
-  || !mergedFitness.sourceRecentMatches.some((match) => match.opponent === "Betis")) throw new Error("External recent matches must preserve the independent Biwenger fitness streak");
+  || streakHtml.indexOf('recent-dot missing') < streakHtml.indexOf('biwenger:la-liga:2027:1')) throw new Error("Newest played match must be leftmost; holes only at the right");
+const legacyFitness = { provider: "biwenger", scoreProvenance: "biwenger-fitness", scoreScope: "ordinal-unbound", streakPoints: 8 };
+const mergedLegacy = mergeSourceSummaries({ recentMatches: [legacyFitness] }, { recentMatches: [officialMatch(3, 1700003000, 7)] });
+if (mergedLegacy.recentMatches.length !== 1 || mergedLegacy.recentMatches[0].matchKey !== 'biwenger:la-liga:2027:3') throw new Error("Legacy fitness must not reappear after merge");
+const emptyLegacyHtml = renderRecentFormDots({ id: "legacy", biwengerPlayerId: 123, name: "Legacy", sourceSummary: { recentMatches: [legacyFitness] } });
+if (emptyLegacyHtml.includes('data-recent-match-key') || (emptyLegacyHtml.match(/recent-dot unknown/g) || []).length !== 5) throw new Error("Unloaded official reports must stay neutral");
+const fivePlayed = [officialMatch(1, 1700000000, 0), officialMatch(2, 1700001000, -1), officialMatch(3, 1700002000, null), officialMatch(4, 1700003000, 7), officialMatch(5, 1700004000, 8)];
+const fiveHtml = renderRecentFormDots({ id: "five", name: "Five", sourceSummary: { biwengerHistorySeasonId: "2027", biwengerHistoryLoaded: true, recentMatches: fivePlayed } });
+if ((fiveHtml.match(/data-recent-match-key/g) || []).length !== 5 || fiveHtml.includes('recent-dot missing')
+  || fiveHtml.indexOf('biwenger:la-liga:2027:5') > fiveHtml.indexOf('biwenger:la-liga:2027:4')) throw new Error("Five exact matches must render in descending timestamp order");
+const dnp = { ...officialMatch(8, 1700001000, null, null, null), played: false, minutes: null, starter: null };
+const withDnp = renderRecentFormDots({ id: "dnp", name: "DNP", sourceSummary: {
+  biwengerHistorySeasonId: "2027", biwengerHistoryLoaded: true,
+  recentMatches: [officialMatch(1, 1700000000, 5), dnp, officialMatch(9, 1700002000, 8)]
+} });
+if (!(withDnp.indexOf('biwenger:la-liga:2027:9') < withDnp.indexOf('biwenger:la-liga:2027:8')
+  && withDnp.indexOf('biwenger:la-liga:2027:8') < withDnp.indexOf('biwenger:la-liga:2027:1')
+  && withDnp.indexOf('biwenger:la-liga:2027:1') < withDnp.indexOf('recent-dot missing'))
+  || (withDnp.match(/recent-dot missing/g) || []).length !== 2
+  || !withDnp.includes('recent-dot dnp') || !withDnp.includes('No jugó')) throw new Error("Identified DNP must remain gray in its chronological slot");
+const roleDetail = recentMatchDetail({ ...officialMatch(6, 1700005000, 5, 2, 1), minutes: 29, starter: false, minuteIn: 61, minuteInLabel: "61", minuteOut: null }, 5, true);
+if (!roleDetail.rows.some((row) => row.includes("Entró en el 61")) || !roleDetail.rows.includes("Goles: 2") || !roleDetail.rows.includes("Asistencias: 1")) throw new Error("Popover must retain entry and exact contributions");
+const dismissalDetail = recentMatchDetail({ ...officialMatch(7, 1700006000, 0), minutes: 49, dismissalMinute: 49, dismissalLabel: "45+4", minuteOut: null }, 0, true);
+if (!dismissalDetail.rows.some((row) => row.includes("Expulsado en el 45+4")) || dismissalDetail.rows.some((row) => row.includes("Sustituido"))) throw new Error("Dismissal must not appear as a substitution");
 const identified = { provider: "api-football", date: recentToday, opponent: "Betis", minutes: 90, starter: true, goals: 2, assists: 1 };
-const identifiedDetail = recentMatchDetail({ ...fitnessZero, recentOrder: 1 }, 0, false, [identified]);
-if (!identifiedDetail.rows.some((row) => row.includes("Partidos recientes identificados"))
-  || !identifiedDetail.rows.some((row) => row.includes("Betis") && row.includes("Goles: 2 · Asistencias: 1"))
-  || identifiedDetail.rows.some((row) => row.includes("Rival: Betis"))) throw new Error("Identified matches must stay separate from ordinal fitness");
 for (const count of [0, 1, 2]) {
   const row = renderRecentPopoverRow("Betis · Goles: " + count + " · Asistencias: " + count);
   if (!row.includes(count + " goles") || !row.includes(count + " asistencias")

@@ -60,19 +60,23 @@
     const squad = unique(input.squad).slice(0,40).map(player);
     for(const entry of input.news || []) {
       const p=[...market,...squad].find(p=>p.id===String(entry.biwengerPlayerId)||p.name===entry.name);if(!p)continue;
-      for(const article of (entry.articles || []).slice(0,2)){
+      const articles=[...(entry.articles || [])].sort((a,b)=>(Number(b.sourceKind==='comment_reply')-Number(a.sourceKind==='comment_reply'))||String(b.publishedAt).localeCompare(String(a.publishedAt)));
+      for(const article of articles.slice(0,2)){
         if(evidence.filter(e=>e.type==='news'&&e.playerId===p.id).length>=2)break;
         const date=article.publishedAt;const age=Date.now()-Date.parse(date);if(!date||age< -60000||age>604800000||!Number.isFinite(age))continue;
         let url;try{url=new URL(article.link);if(url.protocol!=='https:'||url.username||url.password)continue;}catch(_){continue;}
         if(evidence.some(e=>e.playerId===p.id&&e.url===url.href))continue;
-        const id=`news:${p.id}:${p.evidenceIds.length}`;p.evidenceIds.push(id);evidence.push({id,type:'news',playerId:p.id,title:text(article.title,240),source:text(article.source || url.hostname,100),url:url.href,publishedAt:date,fetchedAt:input.newsFetchedAt || '',value:''});
+        const hosts={'www.futbolfantasy.com':'FutbolFantasy','futbolfantasy.com':'FutbolFantasy','www.jornadaperfecta.com':'Jornada Perfecta','jornadaperfecta.com':'Jornada Perfecta','biwenger.as.com':'Biwenger','www.biwenger.com':'Biwenger','biwenger.com':'Biwenger'};
+        const verified=article.verifiedAt&&hosts[url.hostname]&&url.hostname===article.sourceHost;
+        const id=`news:${p.id}:${p.evidenceIds.length}`;p.evidenceIds.push(id);evidence.push({id,type:'news',playerId:p.id,title:text(article.title,240),source:verified?hosts[url.hostname]:'Enlace deportivo sin verificación del asesor',sourceHost:url.hostname,url:url.href,publishedAt:date,fetchedAt:article.verifiedAt || input.newsFetchedAt || '',sourceKind:verified&&['news','opinion','comment_reply'].includes(article.sourceKind)?article.sourceKind:'unverified',platform:verified?text(article.platform,30):'unknown',recommendationScope:verified?text(article.recommendationScope,30):'none',authorName:verified?text(article.authorName,100):'',authorRole:verified?text(article.authorRole,50):'unverified',authorVerification:verified?text(article.authorVerification,70):'unknown',parentId:verified?text(article.parentId,50):'',commentId:verified?text(article.commentId,50):'',value:text(article.excerpt,800)});
       }
     }
     const finance = {balance:input.finance.balance === null ? null : Number(input.finance.balance),maximumBid:money(input.finance.maximumBid),committedBids:money(input.finance.bidTotal),availableBudget:money(input.budget),updatedAt:text(input.finance.updatedAt,40)};
-    const context={leagueId:text(input.leagueId,64),competition:text(input.competition,40),scoring:text(input.scoring,40),asOf:new Date().toISOString(),profile,horizonRounds,finance,market,squad,rivals:input.rivals || [],myStanding:input.myStanding || null,evidence,coverage:{market:market.length > 0,squad:squad.length > 0,rivalsLoaded:(input.rivals || []).length,rivalsTotal:input.rivalsTotal || 0,warnings:[...(input.warnings || []),evidence.some(e=>e.type==='news')?'Sólo se citan noticias fechadas de los últimos 7 días.':'Sin noticias fechadas recientes disponibles.','Mercado: máximo 25 candidatos. Plantilla: máximo 40 jugadores; racha/calendario detallados de 40 perfiles prioritarios.']}};
+    const context={leagueId:text(input.leagueId,64),competition:text(input.competition,40),scoring:text(input.scoring,40),asOf:new Date().toISOString(),profile,horizonRounds,finance,market,squad,rivals:input.rivals || [],myStanding:input.myStanding || null,evidence,coverage:{market:market.length > 0,squad:squad.length > 0,rivalsLoaded:(input.rivals || []).length,rivalsTotal:input.rivalsTotal || 0,sources:input.sourceCoverage || null,warnings:[...(input.warnings || []),evidence.some(e=>e.type==='news')?'Sólo se citan noticias/respuestas fechadas de los últimos 7 días.':'Sin noticias ni respuestas fechadas recientes disponibles.','Mercado: máximo 25 candidatos. Plantilla: máximo 40 jugadores; racha/calendario detallados de 40 perfiles prioritarios.']}};
     const bytes=()=>new TextEncoder().encode(JSON.stringify(context)).length;
-    let trimmed=false;while((bytes()>96000||evidence.length>240)&&evidence.some(e=>e.type!=='health')){const index=evidence.findLastIndex(e=>e.type!=='health');const [removed]=evidence.splice(index,1);for(const p of[...market,...squad])p.evidenceIds=p.evidenceIds.filter(id=>id!==removed.id);trimmed=true;}
-    if(trimmed)context.coverage.warnings.push('Se recortaron evidencias secundarias por el límite de transporte; se conserva el estado disponible de todos los jugadores.');return context;
+    let trimmed=false;while((bytes()>94000||evidence.length>240)&&evidence.some(e=>e.type!=='health')){const index=evidence.findLastIndex(e=>e.type!=='health');const [removed]=evidence.splice(index,1);for(const p of[...market,...squad])p.evidenceIds=p.evidenceIds.filter(id=>id!==removed.id);trimmed=true;}
+    if(trimmed)context.coverage.warnings.push('Se recortaron evidencias secundarias por el límite de transporte; se conserva el estado disponible de todos los jugadores.');
+    context.coverage.commentsUsed=new Set(evidence.filter(e=>e.sourceKind==='comment_reply').map(e=>e.url)).size;return context;
   }
   function mount(adapter) {
     const host = document.getElementById('market-ai-advisor'); if (!host) return;
@@ -80,7 +84,7 @@
     const el = name => host.querySelector(`[data-ai="${name}"]`);
     const errors={advisor_not_enabled:'Esta cuenta no tiene habilitado el asesor.',worker_not_paired:'Empareja primero tu PC.',worker_auth:'Se ha revocado la conexión del PC.',job_pending:'Ya hay un análisis pendiente.',advisor_rate_limit:'Has alcanzado el límite de análisis. Inténtalo más tarde.',relay_busy:'El asesor está ocupado. Inténtalo más tarde.',expired:'El PC no completó el análisis a tiempo.',cli_failed:'Codex no pudo completar el análisis. Revisa el agente del PC.',cli_timeout:'El análisis del PC agotó el tiempo disponible.',invalid_output:'La respuesta no superó las comprobaciones. Vuelve a analizar.',invalid_budget:'La respuesta propuso importes incompatibles con tu presupuesto.',login_required:'Inicia sesión en Codex con ChatGPT en tu PC.',invalid_pair_code:'El código ya caducó o se utilizó.',pair_cooldown:'Espera unos segundos antes de generar otro código.',pair_rate_limit:'Demasiados intentos de emparejamiento. Espera unos minutos.',job_not_found:'El análisis ha caducado. Solicita uno nuevo.'};
     const message = v => { el('status').textContent = errors[v] || v; };
-    const cacheKey=()=>`fantasy-market-scout.market-ai.v1.${scope}`;
+    const cacheKey=()=>`fantasy-market-scout.market-ai.v2.${scope}`;
     const request = async (path, body, signal) => {
       const r = await adapter.fetch(`/api/market-advisor${path}`, body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal} : {signal});
       const data = await r.json(); if (!r.ok) throw new Error(data.error || 'No se pudo completar la solicitud'); return data;
@@ -91,17 +95,20 @@
       const add=(tag,t)=>{const n=document.createElement(tag);n.textContent=t;container.append(n);};
       add('strong','Plan IA · '+new Date(value.generatedAt || Date.now()).toLocaleString('es-ES')); add('p',safe.strategy.summary);
       add('small',`Cobertura: ${context.market.length} candidatos · ${context.squad.length} propios · ${context.coverage.rivalsLoaded}/${context.coverage.rivalsTotal} plantillas rivales.`);
+      if(context.coverage.sources){const c=context.coverage.sources;add('small',`Comentarios JP: ${c.threadsRead || 0} hilos y ${c.repliesRead || 0} respuestas leídos · ${c.verified || 0} con señal de autoría · ${c.unverified || 0} sin identidad verificada · ${context.coverage.commentsUsed || 0} respuestas incluidas.`);}
       safe.strategy.priorities.forEach(v=>add('p','• '+v));
       const labels={buy:'Pujar por',sell:'Vender',hold:'Conservar',avoid:'Evitar',wait:'Esperar'};
       const nominees=safe.actions.filter(a=>a.playerId).sort((a,b)=>a.priority-b.priority).slice(0,3).map(a=>`${labels[a.type]} ${[...context.market,...context.squad].find(p=>p.id===a.playerId)?.name || ''}`);
       if(nominees.length)add('p',nominees.join(' · '));
       const confidence={low:'baja',medium:'media',high:'alta'};
+      const cite=e=>{try{const u=new URL(e.url);if(u.protocol!=='https:')return;const a=document.createElement('a');a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';const kind={news:'Noticia deportiva',opinion:'Opinión editorial',comment_reply:'Consulta y respuesta',unverified:'Enlace no verificado'}[e.sourceKind]||'Fuente';const identity=e.sourceKind==='comment_reply'?(e.authorRole==='publicly_attributed'?` · atribuida públicamente a ${e.authorName}; identidad no verificada`:e.authorRole==='unverified'?' · identidad no verificada':' · autoría identificada') : '';a.textContent=`${kind}: ${e.title} · ${e.source} · ${new Date(e.publishedAt).toLocaleDateString('es-ES')}${identity}`;container.append(a);}catch(_){} };
       safe.actions.forEach(a=>{
         add('p',`${labels[a.type]} ${[...context.market,...context.squad].find(p=>p.id===a.playerId)?.name || ''} · prioridad ${a.priority} · confianza ${confidence[a.confidence]}${a.amount!==null?' · puja recomendada '+a.amount.toLocaleString('es-ES')+' €':''}${a.maximumAmount !== null ? ' · tope '+a.maximumAmount.toLocaleString('es-ES')+' €' : ''}: ${a.reason}`);
         a.prerequisites.forEach(v=>add('small',`Condición: ${v}`));
         if(a.type==='sell')add('small','Venta candidata: confirma una oferta y su precio, y mantén cobertura deportiva. El ingreso no se suma al presupuesto hasta completar la venta.');
+        a.evidenceIds.map(id=>context.evidence.find(e=>e.id===id)).filter(e=>e?.type==='news').forEach(cite);
       });
-      for(const e of context.evidence.filter(e=>e.type==='news')) {try{const u=new URL(e.url);if(u.protocol!=='https:')continue;const a=document.createElement('a');a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';a.textContent=`${e.title} · ${e.source} · ${new Date(e.publishedAt).toLocaleDateString('es-ES')}`;container.append(a);}catch(_){} }
+      const cited=new Set(safe.actions.flatMap(a=>a.evidenceIds));for(const e of context.evidence.filter(e=>e.type==='news'&&!cited.has(e.id)))cite(e);
       [...safe.risks,...safe.limitations,...context.coverage.warnings].forEach(v=>add('small',v));
       result=safe;resultExpiry=(Date.parse(value.generatedAt)||Date.now())+900000;
     }

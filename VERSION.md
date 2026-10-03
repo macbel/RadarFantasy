@@ -1,3 +1,12 @@
+# Versión 3.13.10
+
+Fecha de publicación: 2026-10-03
+
+- El asesor prioriza fuentes verificadas de FútbolFantasy, Jornada Perfecta y Biwenger.
+- Analiza preguntas y respuestas recientes en comentarios de Jornada Perfecta con contexto, autoría, enlaces y cobertura visible.
+- Usa GPT-6.1-Sol con razonamiento alto y bloquea modelos ligeros en el agente.
+- El servidor de desarrollo reutiliza la entrada API existente y deja de generar router.php temporal.
+
 # Versión 3.13.9
 
 Fecha de publicación: 2026-10-03

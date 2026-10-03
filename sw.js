@@ -1,4 +1,4 @@
-const CACHE_NAME = "radar-fantasy-shell-v92";
+const CACHE_NAME = "radar-fantasy-shell-v93";
 const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./market-ai-advisor.js", "./data.js", "./assets/app-icon.png"];
 
 self.addEventListener("install", (event) => {

@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const {validateResult,snapshot,standing,mount} = require('../market-ai-advisor.js');
-const {cleanEnv,baseUrl,buildPrompt,infer} = require('../scripts/market-agent.cjs');
+const {cleanEnv,baseUrl,buildPrompt,modelPolicy,codexArguments,infer} = require('../scripts/market-agent.cjs');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const context={market:[{id:'1',rationalMax:100,ownBid:10},{id:'2',rationalMax:100,ownBid:0}],squad:[{id:'3'}],finance:{balance:200,maximumBid:100,availableBudget:100,updatedAt:new Date().toISOString()},evidence:[{id:'health:1'}]};
 const result={schemaVersion:1,strategy:{summary:'<img onerror=x> Plan',priorities:['Reforzar']},actions:[{type:'buy',playerId:'1',priority:1,reason:'Datos visibles',evidenceIds:['health:1'],confidence:'medium',amount:90,maximumAmount:100,prerequisites:[]}],risks:[],limitations:[]};
@@ -27,6 +27,14 @@ assert(namedPrompt.includes('Usa exclusivamente nombres reales del snapshot y s�
 assert(namedPrompt.includes('su ingreso no es saldo asegurado'));
 assert(namedPrompt.includes('Jugador de mercado real'));assert(namedPrompt.includes('Jugador propio real'));
 assert(!namedPrompt.includes('Guler')&&!namedPrompt.includes('Fermín'));
+assert.equal(modelPolicy('gpt-6.1-sol'),'gpt-6.1-sol');assert.equal(modelPolicy('gpt-6-astra'),'gpt-6-astra');assert.throws(()=>modelPolicy('gpt-6-luna'),/model_not_allowed/);
+assert(codexArguments('gpt-6.1-sol','schema','output').includes('model_reasoning_effort="high"'));
+assert(namedPrompt.includes('comment_reply')&&namedPrompt.includes('noticias/respuestas discrepan')&&namedPrompt.includes('Respeta scoring'));
+const sourced=snapshot({read:()=>({market:[{id:'1',name:'Fermín'}],squad:[],finance:{balance:0},leagueId:'l',sourceCoverage:{threadsRead:2,repliesRead:2,verified:0,unverified:2},news:[{name:'Fermín',articles:[{title:'Noticia',link:'https://www.jornadaperfecta.com/blog/article/',sourceHost:'www.jornadaperfecta.com',sourceKind:'news',platform:'general',publishedAt:new Date().toISOString(),verifiedAt:new Date().toISOString()},{title:'Consulta real',link:'https://www.jornadaperfecta.com/blog/article/#comment-2',sourceHost:'www.jornadaperfecta.com',sourceKind:'comment_reply',platform:'biwenger',authorRole:'publicly_attributed',authorName:'Juanjo Rivero',authorVerification:'public_staff_attribution_identity_unverified',excerpt:'Pregunta: Fermín o Güler en Biwenger? Respuesta: Fermín.',publishedAt:new Date().toISOString(),verifiedAt:new Date().toISOString()}]}]}),plan:()=>({})},'balanced',1);
+assert.equal(sourced.evidence[0].sourceKind,'comment_reply');assert.equal(sourced.evidence[0].source,'Jornada Perfecta');assert(sourced.evidence[0].value.includes('Pregunta:'));assert.equal(sourced.coverage.commentsUsed,1);
+const rss=snapshot({read:()=>({market:[{id:'1',name:'A'}],squad:[],finance:{balance:0},leagueId:'l',news:[{name:'A',articles:[{title:'Fuente falsa',link:'https://news.google.com/rss/articles/a',source:'Jornada Perfecta',sourceKind:'opinion',publishedAt:new Date().toISOString()}]}]}),plan:()=>({})},'balanced',1);
+assert.equal(rss.evidence[0].sourceKind,'unverified');assert.notEqual(rss.evidence[0].source,'Jornada Perfecta');
+assert(snapshot({read:()=>({market:[],squad:[],finance:{},leagueId:'l'}),plan:()=>({})},'balanced',1).coverage.warnings.some(w=>w.startsWith('Sin noticias')));
 async function cancellationUI(){
   const previous={document:global.document,localStorage:global.localStorage,setTimeout:global.setTimeout};
   const elements=Object.fromEntries(['status','result','pair-code','analyze','cancel','profile','horizon','pair','revoke'].map(k=>[k,{textContent:'',disabled:false,hidden:false,value:k==='profile'?'balanced':'1',replaceChildren(){},append(){}}]));

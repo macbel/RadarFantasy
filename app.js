@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.9";
-const APP_VERSION_CODE = 67;
+const APP_VERSION = "3.13.10";
+const APP_VERSION_CODE = 68;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -15337,7 +15337,7 @@ const init = async () => {
 };
 
 const marketAIRivals = new Map();
-let marketAINews = [], marketAINewsAt = '', marketAINewsScope = '', marketAIWarnings = [];
+let marketAINews = [], marketAINewsAt = '', marketAINewsScope = '', marketAISourceCoverage = null, marketAIWarnings = [];
 const marketAIScope = () => state.auth.authenticated && platformUserCanAccess("market") ? `${state.auth.user?.id}:${state.auth.user?.role}:${[...state.auth.permissions].sort().join(',')}:${state.activeLeagueId}:${state.biwenger.leagueId}:${state.biwenger.competition}:${state.biwenger.scoring}` : "";
 const marketAIController = window.RadarMarketAI?.mount({
   fetch: apiFetch,
@@ -15349,7 +15349,7 @@ const marketAIController = window.RadarMarketAI?.mount({
     const selected=[...assistantMarketPlayers().slice(0,8),...(platformUserCanAccess("team")?assistantTeamPlayers().slice(0,8):[])];
     marketAIWarnings.push('Actualización de noticias limitada a 8 candidatos y 8 jugadores propios; se reutilizan también noticias recientes ya disponibles.');
     if(marketAINewsScope!==scope||Date.now()-Date.parse(marketAINewsAt)>300000){
-      try{const r=await apiFetch('/api/market-advisor/news',{method:'POST',headers:{'Content-Type':'application/json'},signal,body:JSON.stringify({competition:state.competition,players:selected.map(p=>({key:favoritePlayerKey(p),name:p.name,team:p.team,clubTeam:p.clubTeam||p.baseTeam||'',nationalTeam:p.nationalTeam||'',position:p.position,biwengerPlayerId:Number(p.biwengerPlayerId)||null}))})});const data=await r.json();if(!r.ok)throw new Error('news_unavailable');if(scope!==marketAIScope())return;marketAINews=data.players||[];marketAINewsAt=data.generatedAt||new Date().toISOString();marketAINewsScope=scope;}catch(_){marketAIWarnings.push('No se pudieron actualizar todas las noticias.');}
+      try{const r=await apiFetch('/api/market-advisor/news',{method:'POST',headers:{'Content-Type':'application/json'},signal,body:JSON.stringify({competition:state.competition,knownArticles:[...(platformUserCanAccess("team")?state.teamNews:[]),...(platformUserCanAccess("favorites")?state.favoriteNews:[]),...(marketAINewsScope===scope?marketAINews:[])].flatMap(p=>p.articles||[]).map(a=>a.link).filter(url=>typeof url==="string" && /^https:\/\/(www\.)?jornadaperfecta\.com\/blog\//.test(url)).slice(0,16),players:selected.map(p=>({key:favoritePlayerKey(p),name:p.name,team:p.team,clubTeam:p.clubTeam||p.baseTeam||'',nationalTeam:p.nationalTeam||'',position:p.position,biwengerPlayerId:Number(p.biwengerPlayerId)||null}))})});const data=await r.json();if(!r.ok)throw new Error('news_unavailable');if(scope!==marketAIScope())return;marketAINews=data.players||[];marketAISourceCoverage=data.coverage||null;marketAIWarnings.push(...(data.coverage?.warnings||[]));marketAINewsAt=data.generatedAt||new Date().toISOString();marketAINewsScope=scope;}catch(_){marketAIWarnings.push('No se pudieron actualizar todas las noticias.');}
     }
     if(!platformUserCanAccess('league')||!state.biwenger.connected)return;
     const rows=(state.leagueOverview?.standings||[]).filter(r=>!r.isMe&&Number(r.userId)!==Number(state.biwenger.userId));const start=Date.now();
@@ -15368,7 +15368,7 @@ const marketAIController = window.RadarMarketAI?.mount({
       return {alias:`R${i+1}`,rank:r.data.rank || null,points:r.data.points ?? null,summary:`Plantilla visible ${r.data.players.length}. Por posición ${JSON.stringify(counts)}. Bajas/dudas ${JSON.stringify(absent)}. Amenazas visibles ${threats}. Fecha ${new Date(r.fetchedAt).toISOString()}. Necesidades inferidas de cobertura, saldo y pujas ocultos desconocidos.`};
     });
     const max=currentMaximumBid();
-    return {market:assistantMarketPlayers(),squad:platformUserCanAccess("team")?assistantTeamPlayers():[],finance:{...state.finance,maximumBid:max},budget:Number.isFinite(assistantBidBudget())?Math.floor(assistantBidBudget()):null,leagueId:String(state.biwenger.leagueId||state.activeLeagueId||''),competition:state.biwenger.competition,scoring:state.biwenger.scoring,myStanding,rivals,rivalsTotal:Math.max(0,standings.length-1),news:[...(marketAINewsScope===scope?marketAINews:[]),...(platformUserCanAccess('team')?state.teamNews:[]),...(platformUserCanAccess('favorites')?state.favoriteNews:[])],newsFetchedAt:marketAINewsAt,warnings:marketAIWarnings};
+    return {market:assistantMarketPlayers(),squad:platformUserCanAccess("team")?assistantTeamPlayers():[],finance:{...state.finance,maximumBid:max},budget:Number.isFinite(assistantBidBudget())?Math.floor(assistantBidBudget()):null,leagueId:String(state.biwenger.leagueId||state.activeLeagueId||''),competition:state.biwenger.competition,scoring:state.biwenger.scoring,myStanding,rivals,rivalsTotal:Math.max(0,standings.length-1),news:[...(marketAINewsScope===scope?marketAINews:[]),...(platformUserCanAccess('team')?state.teamNews:[]),...(platformUserCanAccess('favorites')?state.favoriteNews:[])],newsFetchedAt:marketAINewsAt,sourceCoverage:marketAINewsScope===scope?marketAISourceCoverage:null,warnings:marketAIWarnings};
   }
 });
 

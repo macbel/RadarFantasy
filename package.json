@@ -1,17 +1,21 @@
 {
   "name": "radar-fantasy",
-  "version": "3.13.8",
+  "version": "3.13.9",
   "private": true,
   "description": "Scout de fichajes fantasy para web, Android e iOS 16+",
   "scripts": {
     "start": "node dev-server.js",
     "start:php": "node scripts/php-router.cjs",
-    "test": "node tests\\dom-contract.test.js && node tests\\engine-smoke.test.js && node tests\\fixture-backend.test.cjs && node tests\\mobile-local-first.test.js && node tests\\mobile-cors.test.js && node tests\\android-update.test.cjs",
+    "test": "node tests\\dom-contract.test.js && node tests\\engine-smoke.test.js && node tests\\fixture-backend.test.cjs && node tests\\mobile-local-first.test.js && node tests\\mobile-cors.test.js && node tests\\android-update.test.cjs && node tests/market-advisor.test.cjs",
     "build:web": "node scripts/prepare-mobile-web.cjs",
     "mobile:copy": "npm run build:web && npx cap copy",
     "mobile:sync": "npm run build:web && npx cap sync",
     "mobile:android": "npm run build:web && npx cap sync android && npx cap open android",
-    "mobile:ios": "npm run build:web && npx cap sync ios && npx cap open ios"
+    "mobile:ios": "npm run build:web && npx cap sync ios && npx cap open ios",
+    "market-agent": "node scripts/market-agent.cjs run",
+    "market-agent:pair": "node scripts/market-agent.cjs pair",
+    "market-agent:forget": "node scripts/market-agent.cjs forget",
+    "test:market-agent": "node tests/market-advisor.test.cjs"
   },
   "dependencies": {
     "@capacitor/browser": "^7.0.5",

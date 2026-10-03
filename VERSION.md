@@ -1,3 +1,11 @@
+# Versión 3.13.9
+
+Fecha de publicación: 2026-10-03
+
+- Asesor privado de estrategia en Mercado para web y Android, conectado al agente del PC mediante HTTPS.
+- Analiza mercado, plantilla, situación en la liga, rivales y evidencias disponibles; valida las pujas contra el presupuesto.
+- Usa la sesión ChatGPT de Codex del PC y muestra cobertura, condiciones y fecha del plan.
+
 # Versión 3.13.8
 
 Fecha de publicación: 2026-09-30

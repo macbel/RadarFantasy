@@ -1,5 +1,5 @@
-const CACHE_NAME = "radar-fantasy-shell-v91";
-const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./data.js", "./assets/app-icon.png"];
+const CACHE_NAME = "radar-fantasy-shell-v92";
+const APP_SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./market-ai-advisor.js", "./data.js", "./assets/app-icon.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => null));

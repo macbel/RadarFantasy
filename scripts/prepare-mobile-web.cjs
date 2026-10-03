@@ -6,6 +6,7 @@ const outDir = path.join(root, "mobile-web");
 const entries = [
   "index.html",
   "app.js",
+  "market-ai-advisor.js",
   "mobile-local-first.js",
   "data.js",
   "styles.css",

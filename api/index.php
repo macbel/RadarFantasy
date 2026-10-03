@@ -10,6 +10,7 @@ session_set_cookie_params([
 session_start();
 
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'auth.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'market-advisor.php';
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'biwenger-player-history.php';
 
 $root = dirname(__DIR__);
@@ -73,6 +74,7 @@ $route = request_path();
 if ($requestMethod === 'OPTIONS') send_empty(204);
 auth_bootstrap_from_environment($usersDbPath);
 auth_handle_public_routes($route, $requestMethod, $usersDbPath, $passwordResetsPath);
+market_advisor_handle($route, $requestMethod, $usersDbPath, $dbDir);
 if (strpos($route, '/mobile/') === 0) {
     if ($route === '/mobile/healthz' && $requestMethod === 'GET') send_json(200, ['ok' => true, 'mode' => 'gateway']);
     $mobileUser = auth_require_user($usersDbPath);

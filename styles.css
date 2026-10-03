@@ -9566,3 +9566,11 @@ html[data-theme="day"] .home-opportunity-list {
   #team-view .pitch-player-round-points { width: 20px; height: 20px; min-width: 20px; font-size: 9px; left: -8px; bottom: -6px; }
   #team-view .pitch-role-badge { width: 18px; height: 18px; }
 }
+/* Compact private advisor remains readable in native narrow layouts. */
+.market-ai-advisor { margin: 0 0 16px; padding: 16px; border: 1px solid var(--border, #ccd3de); border-radius: 16px; background: var(--panel, transparent); min-width: 0; }
+.market-ai-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.market-ai-controls label { display: grid; gap: 4px; flex: 1 1 130px; }
+.market-ai-controls select { max-width: 100%; }
+.market-ai-advisor details { margin-top: 12px; }
+.market-ai-advisor [data-ai="result"] small { display: block; margin-top: 7px; }
+.market-ai-code { overflow-wrap: anywhere; user-select: all; }

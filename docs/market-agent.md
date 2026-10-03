@@ -6,7 +6,7 @@ El plan propone decisiones con los nombres reales de tu plantilla y mercado: qu�
 
 ## Preparación
 
-1. Instala Node y Codex CLI; ejecuta `codex login` si `codex login status` no indica ChatGPT.
+1. Instala Node 24 o posterior y Codex CLI; ejecuta `codex login` si `codex login status` no indica ChatGPT. Los comandos npm y el lanzador oculto usan `node --use-system-ca` para confiar también en los certificados del sistema Windows, manteniendo la verificación TLS activa. Si ejecutas el script directamente, incluye esa opción: `node --use-system-ca scripts/market-agent.cjs run`. No desactives la validación de certificados.
 2. El administrador habilita exclusivamente tu ID Radar en `.fantasy-db/market-agent-allowed-users.json`: `{"userIds":["ID_DE_TU_CUENTA"]}`. Sin ese archivo/lista no hay cuentas habilitadas. También se acepta `FMS_MARKET_AGENT_ALLOWED_USERS` con IDs separados por comas.
 3. En Mercado abre «Conectar mi PC y privacidad», genera el código temporal y ejecuta en PowerShell `npm.cmd run market-agent:pair -- https://TU_DOMINIO/fms`. Introduce el código cuando se solicite. Caduca a los cinco minutos y sólo sirve una vez.
 4. Ejecuta `npm.cmd run market-agent`. Si Codex no está en PATH, establece `FMS_CODEX_BINARY` a la ruta de `codex.exe` obtenida con `(Get-Command codex).Source`.

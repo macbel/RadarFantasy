@@ -12,8 +12,8 @@
     "mobile:sync": "npm run build:web && npx cap sync",
     "mobile:android": "npm run build:web && npx cap sync android && npx cap open android",
     "mobile:ios": "npm run build:web && npx cap sync ios && npx cap open ios",
-    "market-agent": "node scripts/market-agent.cjs run",
-    "market-agent:pair": "node scripts/market-agent.cjs pair",
+    "market-agent": "node --use-system-ca scripts/market-agent.cjs run",
+    "market-agent:pair": "node --use-system-ca scripts/market-agent.cjs pair",
     "market-agent:forget": "node scripts/market-agent.cjs forget",
     "test:market-agent": "node tests/market-advisor.test.cjs"
   },

@@ -1,3 +1,10 @@
+# Versión 3.13.13
+
+Fecha de publicación: 2026-10-04
+
+- Rediseña el asesor general y la consulta individual con tarjetas, controles y cabeceras coherentes con Radar Fantasy.
+- Corrige el contraste del diálogo y aplica estilos a los botones IA en modo día y noche, con controles táctiles de 44 px.
+
 # Versión 3.13.12
 
 Fecha de publicación: 2026-10-04

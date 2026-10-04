@@ -124,14 +124,17 @@
     const labels={buy:'Puja por',sell:'Vende',hold:'Mantén',avoid:'Evita',wait:'Espera con'};
     const confidence={low:'baja',medium:'media',high:'alta'};
     const focused=context.focusPlayer&&context[context.focusPlayer.origin].find(p=>p.id===context.focusPlayer.id);
-    add(container,'strong',`${focused?'Consulta sobre '+focused.name:'Plan'} · ${context.horizonRounds===3?'próximas 3 jornadas':'próxima jornada'}`);
-    add(container,'small',new Date(value.generatedAt || Date.now()).toLocaleString('es-ES'),'market-ai-date');
+    const resultHeader=add(container,'div','','market-ai-result-header');
+    add(resultHeader,'strong',`${focused?'Consulta sobre '+focused.name:'Tu estrategia'} · ${context.horizonRounds===3?'próximas 3 jornadas':'próxima jornada'}`,'market-ai-result-title');
+    add(resultHeader,'small',new Date(value.generatedAt || Date.now()).toLocaleString('es-ES'),'market-ai-date');
     const cite=(parent,e)=>{try{const u=new URL(e.url);if(u.protocol!=='https:'||u.username||u.password)return;const a=document.createElement('a');a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';const kind={news:'Noticia deportiva',opinion:'Opinión editorial',comment_reply:'Consulta y respuesta',unverified:'Enlace no verificado'}[e.sourceKind]||'Fuente';const identity=e.sourceKind==='comment_reply'?(e.authorRole==='publicly_attributed'?` · atribuida a ${e.authorName}; identidad no verificada`:e.authorRole==='unverified'?' · identidad no verificada':' · autoría identificada'):'';a.textContent=`${kind}: ${e.title || e.source} · ${e.source} · ${e.publishedAt?new Date(e.publishedAt).toLocaleDateString('es-ES'):e.fetchedAt?new Date(e.fetchedAt).toLocaleDateString('es-ES'):'fecha desconocida'}${identity}`;parent.append(a);}catch(_){} };
     for(const a of [...safe.actions].sort((a,b)=>a.priority-b.priority)){
       const row=document.createElement('article');row.className='market-ai-action';container.append(row);
+      row.setAttribute('data-action',a.type);
       const player=[...context.market,...context.squad].find(p=>p.id===a.playerId);
       const heading=player?`${labels[a.type]} ${player.name}`:'Espera';
-      add(row,'p',`${heading}: ${a.reason}`,'market-ai-action-copy');
+      add(row,'strong',heading,'market-ai-action-title');
+      add(row,'p',a.reason,'market-ai-action-copy');
       if(a.type==='buy')add(row,'strong',`${a.amount.toLocaleString('es-ES')} € · tope ${a.maximumAmount.toLocaleString('es-ES')} €`,'market-ai-bid');
       a.prerequisites.forEach(v=>add(row,'small',`Sólo si: ${v}`,'market-ai-critical-condition'));
       if(a.type==='sell')add(row,'small','Venta candidata; no cuentes el ingreso hasta confirmarla.','market-ai-critical-condition');
@@ -191,9 +194,11 @@
     el('cancel').onclick=()=>cancel();el('analyze').onclick=()=>run();
     function consult(id,origin){
       if(!enabled)return false;
-      if(!dialog){dialog=document.createElement('dialog');dialog.className='player-ai-dialog';dialog.setAttribute('aria-labelledby','player-ai-title');dialog.innerHTML='<header><h3 id="player-ai-title">Consulta IA del jugador</h3><button type="button" data-player-ai-close aria-label="Cerrar consulta IA">Cerrar</button></header><p data-player-ai-status role="status"></p><div data-player-ai-result aria-live="polite"></div><button type="button" data-player-ai-cancel hidden>Cancelar análisis</button>';document.body.append(dialog);dialog.querySelector('[data-player-ai-cancel]').onclick=()=>cancel();dialog.querySelector('[data-player-ai-close]').onclick=()=>dialog.close();dialog.addEventListener('close',()=>{if(active?.focus)void cancel();});}
+      if(!dialog){dialog=document.createElement('dialog');dialog.className='player-ai-dialog';dialog.setAttribute('aria-labelledby','player-ai-title');dialog.innerHTML='<header><div class="player-ai-heading"><span class="player-ai-avatar" aria-hidden="true">IA</span><div><small>Tu asesor de mercado</small><h3 id="player-ai-title" data-player-ai-title>Consulta IA del jugador</h3></div></div><button type="button" data-player-ai-close aria-label="Cerrar consulta IA">×</button></header><p data-player-ai-status role="status"></p><div data-player-ai-result aria-live="polite"></div><button type="button" data-player-ai-cancel hidden>Cancelar análisis</button>';document.body.append(dialog);dialog.querySelector('[data-player-ai-cancel]').onclick=()=>cancel();dialog.querySelector('[data-player-ai-close]').onclick=()=>dialog.close();dialog.addEventListener('close',()=>{if(active?.focus)void cancel();});}
       const output=dialog.querySelector('[data-player-ai-result'),statusNode=dialog.querySelector('[data-player-ai-status]');
       if(active){output.replaceChildren();statusNode.textContent=errors.job_pending;dialog.querySelector('[data-player-ai-cancel]').hidden=false;if(!dialog.open)dialog.showModal();return false;}
+      const target=(adapter.read()[origin]||[]).find(p=>String(p.biwengerPlayerId||p.id)===String(id));
+      const title=dialog.querySelector('[data-player-ai-title]');if(title)title.textContent=target?.name||'Consulta IA del jugador';
       output.replaceChildren();statusNode.textContent='';if(!dialog.open)dialog.showModal();const focus={id:String(id),origin};
       const cache=readCache(focus,output);if(cache){statusNode.textContent='Consulta guardada con su fecha. Revisa las condiciones.';return true;}
       void run(focus,output,statusNode);return true;

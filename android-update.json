@@ -1,9 +1,9 @@
 {
-  "version": "3.13.10",
-  "versionCode": 68,
+  "version": "3.13.11",
+  "versionCode": 69,
   "packageName": "com.fantasymarketscout.app",
-  "apkUrl": "https://alufi.es/fms/Radar-Fantasy-Android-v3.13.10.apk",
-  "sha256": "c07e8b0b02751d0460a2f27f31bd97d51748fadd276db9e812198f2f2363597b",
-  "size": 8112960,
-  "publishedAt": "2026-10-03T11:09:04.373Z"
+  "apkUrl": "https://alufi.es/fms/Radar-Fantasy-Android-v3.13.11.apk",
+  "sha256": "81f032aba26b017aac43490c8507c40576961597e20a1c5599ec87c0127c431b",
+  "size": 7890272,
+  "publishedAt": "2026-10-04T19:20:04.825Z"
 }

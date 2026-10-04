@@ -4,6 +4,10 @@ Radar usa tu sesión habitual de Codex con ChatGPT mediante un agente local. No 
 
 El plan propone decisiones con los nombres reales de tu plantilla y mercado: qué jugador vender o conservar y por quién pujar, siempre que los datos lo justifiquen. Puede explicar una sustitución concreta y sus condiciones deportivas y económicas. No utiliza jugadores de ejemplo ni fuerza una operación cuando la evidencia aconseja esperar. «Vender» significa una venta candidata: confirma oferta, precio y cobertura; ese ingreso no aumenta el presupuesto garantizado de la compra.
 
+La vista principal presenta hasta cinco acciones con un motivo breve, el tope de compra y las condiciones decisivas. Fuentes, confianza, cobertura y advertencias secundarias se consultan en detalles plegados. El análisis mira la próxima jornada o las tres siguientes cuando existe calendario disponible. La salud y las noticias pueden justificar esperar a un jugador relevante o una compra condicionada a su evolución, pero una estimación de retorno no confirma alta ni convocatoria. Un único partido sin participación no demuestra pérdida de puesto, y la titularidad importada o calculada se trata como estimación.
+
+La muestra de noticias da prioridad a lesiones, dudas, sanciones y ausencias recientes dentro de sus límites; no representa todas las fuentes ni toda la plantilla. Las fechas de incidentes de API-Football no se transmiten como fechas de recuperación. Los cambios de calendario y racha propia invalidan las recomendaciones guardadas.
+
 ## Preparación
 
 1. Instala Node 24 o posterior y Codex CLI; ejecuta `codex login` si `codex login status` no indica ChatGPT. Los comandos npm y el lanzador oculto usan `node --use-system-ca` para confiar también en los certificados del sistema Windows, manteniendo la verificación TLS activa. Si ejecutas el script directamente, incluye esa opción: `node --use-system-ca scripts/market-agent.cjs run`. No desactives la validación de certificados.

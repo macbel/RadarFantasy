@@ -7275,7 +7275,8 @@ function api_football_player_health(int $playerId, array $league, int $timeoutSe
         'status' => preg_match('/suspend|sanction|card/i', $reason) ? 'suspended' : 'injured',
         'label' => preg_match('/suspend|sanction|card/i', $reason) ? 'Sancionado' : 'Lesionado',
         'detail' => $reason,
-        'expectedReturn' => (string)($row['fixture']['date'] ?? ''),
+        // The injury fixture is the incident date, not a medical return estimate.
+        'expectedReturn' => null,
         'medicalUrl' => null,
         'injuryRisk' => 'API-Football'
     ];

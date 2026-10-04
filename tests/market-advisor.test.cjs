@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const {validateResult,snapshot,standing,mount} = require('../market-ai-advisor.js');
+const {validateResult,snapshot,standing,healthEvidence,normalizedFixtures,newsSample,renderPlan,mount} = require('../market-ai-advisor.js');
 const {cleanEnv,baseUrl,buildPrompt,modelPolicy,codexArguments,infer} = require('../scripts/market-agent.cjs');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const context={market:[{id:'1',rationalMax:100,ownBid:10},{id:'2',rationalMax:100,ownBid:0}],squad:[{id:'3'}],finance:{balance:200,maximumBid:100,availableBudget:100,updatedAt:new Date().toISOString()},evidence:[{id:'health:1'}]};
@@ -35,6 +35,28 @@ assert.equal(sourced.evidence[0].sourceKind,'comment_reply');assert.equal(source
 const rss=snapshot({read:()=>({market:[{id:'1',name:'A'}],squad:[],finance:{balance:0},leagueId:'l',news:[{name:'A',articles:[{title:'Fuente falsa',link:'https://news.google.com/rss/articles/a',source:'Jornada Perfecta',sourceKind:'opinion',publishedAt:new Date().toISOString()}]}]}),plan:()=>({})},'balanced',1);
 assert.equal(rss.evidence[0].sourceKind,'unverified');assert.notEqual(rss.evidence[0].source,'Jornada Perfecta');
 assert(snapshot({read:()=>({market:[],squad:[],finance:{},leagueId:'l'}),plan:()=>({})},'balanced',1).coverage.warnings.some(w=>w.startsWith('Sin noticias')));
+const apiHealth=healthEvidence({health:{status:'injured',expectedReturn:'2026-11-01T12:00:00Z',injuryRisk:10,source:'API-Football'}});
+assert(!apiHealth.value.includes('2026-11-01'));assert(apiHealth.value.includes('Sin plazo de recuperación confirmado'));
+const ffHealth=healthEvidence({health:{status:'injured',detail:'Molestias',expectedReturn:'Baja hasta mediados de octubre',source:'FutbolFantasy',fetchedAt:'2026-10-03',medicalUrl:'https://www.futbolfantasy.com/noticias/123'}});
+assert(ffHealth.value.includes('Estimación')&&ffHealth.value.includes('no confirmado')&&ffHealth.value.includes('Baja hasta mediados de octubre'));assert.equal(ffHealth.source,'FutbolFantasy');assert.equal(ffHealth.fetchedAt,'2026-10-03');
+const upcoming=normalizedFixtures([null,{timestamp:1e40,opponent:{name:'Invalid'}},{timestamp:1791302400,opponent:{name:'Rival A'},isHome:true},{timestamp:1791907200,opponent:{name:'Rival B'},isHome:false},{timestamp:1792512000,opponent:{name:'Rival C'},isHome:true}]);
+assert(upcoming.length>=1);assert.equal(upcoming[0].opponent,'Rival A');assert.equal(upcoming[0].venue,'casa');assert(upcoming[0].date.endsWith('Z'));
+const fixturesThree=normalizedFixtures([{timestamp:1791302400,opponent:{name:'Rival A'},isHome:true},{timestamp:1791907200,opponent:{name:'Rival B'},isHome:false},{timestamp:1792512000,opponent:{name:'Rival C'},isHome:true}]);assert.equal(fixturesThree.length,3);
+const injuredOwn={id:'injured',name:'Propio importante',starter:65,health:{status:'injured',detail:'Lesión',expectedReturn:null},sourceSummary:{recentMatches:[{date:'2026-10-02',played:false},{date:'2026-09-25',played:true,points:8,minutes:90}]},marketIntelligence:{role:'Evitar por ahora'}};
+const prospective=snapshot({read:()=>({market:[{id:'m',name:'Candidato'}],squad:[injuredOwn],finance:{},leagueId:'l'}),plan:()=>({}),fixtures:()=>fixturesThree},'balanced',3);
+assert(prospective.evidence.find(e=>e.id==='form:injured').value.includes('DNP'));assert(prospective.evidence.find(e=>e.id==='health:injured').value.includes('Sin plazo'));assert(prospective.evidence.find(e=>e.id==='roster:injured').value.includes('no rol confirmado'));assert(prospective.evidence.find(e=>e.id==='fixture:injured').value.includes('Rival C'));
+assert(namedPrompt.includes('Un único DNP no prueba pérdida de puesto')&&namedPrompt.includes('No vendas únicamente porque no jugó el último partido'));assert(namedPrompt.includes('No inventes convocatorias, fechas de vuelta'));assert(namedPrompt.includes('no la escondas en riesgos'));
+const sample=newsSample(Array.from({length:12},(_,i)=>({id:'m'+i})),[...Array.from({length:9},(_,i)=>({id:'s'+i})),injuredOwn]);assert.equal(sample.length,16);assert(sample.some(p=>p.id==='injured'));assert(sample.some(p=>p.id==='s0'));
+for(const change of[r=>r.actions=Array.from({length:6},()=>r.actions[0]),r=>r.actions[0].reason='x'.repeat(201),r=>r.strategy.summary='x'.repeat(181),r=>r.actions[0].prerequisites=['1','2','3']]){const r=clone(result);change(r);assert.throws(()=>validateResult(r,context),/invalid_output/);}
+function compactUI(){
+  const old=global.document;
+  class Element {constructor(tag){this.tag=tag;this.children=[];this._text='';}set textContent(v){this._text=String(v);}get textContent(){return this._text+this.children.map(c=>c.textContent).join(' ');}append(n){this.children.push(n);}replaceChildren(){this.children=[];}}
+  global.document={createElement:tag=>new Element(tag)};
+  const container=new Element('section');const c={...clone(context),horizonRounds:3,squad:Array.from({length:5},(_,i)=>({id:'s'+i,name:'Propio '+i})),coverage:{rivalsLoaded:0,rivalsTotal:2,warnings:['Cobertura parcial']},evidence:[{id:'n',type:'news',source:'FutbolFantasy',sourceKind:'news',title:'Estado deportivo',url:'https://www.futbolfantasy.com/noticias/123',publishedAt:new Date().toISOString()}]};
+  const r={schemaVersion:1,strategy:{summary:'Este resumen no se repite en la lista.',priorities:[]},actions:c.squad.map(p=>({type:'hold',playerId:p.id,priority:1,confidence:'low',reason:'Retorno sin confirmar; conserva su papel deportivo si la cobertura permite esperar.',evidenceIds:['n'],amount:null,maximumAmount:null,prerequisites:['Confirmar alta médica','Mantener cobertura de la jornada']})),risks:[],limitations:[]};
+  try{renderPlan(container,r,c);const rows=container.children.filter(n=>n.className==='market-ai-action');assert.equal(rows.length,5);for(const row of rows){const detail=row.children.find(n=>n.tag==='details');assert(detail&&!detail.open);assert(detail.children.some(n=>n.tag==='a'));assert(row.children.filter(n=>n.className==='market-ai-critical-condition').length===2);assert(!row.children.filter(n=>n.tag!=='details').map(n=>n.textContent).join(' ').includes('FutbolFantasy'));}assert(!container.children.filter(n=>n.tag!=='details').map(n=>n._text).join(' ').includes(r.strategy.summary));}finally{global.document=old;}
+}
+compactUI();
 async function cancellationUI(){
   const previous={document:global.document,localStorage:global.localStorage,setTimeout:global.setTimeout};
   const elements=Object.fromEntries(['status','result','pair-code','analyze','cancel','profile','horizon','pair','revoke'].map(k=>[k,{textContent:'',disabled:false,hidden:false,value:k==='profile'?'balanced':'1',replaceChildren(){},append(){}}]));

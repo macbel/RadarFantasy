@@ -1,3 +1,12 @@
+# Versión 3.13.11
+
+Fecha de publicación: 2026-10-04
+
+- El asesor muestra hasta cinco decisiones concretas sobre jugadores reales, con motivos breves y condiciones importantes visibles.
+- Tiene en cuenta las próximas tres jornadas disponibles y distingue estimaciones de recuperación de un regreso confirmado.
+- Una ausencia aislada no demuestra pérdida de puesto; las fuentes, cobertura y advertencias quedan en detalles plegados.
+- Invalida el plan cuando cambian el calendario o la racha propia y evita confundir la fecha de una lesión con la de recuperación.
+
 # Versión 3.13.10
 
 Fecha de publicación: 2026-10-03

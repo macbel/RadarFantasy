@@ -88,7 +88,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=142') || !html.includes('styles.css?v=80') || !html.includes('mobile-local-first.js?v=4') || !sw.includes('radar-fantasy-shell-v93')) {
+if (!html.includes('app.js?v=143') || !html.includes('styles.css?v=81') || !html.includes('mobile-local-first.js?v=4') || !sw.includes('radar-fantasy-shell-v94')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 

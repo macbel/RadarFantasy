@@ -9574,3 +9574,9 @@ html[data-theme="day"] .home-opportunity-list {
 .market-ai-advisor details { margin-top: 12px; }
 .market-ai-advisor [data-ai="result"] small { display: block; margin-top: 7px; }
 .market-ai-code { overflow-wrap: anywhere; user-select: all; }
+.market-ai-action { padding: 12px 0; border-bottom: 1px solid var(--border, #ccd3de); overflow-wrap: anywhere; }
+.market-ai-action-copy { margin: 0 0 5px; font-weight: 650; line-height: 1.45; }
+.market-ai-bid { display: block; font-size: .9rem; }
+.market-ai-critical-condition { line-height: 1.4; }
+.market-ai-action details a, .market-ai-advisor [data-ai="result"] > details a { display: block; margin-top: 8px; overflow-wrap: anywhere; }
+.market-ai-action summary, .market-ai-advisor [data-ai="result"] > details > summary { font-size: .85rem; cursor: pointer; }

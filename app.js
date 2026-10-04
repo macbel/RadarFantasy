@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.10";
-const APP_VERSION_CODE = 68;
+const APP_VERSION = "3.13.11";
+const APP_VERSION_CODE = 69;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -15342,11 +15342,12 @@ const marketAIScope = () => state.auth.authenticated && platformUserCanAccess("m
 const marketAIController = window.RadarMarketAI?.mount({
   fetch: apiFetch,
   plan: smartBidPlan,
+  fixtures: (player) => upcomingMatchesForPlayer(player, 3),
   scope: marketAIScope,
   prepare: async (signal) => {
     const scope=marketAIScope();marketAIWarnings=[];
     for (const [key,r] of marketAIRivals) if(r.scope!==scope||Date.now()-r.fetchedAt>=21600000)marketAIRivals.delete(key);
-    const selected=[...assistantMarketPlayers().slice(0,8),...(platformUserCanAccess("team")?assistantTeamPlayers().slice(0,8):[])];
+    const selected=window.RadarMarketAI.newsSample(assistantMarketPlayers(),platformUserCanAccess("team")?assistantTeamPlayers():[]);
     marketAIWarnings.push('Actualización de noticias limitada a 8 candidatos y 8 jugadores propios; se reutilizan también noticias recientes ya disponibles.');
     if(marketAINewsScope!==scope||Date.now()-Date.parse(marketAINewsAt)>300000){
       try{const r=await apiFetch('/api/market-advisor/news',{method:'POST',headers:{'Content-Type':'application/json'},signal,body:JSON.stringify({competition:state.competition,knownArticles:[...(platformUserCanAccess("team")?state.teamNews:[]),...(platformUserCanAccess("favorites")?state.favoriteNews:[]),...(marketAINewsScope===scope?marketAINews:[])].flatMap(p=>p.articles||[]).map(a=>a.link).filter(url=>typeof url==="string" && /^https:\/\/(www\.)?jornadaperfecta\.com\/blog\//.test(url)).slice(0,16),players:selected.map(p=>({key:favoritePlayerKey(p),name:p.name,team:p.team,clubTeam:p.clubTeam||p.baseTeam||'',nationalTeam:p.nationalTeam||'',position:p.position,biwengerPlayerId:Number(p.biwengerPlayerId)||null}))})});const data=await r.json();if(!r.ok)throw new Error('news_unavailable');if(scope!==marketAIScope())return;marketAINews=data.players||[];marketAISourceCoverage=data.coverage||null;marketAIWarnings.push(...(data.coverage?.warnings||[]));marketAINewsAt=data.generatedAt||new Date().toISOString();marketAINewsScope=scope;}catch(_){marketAIWarnings.push('No se pudieron actualizar todas las noticias.');}
@@ -15356,7 +15357,7 @@ const marketAIController = window.RadarMarketAI?.mount({
     let cursor=0;
     const load=async()=>{while(cursor<rows.length&&Date.now()-start<18000&&!signal.aborted){const row=rows[cursor++];const id=Number(row.userId||row.id);if(!id)continue;const key=`${scope}:${id}`;const cached=marketAIRivals.get(key);if(cached&&Date.now()-cached.fetchedAt<21600000)continue;try{const boundedSignal=AbortSignal.any([signal,AbortSignal.timeout(Math.max(1,18000-(Date.now()-start)))]);const r=await apiFetch('/api/biwenger/rival-team',{method:'POST',headers:{'Content-Type':'application/json'},signal:boundedSignal,body:JSON.stringify({userId:id})});if(r.status===429){cursor=rows.length;marketAIWarnings.push('Cobertura rival parcial por límite de Biwenger.');break;}const data=await r.json();if(r.ok&&scope===marketAIScope()&&Array.isArray(data.players))marketAIRivals.set(key,{scope,fetchedAt:Date.now(),data:{...data,userId:id,rank:row.rank||row.position,points:row.points}});}catch(_){marketAIWarnings.push('Alguna plantilla rival no está disponible.');break;}}};await Promise.all([load(),load()]);
   },
-  signature: () => JSON.stringify([marketAIScope(),state.players.map(p=>[p.id,p.price,p.health,p.sourceSummary?.recentMatches]),state.teamPlayers.map(p=>[p.id,p.health]),state.finance,state.biwengerOperations,state.leagueOverview,state.rivalTeam,state.teamNews,state.favoriteNews,marketAINewsAt]),
+  signature: () => JSON.stringify([marketAIScope(),state.players.map(p=>[p.id,p.price,p.health,p.starter,p.sourceSummary?.recentMatches,p.sourceSummary?.biwenger?.recentMatches]),state.teamPlayers.map(p=>[p.id,p.health,p.starter,p.sourceSummary?.recentMatches,p.sourceSummary?.biwenger?.recentMatches]),state.leagueFixtures,state.finance,state.biwengerOperations,state.leagueOverview,state.rivalTeam,state.teamNews,state.favoriteNews,marketAINewsAt]),
   read: () => {
     const scope=marketAIScope();
     if (platformUserCanAccess("league") && state.rivalTeam?.players?.length) marketAIRivals.set(`${scope}:${state.rivalTeam.userId || state.rivalTeam.id || 'visible'}`,{scope,fetchedAt:Date.now(),data:state.rivalTeam});

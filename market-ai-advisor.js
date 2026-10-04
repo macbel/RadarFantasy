@@ -3,6 +3,21 @@
   const text = (v, n = 240) => String(v ?? '').replace(/[\x00-\x1f<>]/g, '').slice(0, n);
   const money = v => v !== null && v !== '' && Number.isSafeInteger(Number(v)) && Number(v) >= 0 ? Number(v) : null;
   const signed = v => v !== null && v !== '' && Number.isSafeInteger(Number(v)) ? Number(v) : null;
+  function normalizedFixtures(rows) {
+    return (Array.isArray(rows)?rows:[]).filter(m=>m&&typeof m==='object').slice(0,3).map(m=>{
+      const seconds=Number(m.timestamp);const candidate=new Date(seconds*1000);const date=Number.isFinite(seconds)&&seconds>0&&Number.isFinite(candidate.getTime())?candidate.toISOString():text(m.date || m.kickoff,40);
+      return {date,opponent:text(typeof m.opponent==='object'?m.opponent?.name:m.opponent || m.opponentName,80),venue:typeof m.isHome==='boolean'?(m.isHome?'casa':'fuera'):text(m.venue || m.homeAway,30)};
+    }).filter(m=>Number.isFinite(Date.parse(m.date))&&m.opponent);
+  }
+  function healthEvidence(p) {
+    const h=p.health;if(!h)return null;
+    const apiFootball=/api[ -]?football/i.test([h.injuryRisk,h.source,h.provider].join(' '));
+    const estimate=!apiFootball?text(h.expectedReturn,180):'';
+    let url;try{const u=new URL(h.medicalUrl);if(u.protocol==='https:'&&!u.username&&!u.password)url=u.href;}catch(_){}
+    const provider=text(h.source || h.provider || (apiFootball?'API-Football':url?new URL(url).hostname:'origen no identificado'),70);
+    const date=text(h.updatedAt || h.fetchedAt || p.fetchedAt || p.enrichedAt,40);
+    return {source:provider,fetchedAt:date,url,value:`Estado: ${text(h.status,30)}. ${text(h.detail || h.reason,150)}. ${estimate?'Estimación de evolución/retorno (no confirmado): '+estimate+'.':'Sin plazo de recuperación confirmado.'} Fuente: ${provider}; fecha: ${date||'desconocida'}.`};
+  }
   function standing(rows, userId) {
     const index=rows.findIndex(row=>row.isMe===true || (Number(userId)>0 && Number(row.userId)===Number(userId)));
     if(index<0)return null;
@@ -10,8 +25,15 @@
     const points=signed(row.points);const leaderPoints=signed(leader?.points);
     return {rank:rank>0?rank:index+1,points,gapToLeader:points!==null&&leaderPoints!==null?Math.max(0,leaderPoints-points):null};
   }
+  function newsSample(market,squad) {
+    const group=(players)=>{
+      const critical=players.filter(p=>['injured','doubtful','suspended'].includes(p.health?.status)||(p.sourceSummary?.recentMatches || p.sourceSummary?.biwenger?.recentMatches)?.[0]?.played===false).slice(0,4);
+      const selected=[],ids=new Set();for(const p of [...critical,...players]){const id=String(p.biwengerPlayerId || p.playerId || p.id);if(ids.has(id))continue;ids.add(id);selected.push(p);if(selected.length>=8)break;}return selected;
+    };
+    return [...group(market),...group(squad)];
+  }
   function validateResult(result, context) {
-    if (!result || result.schemaVersion !== 1 || !result.strategy || !Array.isArray(result.actions) || result.actions.length > 12) throw new Error('invalid_output');
+    if (!result || result.schemaVersion !== 1 || !result.strategy || !Array.isArray(result.actions) || result.actions.length > 5 || typeof result.strategy.summary!=='string' || result.strategy.summary.length>180) throw new Error('invalid_output');
     const players = new Map([...context.market, ...context.squad].map(p => [p.id, p]));
     const evidence = new Set(context.evidence.map(e => e.id));
     let total = 0;
@@ -21,6 +43,7 @@
     const actions = result.actions.map(a => {
       if (!['buy','sell','hold','avoid','wait'].includes(a.type) || ![1,2,3].includes(a.priority) || !['low','medium','high'].includes(a.confidence) || !Array.isArray(a.evidenceIds) || a.evidenceIds.some(id => !evidence.has(id))) throw new Error('invalid_output');
       const p = players.get(a.playerId);
+      if(typeof a.reason!=='string'||a.reason.length>200||!Array.isArray(a.prerequisites)||a.prerequisites.length>2||a.prerequisites.some(v=>typeof v!=='string'||v.length>140))throw new Error('invalid_output');
       if (a.type !== 'wait' && !p || seen.has(a.playerId) && a.type !== 'wait') throw new Error('invalid_output');
       if (p) seen.add(a.playerId);
       if (a.type === 'buy' && !context.market.some(p => p.id === a.playerId) || ['sell','hold'].includes(a.type) && !context.squad.some(p => p.id === a.playerId)) throw new Error('invalid_output');
@@ -29,10 +52,11 @@
         if (!fresh || context.finance.maximumBid === null || context.finance.availableBudget === null || amount === null || maximumAmount === null || amount > maximumAmount || maximumAmount > p.rationalMax || maximumAmount > context.finance.maximumBid) throw new Error('invalid_budget');
         total += Math.max(0, maximumAmount - (p.ownBid || 0));
       } else { amount = null; maximumAmount = null; }
-      return {type:a.type,playerId:p?.id || null,priority:a.priority,confidence:a.confidence,reason:text(a.reason,500),evidenceIds:a.evidenceIds.slice(0,8),amount,maximumAmount,prerequisites:(a.prerequisites || []).slice(0,4).map(v=>text(v))};
+      return {type:a.type,playerId:p?.id || null,priority:a.priority,confidence:a.confidence,reason:text(a.reason,200),evidenceIds:a.evidenceIds.slice(0,8),amount,maximumAmount,prerequisites:a.prerequisites.map(v=>text(v,140))};
     });
     if (total > context.finance.availableBudget) throw new Error('invalid_budget');
-    return {schemaVersion:1,strategy:{summary:text(result.strategy.summary,700),priorities:(result.strategy.priorities || []).slice(0,3).map(v=>text(v))},actions,risks:(result.risks || []).slice(0,6).map(v=>text(v)),limitations:(result.limitations || []).slice(0,6).map(v=>text(v))};
+    if(!Array.isArray(result.risks)||!Array.isArray(result.limitations)||result.risks.length>2||result.limitations.length>2)throw new Error('invalid_output');
+    return {schemaVersion:1,strategy:{summary:text(result.strategy.summary,180),priorities:(result.strategy.priorities || []).slice(0,3).map(v=>text(v))},actions,risks:result.risks.map(v=>text(v,180)),limitations:result.limitations.map(v=>text(v,180))};
   }
   function snapshot(adapter, profile, horizonRounds) {
     const input = adapter.read();
@@ -45,11 +69,14 @@
       const rawMatches=p.sourceSummary?.recentMatches || p.sourceSummary?.biwenger?.recentMatches;
       const includeDetail=detailed++<40;
       const matches=includeDetail&&Array.isArray(rawMatches)?rawMatches.slice(0,5).map(m=>`${text(m.date,20)} ${text(m.opponent,40)}: ${signed(m.points ?? m.score) ?? '?'} pts; ${m.played===false?'DNP':text(m.minutes ?? '?',5)+' min'}`).join(' | '):null;
-      const fixture=p.marketIntelligence?.nextMatch || p.nextMatch || p.nextFixture;
-      for (const [type,value] of [['health', p.health ? `${text(p.health.status,30)}; ${text(p.health.detail || p.health.reason,180)}; fuente ${text(p.health.source,60)||'no identificada'}; fecha ${text(p.health.updatedAt || p.health.fetchedAt,40)||'desconocida'}`:null], ['form',matches], ['fixture',includeDetail&&fixture?`${text(fixture.date || fixture.kickoff,40)} ${text(fixture.opponent || fixture.opponentName,80)} ${text(fixture.venue || fixture.homeAway,30)}`:null]]) {
+      const health=healthEvidence(p);
+      const fixtures=normalizedFixtures(adapter.fixtures?adapter.fixtures(p):p.marketIntelligence?.calendar?.matches || [p.nextMatch || p.nextFixture].filter(Boolean));
+      const fixture=includeDetail&&fixtures.length?fixtures.map(m=>`${m.date} vs ${m.opponent} (${m.venue||'sede desconocida'})`).join(' | '):null;
+      const role=includeDetail&&typeof p.marketIntelligence?.role==='string'?`Estimación del motor local, no rol confirmado: ${text(p.marketIntelligence.role,80)}. Titularidad derivada/importada ${Number.isFinite(Number(p.starter))?Math.max(0,Math.min(100,Number(p.starter)))+'/100':'sin dato'}; no probabilidad calibrada. Comprobar noticias y minutos.`:null;
+      for (const [type,value] of [['health',health?.value], ['form',matches], ['fixture',fixture],['roster',role]]) {
         if (!value) continue;
         const eid = `${type}:${id}`; refs.push(eid);
-        evidence.push({id:eid,type,playerId:id,source:'Datos disponibles en Radar',fetchedAt:text(p.fetchedAt || p.enrichedAt || ''),value:text(value,type==='form'?600:400)});
+        evidence.push({id:eid,type,playerId:id,source:type==='health'?health.source:type==='roster'?'Estimación del motor local':'Datos disponibles en Radar',fetchedAt:type==='health'?health.fetchedAt:text(p.fetchedAt || p.enrichedAt || ''),...(type==='health'&&health.url?{url:health.url}:{}),value:text(value,type==='form'||type==='health'?600:400)});
       }
       return {id,name:text(p.name,100),team:text(p.team,80),position:text(p.position,15),price:money(p.price || p.biwengerValue),points:signed(p.points),rationalMax:money(plan.rationalMax) || 0,recommendedBid:money(plan.recommendedBid) || 0,ownBid:money(plan.ownBidAmount) || 0,reliability:text(p.reliability?.label || p.confidence || ''),evidenceIds:refs};
     }
@@ -78,39 +105,52 @@
     if(trimmed)context.coverage.warnings.push('Se recortaron evidencias secundarias por el límite de transporte; se conserva el estado disponible de todos los jugadores.');
     context.coverage.commentsUsed=new Set(evidence.filter(e=>e.sourceKind==='comment_reply').map(e=>e.url)).size;return context;
   }
+  function renderPlan(container,value,context) {
+    const safe=validateResult(value,context);container.replaceChildren();
+    const add=(parent,tag,content,className)=>{const n=document.createElement(tag);n.textContent=content;if(className)n.className=className;parent.append(n);return n;};
+    const fold=(parent,label)=>{const d=document.createElement('details');add(d,'summary',label);parent.append(d);return d;};
+    const labels={buy:'Puja por',sell:'Vende',hold:'Mantén',avoid:'Evita',wait:'Espera con'};
+    const confidence={low:'baja',medium:'media',high:'alta'};
+    add(container,'strong',`Plan · ${context.horizonRounds===3?'próximas 3 jornadas':'próxima jornada'}`);
+    add(container,'small',new Date(value.generatedAt || Date.now()).toLocaleString('es-ES'),'market-ai-date');
+    const cite=(parent,e)=>{try{const u=new URL(e.url);if(u.protocol!=='https:'||u.username||u.password)return;const a=document.createElement('a');a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';const kind={news:'Noticia deportiva',opinion:'Opinión editorial',comment_reply:'Consulta y respuesta',unverified:'Enlace no verificado'}[e.sourceKind]||'Fuente';const identity=e.sourceKind==='comment_reply'?(e.authorRole==='publicly_attributed'?` · atribuida a ${e.authorName}; identidad no verificada`:e.authorRole==='unverified'?' · identidad no verificada':' · autoría identificada'):'';a.textContent=`${kind}: ${e.title || e.source} · ${e.source} · ${e.publishedAt?new Date(e.publishedAt).toLocaleDateString('es-ES'):e.fetchedAt?new Date(e.fetchedAt).toLocaleDateString('es-ES'):'fecha desconocida'}${identity}`;parent.append(a);}catch(_){} };
+    for(const a of [...safe.actions].sort((a,b)=>a.priority-b.priority)){
+      const row=document.createElement('article');row.className='market-ai-action';container.append(row);
+      const player=[...context.market,...context.squad].find(p=>p.id===a.playerId);
+      const heading=player?`${labels[a.type]} ${player.name}`:'Espera';
+      add(row,'p',`${heading}: ${a.reason}`,'market-ai-action-copy');
+      if(a.type==='buy')add(row,'strong',`${a.amount.toLocaleString('es-ES')} € · tope ${a.maximumAmount.toLocaleString('es-ES')} €`,'market-ai-bid');
+      a.prerequisites.forEach(v=>add(row,'small',`Sólo si: ${v}`,'market-ai-critical-condition'));
+      if(a.type==='sell')add(row,'small','Venta candidata; no cuentes el ingreso hasta confirmarla.','market-ai-critical-condition');
+      const detail=fold(row,'Motivos y fuentes');add(detail,'small',`Prioridad ${a.priority} · confianza ${confidence[a.confidence]}`);
+      if(a.type==='sell')add(detail,'small','Confirma oferta, precio y sustituto/cobertura deportiva antes de vender.');
+      for(const id of a.evidenceIds){const e=context.evidence.find(e=>e.id===id);if(!e)continue;if(e.url)cite(detail,e);else add(detail,'small',`${e.source}: ${e.value || e.title || 'Dato disponible'}${e.fetchedAt?' · '+e.fetchedAt:' · fecha desconocida'}`);}
+      if(!a.evidenceIds.length)add(detail,'small','Sin evidencia específica citada: revisa el contexto antes de operar.');
+    }
+    if(!safe.actions.length)add(container,'p',safe.strategy.summary);
+    const general=fold(container,'Contexto, cobertura y riesgos');
+    if(safe.actions.length)add(general,'p',safe.strategy.summary);
+    add(general,'small',`${context.market.length} candidatos · ${context.squad.length} propios · ${context.coverage.rivalsLoaded}/${context.coverage.rivalsTotal} plantillas rivales.`);
+    if(context.coverage.sources){const c=context.coverage.sources;add(general,'small',`JP: ${c.threadsRead||0} hilos y ${c.repliesRead||0} respuestas leídos · ${c.verified||0} con señal de autoría · ${c.unverified||0} sin identidad verificada · ${context.coverage.commentsUsed||0} incluidas.`);}
+    [...safe.risks,...safe.limitations,...context.coverage.warnings].forEach(v=>add(general,'small',v));
+    const cited=new Set(safe.actions.flatMap(a=>a.evidenceIds));for(const e of context.evidence.filter(e=>e.type==='news'&&!cited.has(e.id)))cite(general,e);
+    return safe;
+  }
   function mount(adapter) {
     const host = document.getElementById('market-ai-advisor'); if (!host) return;
     let generation = 0, scope = '', job = null, result = null, resultExpiry = 0, signature = '', controller = null, timer = null;
     const el = name => host.querySelector(`[data-ai="${name}"]`);
     const errors={advisor_not_enabled:'Esta cuenta no tiene habilitado el asesor.',worker_not_paired:'Empareja primero tu PC.',worker_auth:'Se ha revocado la conexión del PC.',job_pending:'Ya hay un análisis pendiente.',advisor_rate_limit:'Has alcanzado el límite de análisis. Inténtalo más tarde.',relay_busy:'El asesor está ocupado. Inténtalo más tarde.',expired:'El PC no completó el análisis a tiempo.',cli_failed:'Codex no pudo completar el análisis. Revisa el agente del PC.',cli_timeout:'El análisis del PC agotó el tiempo disponible.',invalid_output:'La respuesta no superó las comprobaciones. Vuelve a analizar.',invalid_budget:'La respuesta propuso importes incompatibles con tu presupuesto.',login_required:'Inicia sesión en Codex con ChatGPT en tu PC.',invalid_pair_code:'El código ya caducó o se utilizó.',pair_cooldown:'Espera unos segundos antes de generar otro código.',pair_rate_limit:'Demasiados intentos de emparejamiento. Espera unos minutos.',job_not_found:'El análisis ha caducado. Solicita uno nuevo.'};
     const message = v => { el('status').textContent = errors[v] || v; };
-    const cacheKey=()=>`fantasy-market-scout.market-ai.v2.${scope}`;
+    const cacheKey=()=>`fantasy-market-scout.market-ai.v3.${scope}`;
     const request = async (path, body, signal) => {
       const r = await adapter.fetch(`/api/market-advisor${path}`, body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal} : {signal});
       const data = await r.json(); if (!r.ok) throw new Error(data.error || 'No se pudo completar la solicitud'); return data;
     };
     function reset(preserve=false) { generation++; controller?.abort(); clearTimeout(timer); job = null; if(!preserve){result=null;el('result').replaceChildren();} el('pair-code').textContent=''; el('analyze').disabled=false; el('cancel').hidden=true; }
     function render(value, context) {
-      const safe = validateResult(value,context); const container=el('result'); container.replaceChildren();
-      const add=(tag,t)=>{const n=document.createElement(tag);n.textContent=t;container.append(n);};
-      add('strong','Plan IA · '+new Date(value.generatedAt || Date.now()).toLocaleString('es-ES')); add('p',safe.strategy.summary);
-      add('small',`Cobertura: ${context.market.length} candidatos · ${context.squad.length} propios · ${context.coverage.rivalsLoaded}/${context.coverage.rivalsTotal} plantillas rivales.`);
-      if(context.coverage.sources){const c=context.coverage.sources;add('small',`Comentarios JP: ${c.threadsRead || 0} hilos y ${c.repliesRead || 0} respuestas leídos · ${c.verified || 0} con señal de autoría · ${c.unverified || 0} sin identidad verificada · ${context.coverage.commentsUsed || 0} respuestas incluidas.`);}
-      safe.strategy.priorities.forEach(v=>add('p','• '+v));
-      const labels={buy:'Pujar por',sell:'Vender',hold:'Conservar',avoid:'Evitar',wait:'Esperar'};
-      const nominees=safe.actions.filter(a=>a.playerId).sort((a,b)=>a.priority-b.priority).slice(0,3).map(a=>`${labels[a.type]} ${[...context.market,...context.squad].find(p=>p.id===a.playerId)?.name || ''}`);
-      if(nominees.length)add('p',nominees.join(' · '));
-      const confidence={low:'baja',medium:'media',high:'alta'};
-      const cite=e=>{try{const u=new URL(e.url);if(u.protocol!=='https:')return;const a=document.createElement('a');a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';const kind={news:'Noticia deportiva',opinion:'Opinión editorial',comment_reply:'Consulta y respuesta',unverified:'Enlace no verificado'}[e.sourceKind]||'Fuente';const identity=e.sourceKind==='comment_reply'?(e.authorRole==='publicly_attributed'?` · atribuida públicamente a ${e.authorName}; identidad no verificada`:e.authorRole==='unverified'?' · identidad no verificada':' · autoría identificada') : '';a.textContent=`${kind}: ${e.title} · ${e.source} · ${new Date(e.publishedAt).toLocaleDateString('es-ES')}${identity}`;container.append(a);}catch(_){} };
-      safe.actions.forEach(a=>{
-        add('p',`${labels[a.type]} ${[...context.market,...context.squad].find(p=>p.id===a.playerId)?.name || ''} · prioridad ${a.priority} · confianza ${confidence[a.confidence]}${a.amount!==null?' · puja recomendada '+a.amount.toLocaleString('es-ES')+' €':''}${a.maximumAmount !== null ? ' · tope '+a.maximumAmount.toLocaleString('es-ES')+' €' : ''}: ${a.reason}`);
-        a.prerequisites.forEach(v=>add('small',`Condición: ${v}`));
-        if(a.type==='sell')add('small','Venta candidata: confirma una oferta y su precio, y mantén cobertura deportiva. El ingreso no se suma al presupuesto hasta completar la venta.');
-        a.evidenceIds.map(id=>context.evidence.find(e=>e.id===id)).filter(e=>e?.type==='news').forEach(cite);
-      });
-      const cited=new Set(safe.actions.flatMap(a=>a.evidenceIds));for(const e of context.evidence.filter(e=>e.type==='news'&&!cited.has(e.id)))cite(e);
-      [...safe.risks,...safe.limitations,...context.coverage.warnings].forEach(v=>add('small',v));
-      result=safe;resultExpiry=(Date.parse(value.generatedAt)||Date.now())+900000;
+      result=renderPlan(el('result'),value,context);
+      resultExpiry=(Date.parse(value.generatedAt)||Date.now())+900000;
     }
     async function status() {if(job)return;const g=generation;try {const s=await request('/status');if(g!==generation)return;host.hidden=!s.enabled; message(s.paired ? s.workerOnline ? 'PC conectado. Análisis manual con tu cuenta ChatGPT.' : 'PC sin conexión reciente. Enciéndelo y ejecuta el agente.' : 'Empareja tu PC para usar tu cuenta ChatGPT.');el('analyze').disabled=!s.paired;el('revoke').hidden=!s.paired;} catch(e){if(g===generation)message(result?'Sin conexión. Conservas el plan anterior con su fecha.':e.message);} }
     async function cancelChangedJob() {
@@ -135,5 +175,5 @@
     const heartbeat=()=>{if(scope&&!document.hidden&&host.closest('.view')?.classList.contains('active')){if(result&&!job&&Date.now()>resultExpiry){try{localStorage.removeItem(cacheKey());}catch(_){}reset();message('El plan ha caducado. Actualiza el análisis antes de operar.');}else void status();}setTimeout(heartbeat,30000);};setTimeout(heartbeat,30000);
     return {refresh(){const next=adapter.scope();if(next!==scope){scope=next;reset();if(next){try{const cached=JSON.parse(localStorage.getItem(cacheKey()));if(cached&&cached.expires>Date.now()&&cached.signature===adapter.signature()){signature=cached.signature;render(cached.result,cached.context);}else localStorage.removeItem(cacheKey());}catch(_){}status();}}else if(job&&signature!==adapter.signature()){void cancelChangedJob();}else if(result&&signature!==adapter.signature()){try{localStorage.removeItem(cacheKey());}catch(_){}reset();message('Datos actualizados: vuelve a analizar.');}}};
   }
-  const api={snapshot,standing,validateResult,mount}; if(typeof module==='object')module.exports=api;else root.RadarMarketAI=api;
+  const api={snapshot,standing,healthEvidence,normalizedFixtures,newsSample,renderPlan,validateResult,mount}; if(typeof module==='object')module.exports=api;else root.RadarMarketAI=api;
 })(typeof window==='object'?window:globalThis);

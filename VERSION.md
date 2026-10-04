@@ -1,3 +1,13 @@
+# Versión 3.13.12
+
+Fecha de publicación: 2026-10-04
+
+- Consulta IA individual desde las fichas y listas de Mercado y Plantilla, con respuesta en diálogo y sin sustituir el plan general.
+- Prioriza al jugador consultado y conserva presupuesto, evidencias y comparaciones con la plantilla real.
+- Revisa la plantilla incluida, jugadores recuperados y fichajes recomendados, con señales de puntos y variación de valor sin prometer ganancias.
+- Añade una lectura breve de rivales visibles, con cobertura resumida y presupuestos ocultos desconocidos.
+- Actualiza la racha oficial con cargas de duración limitada y permite reintentar tras 45 segundos cuando fallan.
+
 # Versión 3.13.11
 
 Fecha de publicación: 2026-10-04

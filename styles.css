@@ -9580,3 +9580,12 @@ html[data-theme="day"] .home-opportunity-list {
 .market-ai-critical-condition { line-height: 1.4; }
 .market-ai-action details a, .market-ai-advisor [data-ai="result"] > details a { display: block; margin-top: 8px; overflow-wrap: anywhere; }
 .market-ai-action summary, .market-ai-advisor [data-ai="result"] > details > summary { font-size: .85rem; cursor: pointer; }
+.player-ai-button { min-width: 44px; min-height: 44px; margin-left: auto; border: 1px solid var(--border, #ccd3de); border-radius: 12px; font-weight: 750; cursor: pointer; }
+.player-ai-button:focus-visible { outline: 3px solid #477df0; outline-offset: 2px; }
+.market-card-score .player-ai-button { align-self: flex-end; }
+.player-ai-dialog { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 18px; border: 1px solid var(--border, #ccd3de); border-radius: 18px; overflow: auto; background: var(--surface, #fff); color: var(--text, #192233); }
+.player-ai-dialog::backdrop { background: rgb(15 23 42 / 55%); }
+.player-ai-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.player-ai-dialog button { min-height: 44px; min-width: 44px; }
+.player-ai-dialog small, .player-ai-dialog details a { display: block; margin-top: 7px; overflow-wrap: anywhere; }
+.player-ai-dialog summary { cursor: pointer; }

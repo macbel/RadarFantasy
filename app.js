@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.11";
-const APP_VERSION_CODE = 69;
+const APP_VERSION = "3.13.12";
+const APP_VERSION_CODE = 70;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -4351,6 +4351,15 @@ const favoritePlayerKey = (player) => {
 
 const isFavoritePlayer = (player) => state.favorites.some((favorite) => favoritePlayerKey(favorite) === favoritePlayerKey(player));
 
+let marketAIEnabled = false;
+const marketAIPlayerId = player => String(player.biwengerPlayerId || player.playerId || player.id || "");
+const renderPlayerAIButton = (player, origin) => {
+  const id=marketAIPlayerId(player);
+  if(!id)return "";
+  if(origin==="market"&&platformUserCanAccess("team")&&state.teamPlayers.some(p=>marketAIPlayerId(p)===id))origin="squad";
+  return `<button type="button" class="player-ai-button" data-player-ai-id="${escapeHtml(id)}" data-player-ai-origin="${origin}" aria-label="Consultar IA sobre ${escapeHtml(player.name)}" title="Consultar IA sobre ${escapeHtml(player.name)}" ${marketAIEnabled?"":"hidden"}>IA</button>`;
+};
+
 const renderFavoriteButton = (player, compact = false) => {
   const active = isFavoritePlayer(player);
   return `<button class="favorite-toggle ${compact ? "compact" : ""} ${active ? "active" : ""}" type="button" data-favorite-player="${escapeHtml(favoritePlayerKey(player))}" aria-label="${active ? "Quitar de favoritos" : "Añadir a favoritos"}" title="${active ? "Quitar de favoritos" : "Seguir jugador"}">★</button>`;
@@ -5702,7 +5711,8 @@ const recentDisplayHistoryMatches = (player) => {
   const context = activeFixtureContext();
   const season = String(summary.biwengerHistorySeasonId || "");
   const official = primary.filter((match) => match?.matchKey?.startsWith(`biwenger:${context.exactCompetitionSlug}:`)
-    && (!season || String(match.seasonId) === season) && match.scoreScope === "match");
+    && (!season || String(match.seasonId) === season) && match.scoreScope === "match"
+    && (!match.scoreSystemId || Number(match.scoreSystemId) === Number(state.biwenger.scoreId)));
   return { matches: recentMatchesNewestFirst(official).slice(0, 5), usesPreviousSeason: false, seasonLabel: state.leagueFixtures?.seasonName || "" };
 };
 
@@ -5836,13 +5846,17 @@ const recentMatchNeedsHydration = (match, score) => {
 const renderRecentFormDots = (player) => {
   const history = recentDisplayHistoryMatches(player);
   const matches = history.matches;
-  const loading = Number(player?.biwengerPlayerId || 0) > 0 && !player?.sourceSummary?.biwengerHistoryLoaded;
+  const historyError = state.recentDetailsCache[recentPlayerKey(player)]?.error;
+  const loading = Number(player?.biwengerPlayerId || 0) > 0 && !player?.sourceSummary?.biwengerHistoryLoaded && !historyError;
   const padded = [...recentMatchesNewestFirst(matches).slice(0, 5), ...Array(Math.max(0, 5 - matches.length)).fill(null)];
   const playerAttrs = `data-recent-player-id="${escapeHtml(player?.id || "")}" data-recent-biwenger-id="${escapeHtml(player?.biwengerPlayerId || "")}" data-recent-player-name="${escapeHtml(player?.name || "")}"`;
   return `
     <span class="recent-form-dots" title="${escapeHtml(`Partidos jugados esta temporada según ${scoringLabel()}`)}">
       ${padded.map((match, index) => {
-        if (!match) return `<span class="recent-dot ${loading ? "unknown" : "missing"}" title="${loading ? "Cargando partidos" : "Sin dato"}" aria-label="${loading ? "Cargando partidos" : "Sin dato"}" ${loading ? playerAttrs : ""}></span>`;
+        if (!match) {
+          const label = historyError ? "Historial no disponible. Vuelve a consultar en 45 segundos." : loading ? "Cargando partidos" : "Sin partidos registrados";
+          return `<span tabindex="0" role="button" class="recent-dot ${loading ? "unknown" : "missing"}" title="${label}" aria-label="${label}" ${playerAttrs}></span>`;
+        }
         const score = selectedRecentScore(match);
         const played = recentMatchWasPlayed(match, score);
         const detail = recentMatchDetail(match, score, played, player.sourceSummary?.sourceRecentMatches || []);
@@ -10022,7 +10036,7 @@ const openRecentFormPopover = (button) => {
 const recentPlayerKey = (player) => {
   const context = activeFixtureContext();
   return [state.activeLeagueId, context.biwengerLeagueId, context.exactCompetitionSlug,
-    player?.sourceSummary?.biwengerHistorySeasonId || "selected", state.biwenger.scoreId, player?.biwengerPlayerId || player?.id || normalize(player?.name || ""),
+    state.auth.user?.id || "", state.biwenger.contextGeneration, state.biwenger.scoreId, player?.biwengerPlayerId || player?.id || normalize(player?.name || ""),
     "biwenger-player-history-v1"].join(":");
 };
 
@@ -10030,8 +10044,9 @@ const recentHistoryQueue = [];
 const recentHistoryQueued = new Set();
 let recentHistoryRunning = 0;
 const preloadRecentHistory = (player) => {
-  if (!player?.biwengerPlayerId || !canUseApi() || !state.biwenger.connected || player.sourceSummary?.biwengerHistoryLoaded) return;
+  if (!player?.biwengerPlayerId || !canUseApi()) return;
   const key = recentPlayerKey(player);
+  if (player.sourceSummary?.biwengerHistoryContext === key && player.sourceSummary?.biwengerHistoryFetchedAt > Date.now() - 600000) return;
   const cached = state.recentDetailsCache[key];
   if (cached?.expiresAt > Date.now() && cached.payload) {
     applyRecentDetailsToPlayer(player, cached.payload);
@@ -10040,37 +10055,70 @@ const preloadRecentHistory = (player) => {
   }
   if (recentHistoryQueued.has(key) || cached?.pending || cached?.retryAt > Date.now()) return;
   recentHistoryQueued.add(key);
-  recentHistoryQueue.push({ player, key, generation: state.biwenger.contextGeneration });
+  recentHistoryQueue.push({ player, key, generation: state.biwenger.contextGeneration, competition: activeFixtureContext().exactCompetitionSlug, scoreId: state.biwenger.scoreId });
   void drainRecentHistoryQueue();
 };
 
 const drainRecentHistoryQueue = async () => {
   while (recentHistoryRunning < 3 && recentHistoryQueue.length) {
     const task = recentHistoryQueue.shift();
+    if (task.generation !== state.biwenger.contextGeneration || task.key !== recentPlayerKey(task.player)) { recentHistoryQueued.delete(task.key); continue; }
     recentHistoryRunning++;
     void (async () => {
+      const controller = new AbortController();
+      let timeout;
       try {
+        const request = (async () => {
         const response = await apiFetch("/api/player/recent-details", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ competition: activeFixtureContext().exactCompetitionSlug,
-            seasonId: "", scoreId: state.biwenger.scoreId,
+          signal: controller.signal,
+          body: JSON.stringify({ competition: task.competition, officialOnly: true,
+            seasonId: "", scoreId: task.scoreId,
             player: { biwengerPlayerId: task.player.biwengerPlayerId, name: task.player.name } })
         });
         const payload = await response.json();
         if (!response.ok || !payload.ok || payload.provider !== "biwenger") throw new Error(payload.error || "Historial oficial no disponible");
+        return payload;
+        })();
+        const payload = await Promise.race([request, new Promise((_, reject) => {
+          timeout = setTimeout(() => { controller.abort(); reject(new Error("La consulta del historial ha tardado demasiado")); }, 18000);
+        })]);
         if (task.generation !== state.biwenger.contextGeneration || task.key !== recentPlayerKey(task.player)) return;
         state.recentDetailsCache[task.key] = { payload, expiresAt: Date.now() + 600000 };
         applyRecentDetailsToPlayer(task.player, payload);
         rerenderRecentFormForPlayer(task.player);
       } catch (error) {
-        state.recentDetailsCache[task.key] = { retryAt: Date.now() + 45000, error: error.message };
+        if (task.generation === state.biwenger.contextGeneration && task.key === recentPlayerKey(task.player)) {
+          state.recentDetailsCache[task.key] = { retryAt: Date.now() + 45000, error: error.message };
+          rerenderRecentFormForPlayer(task.player);
+        }
       } finally {
+        clearTimeout(timeout);
         recentHistoryQueued.delete(task.key);
         recentHistoryRunning--;
         void drainRecentHistoryQueue();
       }
     })();
   }
+};
+
+const ensureRecentHistoryForPlayer = async (player, signal) => {
+  if (!player?.biwengerPlayerId || !canUseApi()) return false;
+  const key = recentPlayerKey(player);
+  preloadRecentHistory(player);
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    if (signal?.aborted || key !== recentPlayerKey(player)) return false;
+    const cached = state.recentDetailsCache[key];
+    if (cached?.payload && cached.expiresAt > Date.now()) {
+      if (player.sourceSummary?.biwengerHistoryContext !== key) applyRecentDetailsToPlayer(player, cached.payload);
+      return true;
+    }
+    if (player.sourceSummary?.biwengerHistoryContext === key && player.sourceSummary?.biwengerHistoryFetchedAt > Date.now() - 600000) return true;
+    if (state.recentDetailsCache[key]?.error) return false;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
 };
 
 const scanVisibleRecentHistory = () => {
@@ -10164,7 +10212,9 @@ const applyRecentDetailsToPlayer = (player, payload) => {
   const recentMatches = (payload.recentMatches || []).filter((match) => match?.scoreScope === "match" && match?.matchKey?.startsWith("biwenger:"));
   const sourceRecentMatches = player.sourceSummary?.sourceRecentMatches || [];
   const matchesPlayer = (item) => item.id === player.id || (player.biwengerPlayerId && Number(item.biwengerPlayerId || 0) === Number(player.biwengerPlayerId));
-  const replace = (item) => ({ ...replaceRecentPlayer(item, recentMatches, payload), sourceSummary: { ...replaceRecentPlayer(item, recentMatches, payload).sourceSummary, sourceRecentMatches, biwengerHistoryLoaded: true, biwengerHistorySeasonId: payload.seasonId } });
+  const historyContext = recentPlayerKey(player);
+  const historyFetchedAt = Date.now();
+  const replace = (item) => ({ ...replaceRecentPlayer(item, recentMatches, payload), sourceSummary: { ...replaceRecentPlayer(item, recentMatches, payload).sourceSummary, sourceRecentMatches, biwengerHistoryLoaded: true, biwengerHistorySeasonId: payload.seasonId, biwengerHistoryContext: historyContext, biwengerHistoryFetchedAt: historyFetchedAt } });
   state.players = state.players.map((item) => matchesPlayer(item) ? replace(item) : item);
   state.teamPlayers = state.teamPlayers.map((item) => matchesPlayer(item) ? replace(item) : item);
   if (state.rivalTeam?.players) {
@@ -10179,6 +10229,8 @@ const applyRecentDetailsToPlayer = (player, payload) => {
     sourceRecentMatches,
     biwengerHistoryLoaded: true,
     biwengerHistorySeasonId: payload.seasonId,
+    biwengerHistoryContext: historyContext,
+    biwengerHistoryFetchedAt: historyFetchedAt,
     apiFootball: payload.apiFootball || player.sourceSummary?.apiFootball || null,
     feeberse: payload.feeberse || player.sourceSummary?.feeberse || null
   };
@@ -10287,7 +10339,7 @@ const rerenderRecentFormForPlayer = (player, selectedMatchKey = "") => {
 
 const hydrateRecentFormButton = async (button) => {
   const player = findRecentPlayer(button);
-  if (player && !player.sourceSummary?.biwengerHistoryLoaded) preloadRecentHistory(player);
+  if (player) preloadRecentHistory(player);
 };
 const handleRecentDotInteraction = (event) => {
   const button = event.target.closest?.(".recent-dot");
@@ -10303,7 +10355,8 @@ const handleRecentDotInteraction = (event) => {
 
 const handleRecentDotHover = (event) => {
   const button = event.target.closest?.(".recent-dot");
-  if (!button || !button.dataset.recentDetail) return;
+  if (!button) return;
+  if (!button.dataset.recentDetail) { const player = findRecentPlayer(button); if (player) preloadRecentHistory(player); return; }
   openRecentFormPopover(button);
 };
 
@@ -12069,7 +12122,7 @@ const renderTable = ({ includeStrategic = true } = {}) => {
       <td>${renderProfileLink(player)}</td>
       <td>
         <div class="score-meter">
-          <strong>${player.recommendation}</strong>
+          <strong>${player.recommendation}</strong>${renderPlayerAIButton(player, "market")}
           <div class="bar"><span style="--width: ${player.recommendation}%"></span></div>
         </div>
       </td>
@@ -12090,6 +12143,7 @@ const renderTable = ({ includeStrategic = true } = {}) => {
             </div>
           </div>
           <div class="market-card-score">
+            ${renderPlayerAIButton(player, "market")}
             <span class="market-card-score-label">Análisis</span>
             <strong>${player.recommendation}</strong>
           </div>
@@ -12312,6 +12366,7 @@ const buildDetailMarkup = (player) => {
         <span>${player.recommendation}</span>
       </div>
     </div>
+    ${renderPlayerAIButton(player, "market")}
     ${renderDecisionDetail(player)}
     <section class="smart-bid-detail">
       <div class="section-heading compact-heading">
@@ -12474,6 +12529,7 @@ const buildTeamPlayerDetailMarkup = (player) => {
         <div class="detail-stat"><span>Rol esperado</span><strong>${escapeHtml(intelligence.role)}</strong></div>
       </div>
       <div class="team-detail-actions">
+        ${renderPlayerAIButton(player, "squad")}
         ${renderFavoriteButton(player, true)}
         ${renderHealthBadge(player)}
         ${renderValueTrend(player, { compact: true })}
@@ -12627,6 +12683,7 @@ const renderTeam = () => {
               <span>${renderPositionIcon(player.position, compactPoints(playerAccumulatedPoints(player)), { title: `${playerAccumulatedPoints(player).toLocaleString("es-ES")} puntos Biwenger` })} ${playerEligiblePositions(player).length > 1 ? `<b class="multi-position-label">${playerEligiblePositions(player).join("/")}</b>` : ""} ${renderScoringBadge(player)} ${escapeHtml(player.team)} · ${player.starter}% titular${hasOffer ? ` · <button class="team-offer-chip" type="button" data-open-offer-player="${player.biwengerPlayerId}">Ver oferta ${formatFinanceMoney(incomingOffer.amount)}</button>` : ""}</span>
             </div>
             <div class="mini-player-actions">
+              ${renderPlayerAIButton(player, "squad")}
               ${renderFavoriteButton(player, true)}
               ${renderValueTrend(player, { compact: true })}
               ${renderHealthBadge(player)}
@@ -15344,33 +15401,52 @@ const marketAIController = window.RadarMarketAI?.mount({
   plan: smartBidPlan,
   fixtures: (player) => upcomingMatchesForPlayer(player, 3),
   scope: marketAIScope,
-  prepare: async (signal) => {
+  availability: (enabled) => {marketAIEnabled=enabled;qsa("[data-player-ai-id]").forEach(button=>{button.hidden=!enabled;});},
+  prepare: async (signal, focus) => {
     const scope=marketAIScope();marketAIWarnings=[];
+    if(focus){const player=(focus.origin==='squad'?state.teamPlayers:state.players).find(p=>marketAIPlayerId(p)===focus.id);if(player&&!await ensureRecentHistoryForPlayer(player,signal))marketAIWarnings.push('La racha oficial del jugador consultado no pudo completarse; no se interpreta como ausencia de minutos.');if(signal.aborted||scope!==marketAIScope())return;}
     for (const [key,r] of marketAIRivals) if(r.scope!==scope||Date.now()-r.fetchedAt>=21600000)marketAIRivals.delete(key);
-    const selected=window.RadarMarketAI.newsSample(assistantMarketPlayers(),platformUserCanAccess("team")?assistantTeamPlayers():[]);
+    const selected=window.RadarMarketAI.newsSample(assistantMarketPlayers(),platformUserCanAccess("team")?assistantTeamPlayers():[],focus);
     marketAIWarnings.push('Actualización de noticias limitada a 8 candidatos y 8 jugadores propios; se reutilizan también noticias recientes ya disponibles.');
-    if(marketAINewsScope!==scope||Date.now()-Date.parse(marketAINewsAt)>300000){
-      try{const r=await apiFetch('/api/market-advisor/news',{method:'POST',headers:{'Content-Type':'application/json'},signal,body:JSON.stringify({competition:state.competition,knownArticles:[...(platformUserCanAccess("team")?state.teamNews:[]),...(platformUserCanAccess("favorites")?state.favoriteNews:[]),...(marketAINewsScope===scope?marketAINews:[])].flatMap(p=>p.articles||[]).map(a=>a.link).filter(url=>typeof url==="string" && /^https:\/\/(www\.)?jornadaperfecta\.com\/blog\//.test(url)).slice(0,16),players:selected.map(p=>({key:favoritePlayerKey(p),name:p.name,team:p.team,clubTeam:p.clubTeam||p.baseTeam||'',nationalTeam:p.nationalTeam||'',position:p.position,biwengerPlayerId:Number(p.biwengerPlayerId)||null}))})});const data=await r.json();if(!r.ok)throw new Error('news_unavailable');if(scope!==marketAIScope())return;marketAINews=data.players||[];marketAISourceCoverage=data.coverage||null;marketAIWarnings.push(...(data.coverage?.warnings||[]));marketAINewsAt=data.generatedAt||new Date().toISOString();marketAINewsScope=scope;}catch(_){marketAIWarnings.push('No se pudieron actualizar todas las noticias.');}
+    const hasFocusNews=!focus||marketAINews.some(p=>String(p.biwengerPlayerId || p.playerId || p.id)===focus.id);
+    if(marketAINewsScope!==scope||Date.now()-Date.parse(marketAINewsAt)>300000||!hasFocusNews){
+      try{const r=await apiFetch('/api/market-advisor/news',{method:'POST',headers:{'Content-Type':'application/json'},signal,body:JSON.stringify({competition:state.competition,knownArticles:[...(platformUserCanAccess("team")?state.teamNews:[]),...(platformUserCanAccess("favorites")?state.favoriteNews:[]),...(marketAINewsScope===scope?marketAINews:[])].flatMap(p=>p.articles||[]).map(a=>a.link).filter(url=>typeof url==="string" && /^https:\/\/(www\.)?jornadaperfecta\.com\/blog\//.test(url)).slice(0,16),players:selected.map(p=>({key:favoritePlayerKey(p),name:p.name,team:p.team,clubTeam:p.clubTeam||p.baseTeam||'',nationalTeam:p.nationalTeam||'',position:p.position,biwengerPlayerId:Number(p.biwengerPlayerId)||null}))})});const data=await r.json();if(!r.ok)throw new Error('news_unavailable');if(scope!==marketAIScope())return;marketAINews=data.players||[];marketAISourceCoverage=data.coverage||null;marketAIWarnings.push(...(data.coverage?.warnings||[]));marketAINewsAt=data.generatedAt||new Date().toISOString();marketAINewsScope=scope;}catch(_){marketAIWarnings.push(focus?'No se pudieron actualizar las noticias del jugador consultado; se usan sólo evidencias disponibles, sin garantizar cobertura reciente.':'No se pudieron actualizar todas las noticias.');}
     }
     if(!platformUserCanAccess('league')||!state.biwenger.connected)return;
     const rows=(state.leagueOverview?.standings||[]).filter(r=>!r.isMe&&Number(r.userId)!==Number(state.biwenger.userId));const start=Date.now();
     let cursor=0;
     const load=async()=>{while(cursor<rows.length&&Date.now()-start<18000&&!signal.aborted){const row=rows[cursor++];const id=Number(row.userId||row.id);if(!id)continue;const key=`${scope}:${id}`;const cached=marketAIRivals.get(key);if(cached&&Date.now()-cached.fetchedAt<21600000)continue;try{const boundedSignal=AbortSignal.any([signal,AbortSignal.timeout(Math.max(1,18000-(Date.now()-start)))]);const r=await apiFetch('/api/biwenger/rival-team',{method:'POST',headers:{'Content-Type':'application/json'},signal:boundedSignal,body:JSON.stringify({userId:id})});if(r.status===429){cursor=rows.length;marketAIWarnings.push('Cobertura rival parcial por límite de Biwenger.');break;}const data=await r.json();if(r.ok&&scope===marketAIScope()&&Array.isArray(data.players))marketAIRivals.set(key,{scope,fetchedAt:Date.now(),data:{...data,userId:id,rank:row.rank||row.position,points:row.points}});}catch(_){marketAIWarnings.push('Alguna plantilla rival no está disponible.');break;}}};await Promise.all([load(),load()]);
   },
-  signature: () => JSON.stringify([marketAIScope(),state.players.map(p=>[p.id,p.price,p.health,p.starter,p.sourceSummary?.recentMatches,p.sourceSummary?.biwenger?.recentMatches]),state.teamPlayers.map(p=>[p.id,p.health,p.starter,p.sourceSummary?.recentMatches,p.sourceSummary?.biwenger?.recentMatches]),state.leagueFixtures,state.finance,state.biwengerOperations,state.leagueOverview,state.rivalTeam,state.teamNews,state.favoriteNews,marketAINewsAt]),
+  signature: () => JSON.stringify([marketAIScope(),state.players.map(p=>[p.id,p.price,p.biwengerDiff,p.marketIntelligence?.expectedPoints,p.health,p.starter,p.sourceSummary?.recentMatches,p.sourceSummary?.biwenger?.recentMatches]),state.teamPlayers.map(p=>[p.id,p.price,p.biwengerDiff,p.marketIntelligence?.expectedPoints,p.health,p.starter,p.sourceSummary?.recentMatches,p.sourceSummary?.biwenger?.recentMatches]),state.leagueFixtures,state.finance,state.biwengerOperations,state.leagueOverview,state.rivalTeam,state.teamNews,state.favoriteNews,marketAINewsAt]),
   read: () => {
     const scope=marketAIScope();
     if (platformUserCanAccess("league") && state.rivalTeam?.players?.length) marketAIRivals.set(`${scope}:${state.rivalTeam.userId || state.rivalTeam.id || 'visible'}`,{scope,fetchedAt:Date.now(),data:state.rivalTeam});
     const standings=platformUserCanAccess("league") ? state.leagueOverview?.standings || [] : [];
     const myStanding=window.RadarMarketAI.standing(standings,state.biwenger.userId);
-    const rivals=[...marketAIRivals.values()].filter(r=>r.scope===scope&&Date.now()-r.fetchedAt<21600000).slice(0,50).map((r,i)=>{
+    const rivals=[...marketAIRivals.values()].filter(r=>r.scope===scope&&Date.now()-r.fetchedAt<21600000).sort((a,b)=>Math.abs(Number(a.data.rank||100)-Number(myStanding?.rank||1))-Math.abs(Number(b.data.rank||100)-Number(myStanding?.rank||1))).slice(0,20).map((r,i)=>{
       const counts={},absent={};for(const p of r.data.players){const pos=p.position||'?';counts[pos]=(counts[pos]||0)+1;if(['injured','suspended','doubtful'].includes(p.health?.status))absent[pos]=(absent[pos]||0)+1;}
-      const threats=[...r.data.players].sort((a,b)=>Number(b.points||b.totalPoints||0)-Number(a.points||a.totalPoints||0)).slice(0,3).map(p=>`${p.name} ${p.position} ${p.points??p.totalPoints??'?'}pts ${p.health?.status||'estado desconocido'}`).join('; ');
-      return {alias:`R${i+1}`,rank:r.data.rank || null,points:r.data.points ?? null,summary:`Plantilla visible ${r.data.players.length}. Por posición ${JSON.stringify(counts)}. Bajas/dudas ${JSON.stringify(absent)}. Amenazas visibles ${threats}. Fecha ${new Date(r.fetchedAt).toISOString()}. Necesidades inferidas de cobertura, saldo y pujas ocultos desconocidos.`};
+      const ordered=[...r.data.players].sort((a,b)=>Number(b.points||b.totalPoints||0)-Number(a.points||a.totalPoints||0));
+      const relevant=[...ordered.slice(0,3),...ordered.filter(p=>['injured','suspended','doubtful'].includes(p.health?.status)),...ordered];const seen=new Set();const names=[];let diffTotal=0,diffKnown=0,minutes=0,minutesKnown=0;
+      for(const p of r.data.players){const d=p.biwengerDiff??p.sourceSummary?.fantasy?.biwengerDiff;if(typeof d==='number'&&Number.isFinite(d)){diffTotal+=d;diffKnown++;}for(const m of (p.sourceSummary?.recentMatches||p.sourceSummary?.biwenger?.recentMatches||[]).slice(0,3))if(typeof m.minutes==='number'&&Number.isFinite(m.minutes)){minutes+=m.minutes;minutesKnown++;}}
+      for(const p of relevant){const id=String(p.biwengerPlayerId||p.id||p.name);if(seen.has(id))continue;seen.add(id);names.push(`${p.name} ${p.position} ${p.points??p.totalPoints??'?'}pts ${p.health?.status||'estado desconocido'}`);if(names.length>=6)break;}const threats=names.join('; ');
+      return {alias:`R${i+1}`,name:String(r.data.name||''),rank:r.data.rank || null,points:r.data.points ?? null,summary:`Plantilla visible ${r.data.players.length}. Por posición ${JSON.stringify(counts)}. Bajas/dudas ${JSON.stringify(absent)}. Jugadores destacados/bajas (máximo 6) ${threats}. Variación valor conocida ${diffKnown}/${r.data.players.length}: ${diffKnown?diffTotal:'desconocida'}; media minutos de registros recientes ${minutesKnown?Math.round(minutes/minutesKnown):'desconocida'}. Fecha ${new Date(r.fetchedAt).toISOString()}. Necesidades inferidas de cobertura, saldo y pujas ocultos desconocidos.`.slice(0,1000)};
     });
+    if(marketAIRivals.size>20)marketAIWarnings.push('Se resumen las 20 plantillas rivales más cercanas; se agregan todos sus jugadores visibles y se citan hasta 6 destacados por rival.');
     const max=currentMaximumBid();
     return {market:assistantMarketPlayers(),squad:platformUserCanAccess("team")?assistantTeamPlayers():[],finance:{...state.finance,maximumBid:max},budget:Number.isFinite(assistantBidBudget())?Math.floor(assistantBidBudget()):null,leagueId:String(state.biwenger.leagueId||state.activeLeagueId||''),competition:state.biwenger.competition,scoring:state.biwenger.scoring,myStanding,rivals,rivalsTotal:Math.max(0,standings.length-1),news:[...(marketAINewsScope===scope?marketAINews:[]),...(platformUserCanAccess('team')?state.teamNews:[]),...(platformUserCanAccess('favorites')?state.favoriteNews:[])],newsFetchedAt:marketAINewsAt,sourceCoverage:marketAINewsScope===scope?marketAISourceCoverage:null,warnings:marketAIWarnings};
   }
 });
+
+// Capture before card/row handlers so pointer and keyboard activation only consults IA.
+if(typeof document==='object'){
+document.addEventListener("click", event => {
+  const button=event.target.closest?.("[data-player-ai-id]");if(!button)return;
+  event.preventDefault();event.stopPropagation();
+  marketAIController?.consult(button.dataset.playerAiId,button.dataset.playerAiOrigin);
+}, true);
+document.addEventListener("keydown", event => {
+  const button=event.target.closest?.("[data-player-ai-id]");if(button&&["Enter"," "].includes(event.key))event.stopPropagation();
+}, true);
+}
 
 void init();

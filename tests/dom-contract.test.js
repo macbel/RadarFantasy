@@ -16,6 +16,10 @@ const ids = new Set(
   Array.from(html.matchAll(/\sid="([^"]+)"/g)).map((match) => match[1])
 );
 
+if (!js.includes('aria-label="Consultar IA sobre') || !js.includes('data-player-ai-origin') || !js.includes('event.preventDefault();event.stopPropagation();') || !css.includes('.player-ai-button { min-width: 44px; min-height: 44px;') || !css.includes('.player-ai-button:focus-visible')) {
+  throw new Error('Individual AI controls must be labelled, keyboard accessible, separate from card selection, and at least 44px');
+}
+
 const queriedIds = Array.from(js.matchAll(/qs\(["']#([a-zA-Z0-9_-]+)["']\)/g))
   .map((match) => match[1])
   .filter((id) => !id.includes("$"));
@@ -88,7 +92,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=143') || !html.includes('styles.css?v=81') || !html.includes('mobile-local-first.js?v=4') || !sw.includes('radar-fantasy-shell-v94')) {
+if (!html.includes('app.js?v=144') || !html.includes('styles.css?v=82') || !html.includes('mobile-local-first.js?v=4') || !sw.includes('radar-fantasy-shell-v95')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 

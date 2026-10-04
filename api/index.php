@@ -1296,6 +1296,9 @@ if ($route === '/player/recent-details' && $requestMethod === 'POST') {
             $errors[] = 'Biwenger: ' . $error->getMessage();
         }
     }
+    if (!empty($payload['officialOnly'])) {
+        send_json(503, ['ok' => false, 'provider' => 'biwenger', 'error' => 'El historial oficial no está disponible temporalmente. Inténtalo de nuevo en unos segundos.']);
+    }
     $detailPayloads = [];
     $includeSubstitutions = !empty($payload['includeSubstitutions']);
     $usesFeeberse = in_array((int)($sessionState['scoreId'] ?? 0), [7, 8], true)

@@ -26,6 +26,17 @@ Para iniciar oculto: `powershell.exe -NoProfile -File scripts/start-market-agent
 
 La credencial de Radar queda cifrada con Windows DPAPI para tu usuario en `%LOCALAPPDATA%\RadarFantasy\market-agent.dpapi`. Es independiente de las credenciales ChatGPT; no se copian ni exportan éstas. No pegues códigos/tokens en Git ni archivos públicos. Un nuevo emparejamiento revoca el worker anterior.
 
+## Ejecutarlo en otro equipo Windows
+
+El agente puede ejecutarse en otro PC Windows, también fuera de la red del móvil. Ambos se comunican con el relay público de Radar por HTTPS; no hace falta abrir puertos ni mantener encendido el PC original. El equipo elegido sí debe estar encendido, conectado y con la sesión de Windows disponible.
+
+1. Obtén una copia actual del proyecto en ese equipo e instala Node 24 o posterior y Codex CLI. Ejecuta `npm.cmd ci` dentro de la carpeta del proyecto.
+2. Ejecuta `codex login` allí y comprueba `codex login status`. No copies credenciales de ChatGPT del otro PC.
+3. En Radar, abre Mercado > Conectar mi PC y privacidad y genera un código nuevo. En el equipo elegido ejecuta `npm.cmd run market-agent:pair -- https://alufi.es/fms` e introduce el código.
+4. Ejecuta `npm.cmd run market-agent`, o utiliza el lanzador oculto descrito arriba. El emparejamiento nuevo revoca la conexión anterior: sólo queda un agente vinculado por cuenta.
+
+El archivo `market-agent.dpapi` no se traslada entre equipos o usuarios: su cifrado pertenece al usuario de Windows que lo creó. No copies `.fantasy-db`, tokens ni archivos privados para realizar este cambio. La ejecución actual requiere Windows DPAPI; macOS y Linux necesitan adaptar el almacén seguro antes de poder usarse.
+
 ## Datos y límites
 
 La petición manual actualiza noticias fechadas de ocho candidatos y ocho jugadores propios prioritarios; también reutiliza las noticias recientes disponibles del equipo/favoritos. Consulta plantillas rivales visibles con concurrencia dos, límite total dieciocho segundos y caché de seis horas. Incluye un máximo de 25 candidatos y 40 jugadores propios, con salud disponible de todos y racha/calendario detallados de 40 perfiles prioritarios; como máximo dos noticias recientes por jugador, clasificación y finanzas conocidas. Los resúmenes rivales agregan posiciones/bajas y tres amenazas visibles sin fingir una cobertura mayor. Las noticias sin fecha no justifican actualidad; no se conocen pujas ni saldo ocultos de rivales. Los datos se recortan a 96 KiB y 240 evidencias y se informa de los límites. Revisar fecha y condiciones antes de operar. Un resultado válido se conserva en el dispositivo quince minutos, ligado a cuenta/liga/firma de datos; las respuestas lentas de otro contexto se descartan.

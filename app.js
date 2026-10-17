@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.13.12";
-const APP_VERSION_CODE = 70;
+const APP_VERSION = "3.14.0";
+const APP_VERSION_CODE = 72;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -2866,9 +2866,9 @@ const dailyScenarioSnapshot = (mode = state.dailyPlanMode, marketPlayers = null,
   const offers = base.offerRows.filter((row) => row.action === "Aceptar" || (mode !== "aggressive" && row.action === "Rechazar"));
   const acceptedIncome = offers.filter((row) => row.action === "Aceptar").reduce((sum, row) => sum + row.amount, 0);
   const saleIncome = sales.reduce((sum, row) => sum + row.sale.suggestedPrice, 0);
-  const bidCost = bids.reduce((sum, row) => sum + row.amount, 0);
+  const bidCost = bids.reduce((sum, row) => sum + Math.max(0, row.amount - Math.max(0, Number(playerOwnBidAmount(row.player) || 0))), 0);
   const projectedBalance = Number.isFinite(base.balance)
-    ? base.balance + base.roundReward.amount + acceptedIncome + saleIncome - bidCost
+    ? base.balance - activeBidCommitmentTotal() - bidCost
     : null;
   const analyzedMarket = marketPlayers || shared.analyzedMarket || assistantMarketPlayers();
   const actions = [
@@ -2937,6 +2937,7 @@ const dailyScenarioSnapshot = (mode = state.dailyPlanMode, marketPlayers = null,
     saleIncome,
     acceptedIncome,
     projectedBalance,
+    conditionalBalance: Number.isFinite(projectedBalance) ? projectedBalance + base.roundReward.amount + acceptedIncome + saleIncome : null,
     expectedLineupPoints,
     confidence,
     rivalInsights: dailyRivalInsights(analyzedMarket)
@@ -2995,11 +2996,11 @@ const renderDailyPlan = (marketPlayers = null) => {
       : "Plan calculado con los últimos datos guardados.";
   metrics.innerHTML = [
     ["Saldo actual", formatFinanceMoney(plan.base.balance), plan.base.balance < 0 ? "negative" : "positive", "Biwenger"],
-    ["Saldo al cierre", formatFinanceMoney(plan.projectedBalance), plan.projectedBalance < 0 ? "negative" : "positive", `${plan.config.label}`],
+    ["Saldo sin ingresos pendientes", formatFinanceMoney(plan.projectedBalance), plan.projectedBalance < 0 ? "negative" : "positive", `${plan.config.label}`],
     ["Acciones", String(plan.actions.length), "", `${plan.bids.length} pujas · ${plan.sales.length} ventas`],
     ["Once esperado", `${plan.expectedLineupPoints} pts`, "", "estimación próxima jornada"],
     ["Fuentes", `${plan.confidence}/100`, plan.confidence >= 70 ? "positive" : "", "confianza media"],
-    ["Jornada", formatFinanceMoney(plan.base.roundReward.amount), plan.base.roundReward.amount > 0 ? "positive" : "", plan.base.roundReward.source]
+    ["Ingresos condicionados", formatFinanceMoney(plan.base.roundReward.amount + plan.acceptedIncome + plan.saleIncome), plan.base.roundReward.amount > 0 ? "positive" : "", "ventas, ofertas y primas pendientes"]
   ].map(([label, value, className, detail]) => `
     <div class="daily-plan-metric"><span>${escapeHtml(label)}</span><strong class="${className}">${escapeHtml(value)}</strong><small>${escapeHtml(detail || "")}</small></div>
   `).join("");
@@ -3016,7 +3017,7 @@ const renderDailyPlan = (marketPlayers = null) => {
           ${action.player ? renderPlayerMedia(action.player, "sm") : ""}
           <div class="daily-plan-action-copy">
             <strong>${escapeHtml(action.title)}</strong>
-            <small>${escapeHtml(action.reason)}</small>
+            <small>${escapeHtml(action.reason)}</small><small>${escapeHtml(decisionEvidence(action))} ${action.player ? renderProfileLink(action.player) : ""}</small>
             <div class="daily-plan-action-meta">
               ${action.player ? renderPositionBadge(action.player.position) : ""}
               ${action.player ? renderScoringBadge(action.player) : ""}
@@ -3041,7 +3042,7 @@ const renderDailyPlan = (marketPlayers = null) => {
     <button class="daily-scenario ${scenario.mode === plan.mode ? "active" : ""}" type="button" data-scenario-mode="${scenario.mode}">
       <header><strong>${escapeHtml(scenario.config.label)}</strong><b class="${scenario.projectedBalance < 0 ? "negative" : "positive"}">${formatFinanceMoney(scenario.projectedBalance)}</b></header>
       <span>${scenario.bids.length} pujas · ${scenario.sales.length} ventas · ${scenario.offers.filter((row) => row.action === "Aceptar").length} ofertas</span>
-      <small>Coste de fichajes ${formatFinanceMoney(scenario.bidCost)}</small>
+      <small>Coste de fichajes ${formatFinanceMoney(scenario.bidCost)} · Con ingresos pendientes: ${formatFinanceMoney(scenario.conditionalBalance)}</small>
     </button>
   `).join("");
   rivalsTarget.innerHTML = plan.rivalInsights.length ? plan.rivalInsights.map((insight) => `
@@ -4717,8 +4718,39 @@ const ensureExtendedFavoriteCatalog = async () => {
   }
 };
 
+const flushFavoriteNotificationQueue = async (newAlerts = [], currentPlayers = {}, now = Date.now()) => {
+  const context = decisionContextKey();
+  const queueKey = `radar-fantasy.favorite-notification-queue.v1.${context}`;
+  const queued = readJsonStorage(queueKey, []);
+  const all = [...queued, ...newAlerts.map((alert) => ({ ...alert, expected: currentPlayers[alert.playerKey], queuedAt: now }))];
+  const byTransition = new Map();
+  all.forEach((alert) => {
+    if (!Number.isFinite(Number(alert.queuedAt)) || now - Number(alert.queuedAt) > 6 * 3600000) return;
+    if (!state.favorites.some((favorite) => favoritePlayerKey(favorite) === alert.playerKey)) return;
+    const current = currentPlayers[alert.playerKey];
+    if (!current) return;
+    if (alert.kind === "market" && (!current.inMarket || current.sellerType !== alert.expected?.sellerType || current.sellerName !== alert.expected?.sellerName || current.salePrice !== alert.expected?.salePrice)) return;
+    if (alert.kind === "clause" && (!current.clauseAvailable || current.clause !== alert.expected?.clause)) return;
+    byTransition.set(`${alert.playerKey}:${alert.kind}`, alert);
+  });
+  const pending = [...byTransition.values()];
+  writeJsonStorage(queueKey, pending);
+  if (!pending.length) return false;
+  const priority = pending.some((alert) => alert.kind === "health") ? 100 : 82;
+  const body = pending.slice(0, 3).map((alert) => `${alert.playerName}: ${alert.message}`).join(" · ")
+    + (pending.length > 3 ? ` · y ${pending.length - 3} novedades más en Favoritos.` : "");
+  const sent = await showDecisionNotification(`Favoritos · ${pending.length} novedad${pending.length === 1 ? "" : "es"}`, body,
+    `${context}:favorites:${pending.map((alert) => alert.id).join(":")}`, "favorites", priority);
+  // A response for another account/league may arrive after a switch: only touch the original queue.
+  if (sent) {
+    const delivered = new Set(pending.map((alert) => alert.id));
+    writeJsonStorage(queueKey, readJsonStorage(queueKey, []).filter((alert) => !delivered.has(alert.id)));
+  }
+  return sent;
+};
+
 const processFavoriteWatchTransitions = async (payload) => {
-  const leagueKey = String(state.activeLeagueId || "default");
+  const leagueKey = decisionContextKey();
   const snapshots = readJsonStorage(FAVORITE_WATCH_STATE_KEY, {});
   const previous = snapshots[leagueKey] || null;
   const catalogMap = new Map((payload.players || []).map((player) => [favoritePlayerKey(player), player]));
@@ -4780,11 +4812,8 @@ const processFavoriteWatchTransitions = async (payload) => {
     players: currentPlayers
   };
   writeJsonStorage(FAVORITE_WATCH_STATE_KEY, snapshots);
-  if (!newAlerts.length) return;
-  writeFavoriteAlertHistory([...newAlerts.reverse(), ...favoriteAlertHistory()]);
-  for (const alert of newAlerts) {
-    await showDecisionNotification(`Favorito · ${alert.playerName}`, alert.message, `${leagueKey}:${alert.kind}:${alert.playerKey}:${alert.occurredAt}`, "favorites");
-  }
+  if (newAlerts.length) writeFavoriteAlertHistory([...newAlerts].reverse().concat(favoriteAlertHistory()));
+  await flushFavoriteNotificationQueue(newAlerts, currentPlayers);
 };
 
 const refreshFavoriteNews = async ({ force = false, silent = false } = {}) => {
@@ -5445,12 +5474,18 @@ const notificationIdFrom = (value) => {
   return Math.max(1, Math.abs(hash % 2147483000));
 };
 
-const showDecisionNotification = async (title, body, tag, view = "market") => {
-  if (!state.preferences.notifications) return false;
+const showDecisionNotification = async (title, body, tag, view = "market", priority = 82) => {
+  if (!state.preferences.notifications || !platformUserCanAccess(view)) return false;
+  const policy = notificationPolicy();
+  if (notificationIsQuiet(policy) || priority < policy.minimum) return false;
+  const deliveryKey = `radar-fantasy.notification-delivery.v1.${decisionContextKey()}`;
+  const lastDelivery = readJsonStorage(deliveryKey, 0);
+  if (Date.now() - Number(lastDelivery || 0) < policy.groupMinutes * 60000) return false;
   try {
     const nativePlugin = window.Capacitor?.Plugins?.LocalNotifications;
     if (nativePlugin) {
       await nativePlugin.schedule({ notifications: [{ title, body, id: notificationIdFrom(tag), extra: { view } }] });
+      writeJsonStorage(deliveryKey, Date.now());
       return true;
     }
     if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
@@ -5460,6 +5495,7 @@ const showDecisionNotification = async (title, body, tag, view = "market") => {
     } else {
       new Notification(title, { body, tag, icon: assetUrl("assets/app-icon.png"), data: { view } });
     }
+    writeJsonStorage(deliveryKey, Date.now());
     return true;
   } catch (error) {
     return false;
@@ -5467,28 +5503,37 @@ const showDecisionNotification = async (title, body, tag, view = "market") => {
 };
 
 const notifyDailyPlanIfNeeded = async () => {
-  if (!state.preferences.notifications) return;
+  if (!state.preferences.notifications || !platformUserCanAccess("market") || !platformUserCanAccess("team")) return;
   const snapshot = dailyPlanSnapshot().selected;
   const urgentLineup = buildTeamAlerts().filter((alert) => alert.inLineup);
   const urgentAction = snapshot.actions.find((action) => action.priority >= 82);
   const balanceRisk = Number.isFinite(snapshot.projectedBalance) && snapshot.projectedBalance < 0;
   if (!urgentLineup.length && !urgentAction && !balanceRisk) return;
   const signatures = readJsonStorage(NOTIFICATION_SIGNATURE_KEY, {});
-  const leagueKey = String(state.activeLeagueId || "local");
+  const leagueKey = decisionContextKey();
   const signature = [
     urgentLineup.map((alert) => alert.id).join(","),
     urgentAction?.id || "",
     balanceRisk ? Math.round(snapshot.projectedBalance / 100000) : 0
   ].join("|");
   if (signatures[leagueKey] === signature) return;
-  signatures[leagueKey] = signature;
-  writeJsonStorage(NOTIFICATION_SIGNATURE_KEY, signatures);
-  const body = urgentLineup.length
-    ? `${urgentLineup[0].player.name} afecta a tu once: ${urgentLineup[0].title}.`
-    : balanceRisk
-      ? `El plan dejaría tu saldo en ${formatFinanceMoney(snapshot.projectedBalance)}.`
-      : urgentAction.title;
-  await showDecisionNotification(`Radar Fantasy · ${activeLeagueName() || "Plan de hoy"}`, body, `${leagueKey}:${signature}`);
+  const policy = notificationPolicy();
+  if (notificationIsQuiet(policy)) return;
+  const priority = urgentLineup.length || balanceRisk ? 100 : Number(urgentAction?.priority || 0);
+  if (priority < policy.minimum) return;
+  const lastSent = Number(signatures[`${leagueKey}:sentAt`] || 0);
+  if (Date.now() - lastSent < policy.groupMinutes * 60000) return;
+  const messages = [
+    ...urgentLineup.map((alert) => `${alert.player.name}: ${alert.title}`),
+    ...(balanceRisk ? [`Saldo sin ingresos pendientes: ${formatFinanceMoney(snapshot.projectedBalance)}`] : []),
+    ...(urgentAction ? [urgentAction.title] : [])
+  ];
+  const sent = await showDecisionNotification(`Radar Fantasy · ${activeLeagueName() || "Plan de hoy"}`, messages.slice(0, 3).join(" · "), `${leagueKey}:${signature}`, "market", priority);
+  if (sent) {
+    signatures[leagueKey] = signature;
+    signatures[`${leagueKey}:sentAt`] = Date.now();
+    writeJsonStorage(NOTIFICATION_SIGNATURE_KEY, signatures);
+  }
 };
 
 const slugifyPublic = (value) => normalize(value).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -11814,6 +11859,11 @@ const syncSettingsControls = () => {
   }
   const notifications = qs("#notifications-enabled");
   if (notifications) notifications.checked = Boolean(state.preferences.notifications);
+  const noticePolicy = notificationPolicy();
+  ["minimum", "quietStart", "quietEnd", "groupMinutes"].forEach((key) => {
+    const input = qs(`#notice-${key}`);
+    if (input) input.value = noticePolicy[key];
+  });
   state.dailyPlanMode = state.preferences.planMode || state.dailyPlanMode || "balanced";
   updateNotificationStatus();
   const rewards = normalizedRewardPreferences();
@@ -12368,6 +12418,7 @@ const buildDetailMarkup = (player) => {
     </div>
     ${renderPlayerAIButton(player, "market")}
     ${renderDecisionDetail(player)}
+    <p class="decision-evidence">${escapeHtml(decisionEvidence({ player, type: "bid" }))} ${renderProfileLink(player)}</p>
     <section class="smart-bid-detail">
       <div class="section-heading compact-heading">
         <div><p class="eyebrow">Puja inteligente</p><h3>${escapeHtml(playerDecisionSentence(player))}</h3></div>
@@ -13089,9 +13140,177 @@ const latestRoundPointsForPlayer = (player, scoreKey = "roundPoints") => {
     : null;
 };
 
+// Decision tools are scoped to the authenticated account, league and competition.
+const decisionContextKey = () => `${state.auth.user?.id || "anonymous"}:${state.activeLeagueId || "local"}:${state.competition}:${state.biwenger.userId || "local"}`;
+const decisionSessions = new Map();
+const decisionSimulations = new Map();
+const notificationPolicy = () => {
+  const raw = state.preferences.notificationPolicy || {};
+  const time = (value, fallback) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || "")) ? value : fallback;
+  return { minimum: Math.max(82, Math.min(100, Number(raw.minimum) || 82)),
+    quietStart: time(raw.quietStart, "23:00"), quietEnd: time(raw.quietEnd, "08:00"),
+    groupMinutes: Math.max(0, Math.min(240, Number(raw.groupMinutes ?? 30) || 0)) };
+};
+const notificationIsQuiet = (policy, now = new Date()) => {
+  const minutes = (time) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
+  const start = minutes(policy.quietStart), end = minutes(policy.quietEnd);
+  const current = now.getHours() * 60 + now.getMinutes();
+  return start === end ? false : start < end ? current >= start && current < end : current >= start || current < end;
+};
+const decisionEvidence = (action) => {
+  const player = action.player || {};
+  const dates = [player.sourceUpdatedAt, player.updatedAt, player.sourceSummary?.updatedAt, player.sourceSummary?.fantasy?.updatedAt]
+    .map((value) => new Date(value || 0).getTime()).filter((value) => Number.isFinite(value) && value > 0);
+  const date = dates.length ? new Date(Math.max(...dates)).toLocaleString("es-ES") : "hora de fuente no disponible";
+  const conditions = action.type === "bid"
+    ? "Revisar si cambia el precio, el saldo, la titularidad o el estado físico."
+    : action.type === "lineup" ? "Revisar al confirmarse el once oficial o cambiar el estado físico."
+    : "Revisar si cambia la oferta, el valor o la disponibilidad del jugador.";
+  const source = player.sourceLinks?.biwenger ? "Biwenger" : player.sourceLinks?.futbolFantasy ? "FutbolFantasy" : player.sourceStatus === "live" ? "datos sincronizados" : "datos guardados";
+  const deadline = protectedMatchdayStartContext();
+  const offer = action.offerId ? (state.biwengerOperations?.offers || []).find((row) => Number(row.offerId) === Number(action.offerId)) : null;
+  const offerExpiry = Number(offer?.expiresTs || offer?.untilTs || 0);
+  const bidDeadline = action.type === "bid" ? nextBidResolutionContext() : null;
+  const timing = action.type === "offer" ? (offerExpiry > Date.now() / 1000 ? `Oferta hasta ${new Date(offerExpiry * 1000).toLocaleString("es-ES")}` : "Sin plazo confirmado")
+    : action.type === "bid" ? (bidDeadline?.source === "biwenger" ? `Resolución ${new Date(bidDeadline.timestamp * 1000).toLocaleString("es-ES")}` : "Sin plazo confirmado")
+    : deadline.known && deadline.timestamp && !deadline.active ? `Antes del inicio de jornada: ${new Date(deadline.timestamp * 1000).toLocaleString("es-ES")}` : "Sin plazo confirmado";
+  return `${source} · ${date}. ${timing}. ${conditions}`;
+};
+const decisionVisitSnapshot = (analyzedMarket = null) => ({ at: new Date().toISOString(),
+  players: Object.fromEntries([...(platformUserCanAccess("team") ? state.teamPlayers : []), ...(platformUserCanAccess("market") ? analyzedMarket || assistantMarketPlayers() : [])].map((player) => [String(player.biwengerPlayerId || player.id), {
+    name: player.name, health: player.health?.status || "unknown", starter: player.starter ?? null,
+    decision: player.marketDecision?.type || null,
+    price: player.price ?? player.biwengerValue ?? null
+  }])),
+  activity: platformUserCanAccess("league") && Array.isArray(state.biwengerOperations?.activity) ? state.biwengerOperations.activity.filter((entry) => entry.id !== null && entry.id !== undefined).slice(0, 100).map((entry) => ({ id: String(entry.id), date: entry.date || null, message: String(entry.message || "Actividad de liga"), direction: entry.direction || "" })) : null,
+  rivals: platformUserCanAccess("league") ? (state.leagueOverview?.standings || []).map((row) => ({ id: row.userId, points: row.points ?? null })) : []
+});
+const decisionVisitChanges = (previous, current) => {
+  if (!previous) return [];
+  const changes = [];
+  Object.entries(current.players).forEach(([id, player]) => {
+    const before = previous.players?.[id];
+    if (!before) { changes.push(`${player.name}: nuevo en los datos visibles.`); return; }
+    if (before.decision && player.decision && before.decision !== player.decision) changes.push(`${player.name}: recomendación anterior revisada (${decisionLabels[before.decision]?.short || "Revisar"} → ${decisionLabels[player.decision]?.short || "Revisar"}).`);
+    if (before.health !== player.health) changes.push(`${player.name}: estado físico ${healthMeta({ health: { status: before.health } }).label} → ${healthMeta({ health: { status: player.health } }).label}.`);
+    if (before.starter !== player.starter) changes.push(`${player.name}: titularidad ${Number.isFinite(Number(before.starter)) && before.starter !== null ? `${before.starter}%` : "S/D"} → ${Number.isFinite(Number(player.starter)) && player.starter !== null ? `${player.starter}%` : "S/D"}.`);
+    if (before.price !== player.price) changes.push(`${player.name}: valor ${formatFinanceMoney(before.price)} → ${formatFinanceMoney(player.price)}.`);
+  });
+  Object.entries(previous.players || {}).forEach(([id, player]) => {
+    // Absence may be caused by partial imports; it is not evidence of a departure.
+  });
+  if (Array.isArray(current.activity)) {
+    const priorIds = new Set((previous.activity || []).map((entry) => entry.id));
+    const baselineAt = new Date(previous.at || 0).getTime();
+    const newActivity = current.activity.filter((entry) => {
+      if (priorIds.has(entry.id)) return false;
+      const raw = Number(entry.date);
+      const timestamp = raw > 0 ? (raw < 100000000000 ? raw * 1000 : raw) : new Date(entry.date || 0).getTime();
+      return timestamp > 0 && baselineAt > 0 ? timestamp > baselineAt : Array.isArray(previous.activity);
+    });
+    newActivity.slice(0, 3).forEach((entry) => changes.push(`Movimiento visible de liga: ${entry.message}`));
+  }
+  const moved = current.rivals.filter((row) => previous.rivals?.some((old) => String(old.id) === String(row.id) && old.points !== row.points));
+  if (moved.length) changes.push(`${moved.length} rivales han cambiado de puntuación en la clasificación visible.`);
+  return changes;
+};
+const operationSimulation = (sales = [], purchases = []) => {
+  const saleIds = new Set(sales.map((row) => String(row.player.biwengerPlayerId || row.player.id)));
+  const roster = state.teamPlayers.filter((player) => !saleIds.has(String(player.biwengerPlayerId || player.id)));
+  const ids = new Set(roster.map((player) => String(player.biwengerPlayerId || player.id)));
+  purchases.forEach((row) => {
+    const id = String(row.player.biwengerPlayerId || row.player.id);
+    if (!ids.has(id)) { roster.push({ ...row.player }); ids.add(id); }
+  });
+  const candidates = roster.filter((player) => player.position !== "ENT" && player.biwengerPosition !== "ENT")
+    .map(playerForCompetition).map((player) => ({ ...player, lineupEligible: playerEligibleForNextLineup(player), lineupScore: lineupPlayerScore(player) }));
+  const lineup = FORMATIONS.map((formation) => assignPlayersToFormation(candidates, formation)).sort((a, b) => b.rankingScore - a.rankingScore)[0];
+  const selected = lineup?.selected || [];
+  const selectedIds = new Set(selected.map((player) => String(player.id)));
+  const balance = state.finance.balance === null || state.finance.balance === "" ? null : Number(state.finance.balance);
+  const uniquePurchases = [...new Map(purchases.map((row) => [String(row.player.biwengerPlayerId || row.player.id), row])).values()];
+  const cost = uniquePurchases.reduce((sum, row) => sum + Math.max(0, Number(row.amount || 0) - Math.max(0, Number(playerOwnBidAmount(row.player) || 0))), 0);
+  const income = [...new Map(sales.map((row) => [String(row.player.biwengerPlayerId || row.player.id), row])).values()].reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const guaranteed = Number.isFinite(balance) ? balance - activeBidCommitmentTotal() - cost : null;
+  return { guaranteed, conditional: guaranteed === null ? null : guaranteed + income, cost, income, selected,
+    formation: lineup?.formation?.label || lineup?.formation?.name || "", missing: lineup?.missing || [], unavailable: Number(lineup?.unavailable || 0),
+    bench: roster.filter((player) => !selectedIds.has(String(player.id))), vacancies: Math.max(0, 11 - selected.length) };
+};
+const renderDecisionHub = () => {
+  const target = qs("#home-decision-hub");
+  if (!target || !state.auth.authenticated) return;
+  const market = platformUserCanAccess("market"), team = platformUserCanAccess("team");
+  if (!market && !team) { target.innerHTML = ""; return; }
+  const context = decisionContextKey();
+  // Build from existing plan; restricted accounts never receive actions for hidden sections.
+  const analyzedMarket = market ? assistantMarketPlayers() : [];
+  const plan = market ? dailyPlanSnapshot(analyzedMarket).selected : null;
+  const visibleActions = (plan?.actions || (team ? dailyLineupActions() : [])).filter((action) => action.type === "lineup" ? team : market && (team || action.type === "bid"));
+  const seenActions = new Set();
+  const actions = visibleActions.sort((a, b) => b.priority - a.priority).filter((action) => {
+    const id = String(action.player?.biwengerPlayerId || action.player?.id || action.id);
+    if (seenActions.has(id)) return false;
+    seenActions.add(id); return true;
+  }).slice(0, 3);
+  const oldAction = qs("#home-primary-action");
+  if (oldAction) oldAction.hidden = actions.length > 0;
+  const current = decisionVisitSnapshot(analyzedMarket);
+  if (!market) current.players = Object.fromEntries(state.teamPlayers.map((player) => [String(player.biwengerPlayerId || player.id), current.players[String(player.biwengerPlayerId || player.id)]]));
+  if (!team) current.players = Object.fromEntries(state.players.map((player) => [String(player.biwengerPlayerId || player.id), current.players[String(player.biwengerPlayerId || player.id)]]));
+  const storageKey = `radar-fantasy.visits.v1.${context}`;
+  if (!decisionSessions.has(context) && Object.keys(current.players).length) {
+    const savedVisit = readJsonStorage(storageKey, null);
+    decisionSessions.set(context, savedVisit);
+
+  }
+  const previous = decisionSessions.get(context) || null;
+  if (Object.keys(current.players).length) {
+    const lastSaved = readJsonStorage(storageKey, null);
+    const merged = { ...current, players: { ...(lastSaved?.players || {}), ...current.players } };
+    if (!lastSaved || JSON.stringify([lastSaved.players, lastSaved.rivals, lastSaved.activity]) !== JSON.stringify([merged.players, merged.rivals, merged.activity])) writeJsonStorage(storageKey, merged);
+  }
+  const changes = decisionVisitChanges(previous, current);
+  const simulation = decisionSimulations.get(context) || { sales: [], buys: [], amounts: {} };
+  decisionSimulations.set(context, simulation);
+  const saleOptions = team ? assistantTeamPlayers().map((player) => ({ player, amount: Number(player.biwengerValue || player.price || 0) })) : [];
+  const buyOptions = market ? analyzedMarket.filter((player) => !state.teamPlayers.some((own) => String(own.biwengerPlayerId || own.id) === String(player.biwengerPlayerId || player.id))).map((player) => ({ player, amount: Number(smartBidPlan(player).recommendedBid || player.price || 0) })) : [];
+  const key = (row) => String(row.player.biwengerPlayerId || row.player.id);
+  const withAmount = (kind) => (row) => ({ ...row, amount: simulation.amounts[`${kind}:${key(row)}`] ?? row.amount });
+  const sales = saleOptions.filter((row) => simulation.sales.includes(key(row))).map(withAmount("sales"));
+  const buys = buyOptions.filter((row) => simulation.buys.includes(key(row))).map(withAmount("buys"));
+  const result = operationSimulation(sales, buys);
+  const simulatorOpen = target.querySelector("details")?.open === true;
+  const options = (rows, kind) => rows.map((row) => `<label class="decision-option"><input type="checkbox" data-sim-kind="${kind}" value="${escapeHtml(key(row))}" ${simulation[kind].includes(key(row)) ? "checked" : ""}><span>${escapeHtml(row.player.name)} · ${escapeHtml(row.player.position)}<small>${formatFinanceMoney(row.amount)}</small></span></label><label class="decision-amount">Importe ${escapeHtml(row.player.name)}<input type="text" inputmode="decimal" data-sim-amount="${kind}:${escapeHtml(key(row))}" value="${escapeHtml(String(simulation.amounts[`${kind}:${key(row)}`] ?? row.amount))}" aria-label="Importe para ${escapeHtml(row.player.name)}"></label>`).join("");
+  target.innerHTML = `<section class="home-section"><h3>Qué hago hoy</h3><div class="decision-priorities">${actions.length ? actions.map((action, index) => `<article><strong>${index + 1}. ${escapeHtml(action.title)}</strong><p>${escapeHtml(action.reason)}</p><small>Confianza ${Math.round(action.player ? playerDataReliability(action.player).score : action.confidence || 0)}/100 · ${escapeHtml(decisionEvidence(action))} ${action.player ? renderProfileLink(action.player) : ""}</small><button type="button" class="ghost-button" data-review-decision="${index}">Revisar ${action.type === "lineup" ? "once" : "en mercado"}</button></article>`).join("") : '<p class="muted-empty compact">No hay acciones prioritarias con los datos disponibles.</p>'}</div></section>
+    <section class="home-section"><h3>Desde tu última visita en este dispositivo</h3><p>${previous ? `Comparado con ${escapeHtml(new Date(previous.at).toLocaleString("es-ES"))}. Solo datos visibles guardados; actualiza para comprobar novedades.` : "Primera visita en esta cuenta y liga: guardamos una referencia para la próxima sesión."}</p><ul>${changes.slice(0, 12).map((change) => `<li>${escapeHtml(change)}</li>`).join("")}</ul>${previous && !changes.length ? '<p>Sin cambios en los datos visibles.</p>' : ''}<button class="ghost-button" id="decision-baseline" type="button">Marcar como revisado</button></section>
+    ${market && team ? `<details class="home-section" ${simulatorOpen ? "open" : ""}><summary>Simulador de operaciones</summary><p>Selecciona ventas y compras hipotéticas. Los importes son estimaciones; no envía operaciones.</p><div class="decision-simulator"><fieldset><legend>Ventas pendientes</legend>${options(saleOptions, "sales") || '<p>Sin jugadores.</p>'}</fieldset><fieldset><legend>Compras hipotéticas</legend>${options(buyOptions, "buys") || '<p>Sin mercado.</p>'}</fieldset></div><div class="operation-metrics"><div><span>Saldo sin ingresos pendientes</span><strong class="${result.guaranteed < 0 ? "negative" : ""}">${formatFinanceMoney(result.guaranteed)}</strong><small>Descontando pujas activas y compras elegidas.</small></div><div><span>Si se completan las ventas</span><strong>${formatFinanceMoney(result.conditional)}</strong><small>Ingresos condicionados ${formatFinanceMoney(result.income)}. Primas excluidas.</small></div></div><p><strong>Once simulado (${result.selected.length}/11):</strong> ${escapeHtml(result.selected.map((player) => player.name).join(", ") || "Sin jugadores")}</p><p><strong>Suplentes:</strong> ${escapeHtml(result.bench.map((player) => player.name).join(", ") || "Sin suplentes")}</p>${result.unavailable ? `<p class="negative">El once incluye ${result.unavailable} jugador(es) no disponibles: revisa su estado antes de usarlo.</p>` : ""}${result.missing.length ? `<p class="negative">Huecos por cubrir: ${escapeHtml(result.missing.join(", "))}.</p>` : ""}${result.vacancies ? `<p class="negative">Faltan ${result.vacancies} jugadores para completar el once.</p>` : ''}<button class="ghost-button" id="decision-reset" type="button">Limpiar simulación</button><p role="status" id="decision-simulation-status"></p></details>` : ''}`;
+  target.querySelectorAll("[data-review-decision]").forEach((button) => button.addEventListener("click", () => {
+    const action = actions[Number(button.dataset.reviewDecision)];
+    if (action.player) { state.selectedPlayerId = action.player.id; state.pendingMobileDetailOpen = true; }
+    openView(action.type === "lineup" ? "team" : "market");
+  }));
+  target.querySelectorAll("[data-sim-amount]").forEach((input) => input.addEventListener("change", () => {
+    const amount = parseCurrencyInput(input.value);
+    if (!input.value.trim() || !Number.isFinite(amount) || amount < 0 || !/\d/.test(input.value)) {
+      input.setAttribute("aria-invalid", "true");
+      target.querySelector("#decision-simulation-status").textContent = "Introduce un importe válido igual o mayor que cero.";
+      return;
+    }
+    simulation.amounts[input.dataset.simAmount] = amount;
+    renderDecisionHub();
+  }));
+  target.querySelectorAll("[data-sim-kind]").forEach((input) => input.addEventListener("change", () => {
+    simulation[input.dataset.simKind] = [...target.querySelectorAll(`[data-sim-kind="${input.dataset.simKind}"]:checked`)].map((row) => row.value);
+    renderDecisionHub();
+  }));
+  target.querySelector("#decision-baseline")?.addEventListener("click", () => { decisionSessions.set(context, current); writeJsonStorage(storageKey, current); renderDecisionHub(); });
+  target.querySelector("#decision-reset")?.addEventListener("click", () => { decisionSimulations.delete(context); renderDecisionHub(); });
+};
+
 const renderHome = () => {
   const container = qs("#home-view");
   if (!container) return;
+  renderDecisionHub();
   const now = new Date();
   const dateLabel = qs("#home-date-label");
   if (dateLabel) dateLabel.textContent = now.toLocaleDateString("es-ES", {
@@ -14833,6 +15052,12 @@ const initEvents = () => {
     }
   });
   qs("#enable-notifications")?.addEventListener("click", requestDecisionNotifications);
+  ["minimum", "quietStart", "quietEnd", "groupMinutes"].forEach((key) => {
+    qs(`#notice-${key}`)?.addEventListener("change", (event) => {
+      state.preferences.notificationPolicy = { ...notificationPolicy(), [key]: event.target.value };
+      persistLeagueSettings();
+    });
+  });
   const rewardInputMap = {
     "#reward-point-value": "pointValue",
     "#reward-fixed": "fixed",
@@ -15248,6 +15473,8 @@ const bindPlatformAuthEvents = () => {
     } catch (error) { setAuthStatus(error.message, "error"); }
   });
   qs("#platform-logout")?.addEventListener("click", async () => {
+    decisionSessions.clear();
+    decisionSimulations.clear();
     try { await platformAuthRequest("/api/auth/logout", { method: "POST" }); }
     catch (error) { /* Local logout must still complete when the server is unavailable. */ }
     finally {

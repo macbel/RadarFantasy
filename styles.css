@@ -9666,3 +9666,25 @@ html[data-theme="day"] .home-opportunity-list {
   .player-ai-dialog { padding: 16px; }
   .player-ai-dialog h3 { font-size: 18px; }
 }
+
+/* Daily decisions use the existing theme tokens and stack on narrow screens. */
+#home-decision-hub { min-width: 0; display: grid; gap: 18px; }
+.home-primary-action[hidden] { display: none; }
+.decision-priorities { display: grid; gap: 12px; }
+.decision-priorities article { padding: 14px; border: 1px solid var(--line); border-radius: 14px; }
+.decision-priorities p, #home-decision-hub p { overflow-wrap: anywhere; }
+.decision-priorities small { display: block; margin-bottom: 10px; color: var(--muted); }
+.decision-simulator, .decision-notice-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.decision-simulator fieldset { min-width: 0; max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; }
+.decision-option { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 7px 0; }
+.decision-option input { width: 20px; height: 20px; flex-shrink: 0; }
+.decision-option span { overflow-wrap: anywhere; }
+.decision-option small { display: block; color: var(--muted); }
+#home-decision-hub ul { padding-left: 20px; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .decision-simulator, .decision-notice-settings { grid-template-columns: 1fr; } }
+
+.decision-amount { display: grid; gap: 4px; font-size: 12px; padding-bottom: 10px; color: var(--muted); }
+.decision-amount input { width: 100%; min-width: 0; box-sizing: border-box; }
+
+#home-decision-hub details > summary { cursor: pointer; min-height: 44px; font-weight: 700; }
+.decision-priorities article { background: var(--surface); }

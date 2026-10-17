@@ -1,3 +1,15 @@
+# Versión 3.14.0
+
+Fecha: 2026-10-17
+
+- Inicio con tres decisiones prioritarias, motivos, confianza, fuentes y condiciones para revisarlas.
+- Simulador de ventas y compras con importes editables, once y suplentes hipotéticos; separa el saldo sin ingresos pendientes del escenario condicionado a ventas.
+- Resumen de cambios visibles desde la visita anterior en este dispositivo, separado por cuenta y liga.
+- Preferencias de avisos con prioridad, horario silencioso y agrupación; los envíos fallidos no consumen la firma del aviso.
+- El plan diario deja de tratar ventas propuestas y premios futuros como dinero disponible.
+- Documentación para emparejar y ejecutar el agente IA en otro equipo Windows.
+- iPhone queda fuera de esta entrega.
+
 # Versión 3.13.13
 
 Fecha de publicación: 2026-10-04

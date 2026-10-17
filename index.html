@@ -83,7 +83,7 @@
     </script>
     <link rel="icon" href="assets/app-icon.png?v=5" type="image/png" />
     <link rel="manifest" href="manifest.webmanifest?v=11" />
-    <link rel="stylesheet" href="styles.css?v=83" />
+    <link rel="stylesheet" href="styles.css?v=84" />
   </head>
   <body>
     <main class="auth-gate" id="auth-gate" aria-label="Acceso a Radar Fantasy">
@@ -298,6 +298,7 @@
               <button class="primary-button" type="button" id="home-action-button">Revisar mercado</button>
             </section>
 
+            <div id="home-decision-hub"></div>
             <section class="home-metrics" aria-label="Resumen de liga">
               <article><span>Saldo</span><strong id="home-balance">—</strong></article>
               <article><span>Plantilla</span><strong id="home-squad-count">0</strong></article>
@@ -1281,7 +1282,7 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                     <p class="eyebrow">Aplicaci&oacute;n m&oacute;vil</p>
                     <h3>Actualizaciones</h3>
                   </div>
-                  <span class="app-version-badge" id="app-current-version">v3.13.13</span>
+                  <span class="app-version-badge" id="app-current-version">v3.14.0</span>
                 </div>
                 <p class="settings-help">La app comprueba autom&aacute;ticamente si existe una versi&oacute;n nueva. En Android te llevar&aacute; a instalar el APK; el sistema pedir&aacute; tu confirmaci&oacute;n.</p>
                 <div class="biwenger-actions">
@@ -1437,6 +1438,12 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
                 <input id="notifications-enabled" type="checkbox" />
                 <span>Avisarme de decisiones urgentes</span>
               </label>
+              <div class="decision-notice-settings">
+                <label>Prioridad mínima<select id="notice-minimum"><option value="82">Alta y urgente</option><option value="100">Solo urgente: once y saldo</option></select></label>
+                <label>Silencio desde<input id="notice-quietStart" type="time" value="23:00"></label>
+                <label>Silencio hasta<input id="notice-quietEnd" type="time" value="08:00"></label>
+                <label>Agrupar avisos<select id="notice-groupMinutes"><option value="0">Sin intervalo mínimo</option><option value="30">Cada 30 minutos como máximo</option><option value="60">Cada hora como máximo</option><option value="240">Cada 4 horas como máximo</option></select></label>
+              </div>
               <div class="notification-settings-row">
                 <button class="ghost-button" type="button" id="enable-notifications">
                   <span class="icon icon-bell" aria-hidden="true"></span>
@@ -1633,6 +1640,6 @@ Pepelu, Valencia, MC, 5.900.000"></textarea>
     <script src="vendor/tesseract/tesseract.min.js"></script>
     <script src="https://www.scorebat.com/embed/embed.js?v=arrv" id="scorebat-jssdk" defer></script>
     <script src="market-ai-advisor.js"></script>
-    <script src="app.js?v=145"></script>
+    <script src="app.js?v=146"></script>
   </body>
 </html>

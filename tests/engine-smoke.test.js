@@ -772,6 +772,50 @@ state.players = hydrateImportedPlayers([
 ]);
 const conservativePlan = dailyScenarioSnapshot("conservative");
 const aggressivePlan = dailyScenarioSnapshot("aggressive");
+if (aggressivePlan.projectedBalance !== aggressivePlan.base.balance - activeBidCommitmentTotal() - aggressivePlan.bidCost) {
+  throw new Error("Daily scenario must exclude all uncompleted income from its safe balance");
+}
+const preservedRoster = JSON.stringify(state.teamPlayers);
+const preservedMarket = JSON.stringify(state.players);
+const simBuy = { player: state.players[0], amount: 12000000 };
+const simulatedOnly = operationSimulation([], [simBuy, simBuy]);
+if (simulatedOnly.guaranteed !== -2000000 || simulatedOnly.conditional !== -2000000) {
+  throw new Error("Simulator must show debt before contingent sales and charge every selected cost");
+}
+if (simulatedOnly.selected.filter((p) => p.id === simBuy.player.id).length > 1
+  || JSON.stringify(state.teamPlayers) !== preservedRoster || JSON.stringify(state.players) !== preservedMarket) {
+  throw new Error("Simulator must deduplicate squad without mutating real players");
+}
+const previousVisit = { players: { a: { name: "Uno", health: "ok", starter: 90, price: 100 } }, rivals: [{ id: 1, points: 20 }] };
+const nextVisit = { players: { a: { name: "Uno", health: "injured", starter: 10, price: 90 } }, rivals: [{ id: 1, points: 22 }] };
+if (decisionVisitChanges(previousVisit, nextVisit).length !== 4 || decisionVisitChanges(null, nextVisit).length) {
+  throw new Error("Visit comparison must detect changed evidence and keep first visit explicit");
+}
+const overnightPolicy = { quietStart: "23:00", quietEnd: "08:00" };
+if (!notificationIsQuiet(overnightPolicy, new Date(2026, 9, 17, 23, 30))
+  || !notificationIsQuiet(overnightPolicy, new Date(2026, 9, 17, 7, 59))
+  || notificationIsQuiet(overnightPolicy, new Date(2026, 9, 17, 8, 0))
+  || notificationIsQuiet({ quietStart: "08:00", quietEnd: "08:00" }, new Date())) {
+  throw new Error("Quiet hours must handle midnight and exact boundaries");
+}
+const priorAuthForVisit = { ...state.auth };
+state.auth = { authenticated: true, user: { id: "visit-test", role: "admin" }, permissions: [] };
+const analyzedBefore = decisionVisitSnapshot([{ id: "recommend-test", name: "Objetivo", marketDecision: { type: "buy" } }]);
+const analyzedAfter = decisionVisitSnapshot([{ id: "recommend-test", name: "Objetivo", marketDecision: { type: "avoid" } }]);
+if (!decisionVisitChanges(analyzedBefore, analyzedAfter).some((row) => row.includes("recomendación anterior revisada"))) {
+  throw new Error("Visit snapshots must compare analyzed recommendations, not raw imported players");
+}
+state.auth = priorAuthForVisit;
+const rivalActivityBefore = { at: "2026-10-17T08:00:00Z", players: {}, rivals: [], activity: [{ id: "old" }] };
+const rivalActivityAfter = { players: {}, rivals: [], activity: [{ id: "old", message: "old" }, { id: "new", date: "2026-10-17T09:00:00Z", message: "Rival ficha" }, { id: "historical", date: "2026-10-16T09:00:00Z", message: "Histórico" }] };
+if (decisionVisitChanges(rivalActivityBefore, rivalActivityAfter).filter((row) => row.includes("Movimiento visible")).length !== 1) {
+  throw new Error("Activity changes must exclude pre-baseline historical events");
+}
+const contextBefore = decisionContextKey();
+state.activeLeagueId = "another-league";
+if (decisionContextKey() === contextBefore) throw new Error("Visit and simulator context must isolate leagues");
+state.activeLeagueId = "daily-plan-test";
+
 if (conservativePlan.bids.length > aggressivePlan.bids.length || aggressivePlan.bids.meta.used > state.finance.maximumBid) {
   throw new Error("Daily plan scenarios must respect risk ordering and maximum bid budget");
 }

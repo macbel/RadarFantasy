@@ -737,6 +737,45 @@ if (!solvencySales.length
   throw new Error("A negative balance must force a lineup-safe sale plan that covers the deficit: " + JSON.stringify(solvencySales));
 }
 
+// A confirmed new purchase is a preference, never immunity from a real debt.
+const liquidityOriginal = { players: state.teamPlayers, operations: state.biwengerOperations, userId: state.biwenger.userId, finance: state.finance };
+state.biwenger.userId = 77;
+state.finance.balance = -9000000;
+state.biwengerOperations = { offers: [], sales: [], finance: { balance: -9000000 }, activity: [{ playerId: 1000, direction: "bought-from-market", to: { id: 77 }, from: { id: 0 }, date: new Date().toISOString() }] };
+const recentPurchase = state.teamPlayers.find((player) => player.biwengerPlayerId === 1000);
+if (!recentOwnAcquisition(recentPurchase)) throw new Error("A dated own-account purchase must be recognised");
+const preferredAlternative = assistantSaleRows(assistantTeamPlayers(), { baseBalance: -9000000 });
+if (preferredAlternative.some((row) => row.player.biwengerPlayerId === 1000)
+  || preferredAlternative.reduce((sum,row) => sum + row.sale.suggestedPrice,0) < 9000000
+  || preferredAlternative.some((row) => row.sale.action !== "Valorar venta por liquidez" || !row.sale.reason.includes("no un descarte deportivo"))) {
+  throw new Error("A safe alternative covering nine million must preserve a recent purchase and explain liquidity");
+}
+state.teamPlayers = hydrateImportedPlayers(["POR","POR","DF","DF","DF","DF","MC","MC","MC","MC","DL","DL","DL"].map((position,index) => ({
+  id: "liquidity-recent-"+index, biwengerPlayerId: 1000+index, name: "Liquidez "+index, team: "Equipo", position,
+  price: index===0?10000000:100000, biwengerValue: index===0?10000000:100000, lineupScore:80, recommendation:80, starter:90, health:{status:"ok"}
+})));
+const necessaryRecent = assistantSaleRows(assistantTeamPlayers(), { baseBalance: -9000000 });
+if (!necessaryRecent.some((row) => row.player.biwengerPlayerId===1000 && row.sale.recentAcquisition)
+  || necessaryRecent.reduce((sum,row)=>sum+row.sale.suggestedPrice,0)<9000000) {
+  throw new Error("Recent purchase must remain a conditional liquidity option when alternatives cannot cover the real debt");
+}
+const keysSold = new Set(necessaryRecent.map((row)=>String(row.player.biwengerPlayerId||row.player.id)));
+const survivors = state.teamPlayers.filter((player)=>!keysSold.has(String(player.biwengerPlayerId||player.id)));
+if (survivors.length < 11) throw new Error("Liquidity sales must retain eleven players");
+state.finance.balance = 1000000; state.biwengerOperations.finance.balance = 1000000;
+if (assistantSaleRows(assistantTeamPlayers(), { baseBalance: 1000000 }).some((row)=>row.player.biwengerPlayerId===1000)) throw new Error("Recent purchase without debt or actual risk must not receive an ordinary immediate sale");
+state.teamPlayers[0].outOfCompetition=true;
+if (!assistantSaleRows(assistantTeamPlayers(), { baseBalance: 1000000 }).some((row)=>row.player.biwengerPlayerId===1000)) throw new Error("A confirmed elimination must prevail over recent acquisition preference");
+state.teamPlayers[0].outOfCompetition=false;
+state.biwengerOperations.activity[0].date = new Date(Date.now()-72*3600000).toISOString();
+if (recentOwnAcquisition(state.teamPlayers[0])) throw new Error("Old transfers must not be classified as recent acquisitions");
+state.biwengerOperations.activity[0].date = new Date().toISOString(); state.biwengerOperations.activity[0].to.id=88;
+if (recentOwnAcquisition(state.teamPlayers[0])) throw new Error("Another account's purchase must not protect the current user's player");
+state.biwengerOperations.activity=[];
+if (recentOwnAcquisition({...state.teamPlayers[0], importedAt:new Date().toISOString()})) throw new Error("Import time must never become acquisition evidence");
+if (recentFormProfile({name:"Sin historial", sourceSummary:{}}).noRecentMinutes) throw new Error("Unknown minutes are not evidence of not playing");
+state.teamPlayers=liquidityOriginal.players; state.biwengerOperations=liquidityOriginal.operations; state.biwenger.userId=liquidityOriginal.userId; state.finance=liquidityOriginal.finance;
+
 state.editableLineup = { formationName: "4-4-2", playerIds: ["alert-injured"] };
 state.teamPlayers = hydrateImportedPlayers([
   { id: "alert-injured", name: "Lesionado titular", team: "Espana", position: "DF", health: { status: "injured", detail: "Baja muscular" } },

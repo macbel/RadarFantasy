@@ -125,7 +125,7 @@
     const confidence={low:'baja',medium:'media',high:'alta'};
     const focused=context.focusPlayer&&context[context.focusPlayer.origin].find(p=>p.id===context.focusPlayer.id);
     const resultHeader=add(container,'div','','market-ai-result-header');
-    add(resultHeader,'strong',`${focused?'Consulta sobre '+focused.name:'Tu estrategia'} · ${context.horizonRounds===3?'próximas 3 jornadas':'próxima jornada'}`,'market-ai-result-title');
+    add(resultHeader,'strong',`Estrategia IA · ${focused?'Consulta sobre '+focused.name:'Tu estrategia'} · ${context.horizonRounds===3?'3 jornadas':'próxima jornada'}`,'market-ai-result-title');
     add(resultHeader,'small',new Date(value.generatedAt || Date.now()).toLocaleString('es-ES'),'market-ai-date');
     const cite=(parent,e)=>{try{const u=new URL(e.url);if(u.protocol!=='https:'||u.username||u.password)return;const a=document.createElement('a');a.href=u.href;a.target='_blank';a.rel='noopener noreferrer';const kind={news:'Noticia deportiva',opinion:'Opinión editorial',comment_reply:'Consulta y respuesta',unverified:'Enlace no verificado'}[e.sourceKind]||'Fuente';const identity=e.sourceKind==='comment_reply'?(e.authorRole==='publicly_attributed'?` · atribuida a ${e.authorName}; identidad no verificada`:e.authorRole==='unverified'?' · identidad no verificada':' · autoría identificada'):'';a.textContent=`${kind}: ${e.title || e.source} · ${e.source} · ${e.publishedAt?new Date(e.publishedAt).toLocaleDateString('es-ES'):e.fetchedAt?new Date(e.fetchedAt).toLocaleDateString('es-ES'):'fecha desconocida'}${identity}`;parent.append(a);}catch(_){} };
     for(const a of [...safe.actions].sort((a,b)=>a.priority-b.priority)){
@@ -138,6 +138,7 @@
       if(a.type==='buy')add(row,'strong',`${a.amount.toLocaleString('es-ES')} € · tope ${a.maximumAmount.toLocaleString('es-ES')} €`,'market-ai-bid');
       a.prerequisites.forEach(v=>add(row,'small',`Sólo si: ${v}`,'market-ai-critical-condition'));
       if(a.type==='sell')add(row,'small','Venta candidata; no cuentes el ingreso hasta confirmarla.','market-ai-critical-condition');
+      if(a.type==='hold'&&Number.isFinite(Number(context.finance?.balance))&&Number(context.finance.balance)<0)add(row,'small',`Mantener durante ${context.horizonRounds} jornada(s) exige financiar el saldo negativo de ${Math.abs(Number(context.finance.balance)).toLocaleString('es-ES')} €. Valora otras ventas que cubran el déficit y mantengan un once válido; el plan automático de liquidez se refiere a la próxima jornada.`,'market-ai-critical-condition');
       const detail=fold(row,'Motivos y fuentes');add(detail,'small',`Prioridad ${a.priority} · confianza ${confidence[a.confidence]}`);
       if(a.type==='sell')add(detail,'small','Confirma oferta, precio y sustituto/cobertura deportiva antes de vender.');
       for(const id of a.evidenceIds){const e=context.evidence.find(e=>e.id===id);if(!e)continue;if(e.url)cite(detail,e);else add(detail,'small',`${e.source}: ${e.value || e.title || 'Dato disponible'}${e.fetchedAt?' · '+e.fetchedAt:' · fecha desconocida'}`);}

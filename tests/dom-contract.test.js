@@ -92,7 +92,7 @@ if (!css.includes(".data-sync-popup {") || !css.includes("pointer-events: none")
   throw new Error("The background synchronization notice must not intercept application navigation");
 }
 
-if (!html.includes('app.js?v=148') || !html.includes('styles.css?v=86') || !html.includes('mobile-local-first.js?v=4') || !sw.includes('radar-fantasy-shell-v99')) {
+if (!html.includes('app.js?v=149') || !html.includes('styles.css?v=87') || !html.includes('mobile-local-first.js?v=4') || !sw.includes('radar-fantasy-shell-v100')) {
   throw new Error("The startup-refresh build must invalidate the previous cached application shell");
 }
 
@@ -124,7 +124,7 @@ if (!html.includes('id="mobile-league-trigger"') || !html.includes('class="mobil
 if (!html.includes('mobile-league-shortcut') || !html.includes('data-view="league"')
   || !html.includes('Centro de liga') || !css.includes('.mobile-league-shortcut')
   || !js.includes('platformUserCanAccess(viewName)')) {
-  throw new Error("The mobile MÃƒÂ¡s sheet must keep Centro de liga visible and permission-gated");
+  throw new Error("The mobile MÃƒÆ’Ã‚Â¡s sheet must keep Centro de liga visible and permission-gated");
 }
 
 if (!js.includes("biwengerImportSignature") || !js.includes("mercado sin cambios; se omite el resto de la descarga") || !js.includes("60 * 60 * 1000")) {

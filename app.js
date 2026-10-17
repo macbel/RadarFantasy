@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.14.2";
-const APP_VERSION_CODE = 74;
+const APP_VERSION = "3.14.3";
+const APP_VERSION_CODE = 75;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -2602,49 +2602,85 @@ const salePlanKeepsValidLineup = (players, selectedPlayerKeys, nextPlayer) => {
     .every(([position, needed]) => (byPosition[position] || 0) >= needed));
 };
 
+const recentOwnAcquisition = (player, now = Date.now()) => {
+  const playerId = Number(player.biwengerPlayerId || player.playerId || 0);
+  const userId = Number(state.biwenger.userId || 0);
+  if (!(playerId > 0) || !(userId > 0)) return null;
+  const transfers = (state.biwengerOperations?.activity || []).filter((entry) => Number(entry.playerId) === playerId
+    && ["bought", "bought-from-market", "transfer", "clause", "sold", "sold-to-market"].includes(entry.direction))
+    .map((entry) => {
+      const value = entry.date || entry.createdAt;
+      const numeric = Number(value);
+      const at = numeric > 0 ? (numeric < 100000000000 ? numeric * 1000 : numeric) : new Date(value || 0).getTime();
+      return { entry, at };
+    }).filter(({ entry, at }) => Number.isFinite(at) && at > 0 && at <= now
+      && (Number(entry.to?.id) === userId || Number(entry.from?.id) === userId))
+    .sort((a, b) => b.at - a.at);
+  const latest = transfers[0];
+  return latest && Number(latest.entry.to?.id) === userId && now - latest.at <= 48 * 3600000
+    ? { at: latest.at, source: "Movimiento oficial de Biwenger" } : null;
+};
+
+const lineupSafeLiquiditySet = (players, rows, debt, maxSales = 6) => {
+  const estimate = (row) => Math.max(0, Number(row.sale.value || 0));
+  let best = [], bestIncome = 0, visited = 0;
+  const greedy = [], greedyKeys = new Set();
+  let greedyIncome = 0;
+  [...rows].sort((a, b) => estimate(b) - estimate(a)).forEach((row) => {
+    const key = String(row.player.biwengerPlayerId || row.player.id);
+    if (greedyIncome >= debt || greedy.length >= maxSales || row.existingSale || greedyKeys.has(key)
+      || row.sale.reason.includes("jornada en curso") || !salePlanKeepsValidLineup(players, greedyKeys, row.player)) return;
+    greedy.push(row); greedyKeys.add(key); greedyIncome += estimate(row);
+  });
+  const search = (start, selected, income, keys) => {
+    if (++visited > 5000) return null;
+    if (income > bestIncome) { best = selected; bestIncome = income; }
+    if (income >= debt) return selected;
+    if (selected.length >= maxSales) return null;
+    const maximumRemaining = rows.slice(start).map(estimate).sort((a,b)=>b-a).slice(0,maxSales-selected.length).reduce((sum,value)=>sum+value,0);
+    if (income + maximumRemaining < debt) return null;
+    for (let index = start; index < rows.length; index += 1) {
+      const row = rows[index];
+      const key = String(row.player.biwengerPlayerId || row.player.id);
+      if (keys.has(key) || row.existingSale || row.sale.reason.includes("jornada en curso") || !salePlanKeepsValidLineup(players, keys, row.player)) continue;
+      const result = search(index + 1, [...selected, row], income + estimate(row), new Set([...keys, key]));
+      if (result) return result;
+    }
+    return null;
+  };
+  const searched = search(0, [], 0, new Set());
+  const covered = searched || (greedyIncome >= debt ? greedy : null);
+  if (!covered && greedyIncome > bestIncome) { best = greedy; bestIncome = greedyIncome; }
+  return { rows: covered || best, covered: Boolean(covered), income: covered ? covered.reduce((sum, row) => sum + estimate(row), 0) : bestIncome };
+};
+
 const assistantSaleRows = (players = assistantTeamPlayers(), context = {}) => {
-  const evaluated = players
-    .map((player) => ({ player, sale: saleUrgencyForPlayer(player, context), existingSale: activeSaleForPlayer(player) }))
+  const evaluated = players.map((player) => ({ player, sale: saleUrgencyForPlayer(player, context), existingSale: activeSaleForPlayer(player), acquisition: recentOwnAcquisition(player) }))
     .filter((row) => Number(row.sale.value || 0) > 0);
-  const ordinary = evaluated
-    .filter((row) => row.sale.action !== "Mantener" && row.sale.score >= 54)
+  const risk = (row) => row.player.outOfCompetition === true || row.player.activeInCompetition === false || playerIsEliminatedFromCompetition(row.player)
+    || ["injured", "suspended"].includes(row.player.health?.status);
+  const ordinary = evaluated.filter((row) => row.sale.action !== "Mantener" && row.sale.score >= 54 && (!row.acquisition || risk(row)))
     .sort((a, b) => b.sale.score - a.sale.score || b.sale.value - a.sale.value);
-  const balance = Number.isFinite(Number(context.balanceAfterRoundAndOffers))
-    ? Number(context.balanceAfterRoundAndOffers)
-    : Number(state.biwengerOperations?.finance?.balance ?? state.finance.balance);
+  const rawBalance = context.baseBalance ?? state.biwengerOperations?.finance?.balance ?? state.finance.balance;
+  const balance = rawBalance === null || rawBalance === "" ? null : Number(rawBalance);
   const debt = Number.isFinite(balance) ? Math.max(0, -balance) : 0;
   if (debt <= 0) return ordinary.slice(0, 6);
-
-  const selected = [];
-  const selectedPlayerKeys = new Set();
+  const ordered = [...evaluated].filter((row) => !row.existingSale).sort((a, b) => Number(risk(b)) - Number(risk(a))
+    || Number(Boolean(a.acquisition) && !risk(a)) - Number(Boolean(b.acquisition) && !risk(b))
+    || Number(Boolean(a.sale.recent?.hot)) - Number(Boolean(b.sale.recent?.hot))
+    || a.sale.quality - b.sale.quality || b.sale.value - a.sale.value);
+  // Prefer a complete alternative that preserves the recent purchase and a valid eleven.
+  const alternatives = lineupSafeLiquiditySet(players, ordered.filter((row) => !row.acquisition || risk(row)), debt);
+  const proposal = alternatives.covered ? alternatives : lineupSafeLiquiditySet(players, ordered, debt);
   let potential = 0;
-  const addIfSafe = (row, forced = false) => {
-    const playerKey = String(row.player?.biwengerPlayerId || row.player?.id || "");
-    if (!playerKey || selectedPlayerKeys.has(playerKey) || row.existingSale) return;
-    if (row.sale.reason.includes("jornada en curso") || !salePlanKeepsValidLineup(players, selectedPlayerKeys, row.player)) return;
-    const sale = forced ? {
-      ...row.sale,
-      score: Math.max(76, row.sale.score),
-      action: "Vender hoy",
-      reason: `saldo negativo: necesitas cubrir ${formatFinanceMoney(Math.max(0, debt - potential))} · ${row.sale.reason}`
-    } : row.sale;
-    selected.push({ ...row, sale });
-    selectedPlayerKeys.add(playerKey);
-    potential += Number(sale.suggestedPrice || 0);
-  };
-
-  ordinary.forEach((row) => {
-    if (selected.length < 6 && potential < debt) addIfSafe(row);
+  return proposal.rows.map((row) => {
+    potential += Number(row.sale.value || 0);
+    const remaining = Math.max(0, debt - potential);
+    return { ...row, sale: { ...row.sale, score: Math.max(76, row.sale.score), action: "Valorar venta por liquidez",
+      origin: "local", horizonRounds: 1, liquidityOnly: !risk(row), recentAcquisition: Boolean(row.acquisition),
+      suggestedPrice: row.sale.value,
+      reason: `saldo negativo ${formatFinanceMoney(debt)}: esta venta estima ${formatFinanceMoney(Number(row.sale.value || 0))}. Si se completan las ventas anteriores y esta, quedarían ${formatFinanceMoney(remaining)} por cubrir. ${risk(row) ? row.sale.reason + "." : "Alternativa de financiación, no un descarte deportivo."}${row.acquisition ? " Compra reciente: no se ha podido confirmar otra alternativa suficiente que conserve un once válido." : ""} Mantenerlo requiere otras ventas; no cuentes ingresos hasta confirmarlos.` } };
   });
-  evaluated
-    .filter((row) => !row.existingSale && !selectedPlayerKeys.has(String(row.player?.biwengerPlayerId || row.player?.id || "")))
-    .sort((a, b) => Number(Boolean(a.sale.recent?.hot)) - Number(Boolean(b.sale.recent?.hot))
-      || a.sale.quality - b.sale.quality
-      || b.sale.value - a.sale.value)
-    .forEach((row) => {
-      if (selected.length < 6 && potential < debt) addIfSafe(row, true);
-    });
-  return selected;
 };
 
 const assistantOfferRows = (incoming, myOffers, futureIncome = 0) => {
@@ -13188,7 +13224,7 @@ const decisionEvidence = (action) => {
   const timing = action.type === "offer" ? (offerExpiry > Date.now() / 1000 ? `Oferta hasta ${new Date(offerExpiry * 1000).toLocaleString("es-ES")}` : "Sin plazo confirmado")
     : action.type === "bid" ? (bidDeadline?.source === "biwenger" ? `Resolución ${new Date(bidDeadline.timestamp * 1000).toLocaleString("es-ES")}` : "Sin plazo confirmado")
     : deadline.known && deadline.timestamp && !deadline.active ? `Antes del inicio de jornada: ${new Date(deadline.timestamp * 1000).toLocaleString("es-ES")}` : "Sin plazo confirmado";
-  return `${source} · ${date}. ${timing}. ${conditions}`;
+  return `Plan automático · próxima jornada. ${source} · ${date}. ${timing}. ${conditions}`;
 };
 const decisionVisitSnapshot = (analyzedMarket = null) => ({ at: new Date().toISOString(),
   players: Object.fromEntries([...(platformUserCanAccess("team") ? state.teamPlayers : []), ...(platformUserCanAccess("market") ? analyzedMarket || assistantMarketPlayers() : [])].map((player) => [String(player.biwengerPlayerId || player.id), {

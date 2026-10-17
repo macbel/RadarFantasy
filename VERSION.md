@@ -1,3 +1,11 @@
+# Versión 3.14.3
+
+Fecha: 2026-10-17
+
+- Distingue las ventas propuestas para obtener liquidez del descarte deportivo, con deuda pendiente e ingresos estimados condicionados.
+- Prioriza conservar fichajes recientes confirmados por movimientos propios cuando otras ventas cubren el déficit sin romper el once.
+- Un consejo de mantener de la IA con saldo negativo recuerda la necesidad de financiarlo con otras ventas; identifica el horizonte del análisis.
+
 # Versión 3.14.2
 
 Fecha: 2026-10-17

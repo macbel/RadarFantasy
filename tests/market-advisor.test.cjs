@@ -56,7 +56,12 @@ function compactUI(){
   global.document={createElement:tag=>new Element(tag)};
   const container=new Element('section');const c={...clone(context),horizonRounds:3,squad:Array.from({length:5},(_,i)=>({id:'s'+i,name:'Propio '+i})),coverage:{rivalsLoaded:0,rivalsTotal:2,warnings:['Cobertura parcial']},evidence:[{id:'n',type:'news',source:'FutbolFantasy',sourceKind:'news',title:'Estado deportivo',url:'https://www.futbolfantasy.com/noticias/123',publishedAt:new Date().toISOString()}]};
   const r={schemaVersion:1,strategy:{summary:'Este resumen no se repite en la lista.',priorities:[]},actions:c.squad.map(p=>({type:'hold',playerId:p.id,priority:1,confidence:'low',reason:'Retorno sin confirmar; conserva su papel deportivo si la cobertura permite esperar.',evidenceIds:['n'],amount:null,maximumAmount:null,prerequisites:['Confirmar alta médica','Mantener cobertura de la jornada']})),risks:[],limitations:[]};
-  try{renderPlan(container,r,c);const rows=container.children.filter(n=>n.className==='market-ai-action');assert.equal(rows.length,5);for(const row of rows){const detail=row.children.find(n=>n.tag==='details');assert(detail&&!detail.open);assert(detail.children.some(n=>n.tag==='a'));assert(row.children.filter(n=>n.className==='market-ai-critical-condition').length===2);assert(!row.children.filter(n=>n.tag!=='details').map(n=>n.textContent).join(' ').includes('FutbolFantasy'));}assert(!container.children.filter(n=>n.tag!=='details').map(n=>n._text).join(' ').includes(r.strategy.summary));}finally{global.document=old;}
+  try{renderPlan(container,r,c);const rows=container.children.filter(n=>n.className==='market-ai-action');assert.equal(rows.length,5);for(const row of rows){const detail=row.children.find(n=>n.tag==='details');assert(detail&&!detail.open);assert(detail.children.some(n=>n.tag==='a'));assert(row.children.filter(n=>n.className==='market-ai-critical-condition').length===2);assert(!row.children.filter(n=>n.tag!=='details').map(n=>n.textContent).join(' ').includes('FutbolFantasy'));}assert(!container.children.filter(n=>n.tag!=='details').map(n=>n._text).join(' ').includes(r.strategy.summary));
+    c.finance.balance=-9000000;renderPlan(container,r,c);
+    assert(container.textContent.includes('Estrategia IA')&&container.textContent.includes('3 jornadas'));
+    assert(container.textContent.includes('9.000.000')&&container.textContent.includes('otras ventas que cubran el déficit')&&container.textContent.includes('próxima jornada'));
+    const hold=container.children.find(n=>n.className==='market-ai-action');assert(hold.children.some(n=>n.className==='market-ai-critical-condition'&&n.textContent.includes('Mantener durante 3')));
+  }finally{global.document=old;}
 }
 compactUI();
 async function cancellationUI(){

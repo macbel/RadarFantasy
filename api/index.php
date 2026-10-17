@@ -12,6 +12,7 @@ session_start();
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'auth.php';
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'market-advisor.php';
 require_once __DIR__ . DIRECTORY_SEPARATOR . 'biwenger-player-history.php';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'biwenger-own-team-round.php';
 
 $root = dirname(__DIR__);
 $dbDir = $root . DIRECTORY_SEPARATOR . '.fantasy-db';
@@ -388,13 +389,28 @@ if ($route === '/biwenger/round-points' && $requestMethod === 'GET') {
             $strictTls,
             $resolvedVersion
         );
+        $ownTeamRound = null;
+        try {
+            // One bounded own-user request. A private API failure must not discard public pitch points.
+            $ownResponse = http_request('GET',
+                'https://biwenger.as.com/api/v2/user?fields=id,lineup(*),lineups(*),rounds(*),currentRound(*)',
+                min(8, max(1, $sourceTimeoutSeconds)),
+                biwenger_auth_headers((string)($currentSession['token'] ?? ''), (int)($currentSession['leagueId'] ?? 0),
+                    (int)($currentSession['userId'] ?? 0), $resolvedVersion, $biwengerJsonHeaders), $strictTls);
+            if ($ownResponse['status'] >= 200 && $ownResponse['status'] < 300 && is_array($ownResponse['json'])) {
+                $ownTeamRound = biwenger_own_team_round($ownResponse['json'], $round, $currentSession);
+            }
+        } catch (Throwable $error) {
+            // The exact current-round team total remains unavailable; never substitute season points.
+        }
         send_json(200, [
             'ok' => true,
             'id' => $round['id'] ?? null,
             'name' => (string)($round['name'] ?? ''),
             'scoreId' => (int)($currentSession['scoreId'] ?? 2),
             'scoreName' => (string)($currentSession['scoreName'] ?? biwenger_score_name((int)($currentSession['scoreId'] ?? 2))),
-            'pointsByPlayer' => (array)($round['pointsByPlayer'] ?? [])
+            'pointsByPlayer' => (array)($round['pointsByPlayer'] ?? []),
+            'ownTeamRound' => $ownTeamRound
         ]);
     } catch (Throwable $error) {
         send_json(502, ['error' => $error->getMessage() ?: 'No se pudo cargar la puntuacion actual de Biwenger']);

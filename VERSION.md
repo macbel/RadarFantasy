@@ -1,3 +1,10 @@
+# Versión 3.14.2
+
+Fecha: 2026-10-17
+
+- Total oficial del equipo en la jornada actual visible en la cabecera de Mi equipo, tanto en Plantilla como en Alineación.
+- Comprueba la jornada, el sistema de puntuación y el usuario; conserva cero y negativos e indica datos no disponibles o parciales sin sumar puntos de temporada.
+
 # Versión 3.14.1
 
 Fecha: 2026-10-17

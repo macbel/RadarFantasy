@@ -1082,6 +1082,33 @@ const rewardEstimate = estimatedRoundReward();
 if (rewardEstimate.amount !== 1315000 || rewardEstimate.source !== "Ajustes de liga Biwenger") {
   throw new Error("Round reward must combine the explicit Biwenger fields without guessing unrelated amounts: " + JSON.stringify(rewardEstimate));
 }
+const roundSummaryOriginal = { currentRoundPoints: state.currentRoundPoints, scoreId: state.biwenger.scoreId, liveRound: state.liveRound, userName: state.biwenger.userName };
+state.biwenger.scoreId = 8;
+const officialOwnRound = { roundId: 4901, roundName: "Jornada 3", scoreId: 8, userId: 77, total: 0, totalReliable: true, known: 11, count: 11, updatedAt: new Date().toISOString() };
+state.currentRoundPoints = { id: 4901, name: "Jornada 3", scoreId: 8, scoreName: "SofaScore", contextKey: decisionContextKey(), ownTeamRound: officialOwnRound };
+if (currentOwnTeamRoundPoints().total !== 0 || !currentOwnTeamRoundPoints().reliable) throw new Error("Official zero points must be displayed");
+officialOwnRound.total = -4;
+if (currentOwnTeamRoundPoints().total !== -4) throw new Error("Official negative points must be displayed");
+officialOwnRound.roundId = 4900;
+if (currentOwnTeamRoundPoints().total !== null) throw new Error("Previous round total must not populate current-round summary");
+officialOwnRound.roundId = 4901;
+officialOwnRound.scoreId = 2;
+if (currentOwnTeamRoundPoints().total !== null) throw new Error("Different scoring system must not populate current-round summary");
+officialOwnRound.scoreId = 8;
+officialOwnRound.totalReliable = false; officialOwnRound.known = 7; officialOwnRound.total = 24;
+if (currentOwnTeamRoundPoints().reliable || !currentOwnTeamRoundPoints().label.includes("Subtotal del once oficial (7/11)")) throw new Error("Partial official lineup points must be identified explicitly");
+officialOwnRound.total = null;
+if (currentOwnTeamRoundPoints().total !== null) throw new Error("Missing official total must not become zero or accumulated season points");
+officialOwnRound.total = 24;
+state.currentRoundPoints.contextKey = "another-user-league";
+if (currentOwnTeamRoundPoints().total !== null) throw new Error("Round points must be isolated by account and league context");
+state.liveRound = { teams: [{ userId: 88, name: "Rival", points: 99, pointsReliable: true }] };
+state.biwenger.userName = "";
+if (currentLiveRoundOwnTeam() !== null) throw new Error("Empty own name must never select a rival team");
+state.currentRoundPoints = roundSummaryOriginal.currentRoundPoints;
+state.biwenger.scoreId = roundSummaryOriginal.scoreId;
+state.liveRound = roundSummaryOriginal.liveRound;
+state.biwenger.userName = roundSummaryOriginal.userName;
 const hydratedCurrentRound = hydrateImportedPlayers([
   { id: "p1", biwengerPlayerId: 1, name: "Portero", position: "POR", roundPoints: 7, roundPointsRoundId: 4901, roundPointsRoundName: "Jornada 3", roundPointsScoreId: 8, media: {} },
   { id: "p2", biwengerPlayerId: 2, name: "Defensa", position: "DF", roundPoints: 0, roundPointsRoundId: 4901, roundPointsRoundName: "Jornada 3", roundPointsScoreId: 8, media: {} }

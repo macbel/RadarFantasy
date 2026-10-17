@@ -9701,3 +9701,12 @@ html[data-theme="day"] .home-opportunity-list {
 .decision-roster-player { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; }
 .decision-roster-player > .player-media { flex-shrink: 0; }
 .decision-roster-player > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+
+/* The current-round total stays visible in both mobile team modes. */
+.team-season-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; padding: 16px 18px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.team-season-summary > div { min-width: 0; }
+.team-season-summary .eyebrow { margin: 0 0 4px; }
+.team-season-summary h3 { margin: 0 0 5px; font-size: 16px; overflow-wrap: anywhere; }
+.team-season-summary small { color: var(--muted); }
+.team-season-summary > strong { flex-shrink: 0; color: var(--green); font-size: clamp(22px, 3vw, 32px); font-variant-numeric: tabular-nums; }
+@media (max-width: 420px) { .team-season-summary { align-items: flex-start; flex-direction: column; gap: 10px; padding: 14px; } }

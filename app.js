@@ -217,8 +217,8 @@ const BIWENGER_SESSION_KEY = "biwenger-session";
 const FUTBOL_FANTASY_SESSION_KEY = "futbolfantasy-session";
 const APP_UPDATE_CHECK_KEY = "radar-fantasy.update-check.v1";
 const FANTASY_SETTINGS_TAB_KEY = "radar-fantasy.settings-platform.v1";
-const APP_VERSION = "3.14.1";
-const APP_VERSION_CODE = 73;
+const APP_VERSION = "3.14.2";
+const APP_VERSION_CODE = 74;
 const DEFAULT_MOBILE_API_BASE_URL = "https://alufi.es/fms";
 const ANDROID_UPDATE_MANIFEST_URL = "https://alufi.es/fms/android-update.json";
 const LATEST_RELEASE_API_URL = "https://api.github.com/repos/macbel/RadarFantasy/releases/latest";
@@ -2255,16 +2255,11 @@ const currentLiveRoundOwnTeam = () => {
   const userId = Number(state.biwenger.userId || 0);
   if (userId > 0) {
     const byId = teams.find((team) => Number(team.userId || 0) === userId);
-    if (byId) return byId;
+    return byId || null;
   }
   const mine = teams.find((team) => team.isMe);
   if (mine) return mine;
-  const userName = normalize(state.biwenger.userName || "");
-  const leagueName = normalize(activeLeagueName() || "");
-  return teams.find((team) => {
-    const name = normalize(team.name || "");
-    return name && (name === userName || name === leagueName || name.includes(userName) || userName.includes(name));
-  }) || null;
+  return null;
 };
 
 const estimatedRoundReward = () => {
@@ -12661,20 +12656,39 @@ const buildRecommendationCopy = (player) => {
   return "Compra solo si necesitas cubrir posicion o especular barato.";
 };
 
+const currentOwnTeamRoundPoints = () => {
+  const snapshot = state.currentRoundPoints;
+  const own = snapshot?.ownTeamRound;
+  const missing = { total: null, reliable: false, label: "Sin total oficial disponible para la jornada actual" };
+  if (!snapshot || !own || snapshot.contextKey !== decisionContextKey()) return missing;
+  if (snapshot.id === null || snapshot.id === undefined || String(own.roundId) !== String(snapshot.id)) return missing;
+  const userId = Number(state.biwenger.userId || 0), scoreId = Number(state.biwenger.scoreId || 0);
+  if (!(userId > 0) || Number(own.userId) !== userId || !(scoreId > 0)
+    || Number(snapshot.scoreId) !== scoreId || Number(own.scoreId) !== scoreId) return missing;
+  const raw = own.total;
+  if (raw === null || raw === undefined || raw === "" || !Number.isFinite(Number(raw))) return missing;
+  const total = Number(raw), known = Math.max(0, Number(own.known || 0)), count = Math.max(0, Number(own.count || 0));
+  const round = String(snapshot.name || own.roundName || "Jornada actual");
+  const score = String(snapshot.scoreName || state.biwenger.scoreName || "");
+  const updated = new Date(own.updatedAt || 0);
+  const timestamp = updated.getTime() > 0 ? updated.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "sin hora confirmada";
+  if (own.totalReliable === true) return { total, reliable: true, label: `${round}${score ? ` · ${score}` : ""} · Total oficial · ${timestamp}` };
+  if (known > 0 && count > 0) return { total, reliable: false, label: `${round}${score ? ` · ${score}` : ""} · Subtotal del once oficial (${known}/${count}) · ${timestamp}` };
+  return missing;
+};
+
 const renderTeam = () => {
   if (shouldSkipComponentRender("team", "team")) return;
   const roster = qs("#team-roster");
   const countsEl = qs("#team-position-counts");
   if (!roster || !countsEl) return;
   renderFinance();
-  const squadPoints = teamAccumulatedPoints();
-  const squadPointsEl = qs("#team-squad-points");
-  if (squadPointsEl) {
-    squadPointsEl.textContent = squadPoints.known ? `${squadPoints.total.toLocaleString("es-ES")} pts` : "S/D";
-    squadPointsEl.title = squadPoints.known < squadPoints.count
-      ? `${squadPoints.known}/${squadPoints.count} jugadores con puntos de temporada disponibles` : "Puntos acumulados de temporada de toda la plantilla";
-    qs("#team-squad-points-status").textContent = squadPoints.known < squadPoints.count
-      ? `Datos incompletos (${squadPoints.known}/${squadPoints.count})` : "Temporada";
+  const roundPoints = currentOwnTeamRoundPoints();
+  const roundPointsEl = qs("#team-squad-points");
+  if (roundPointsEl) {
+    roundPointsEl.textContent = roundPoints.total === null ? "S/D" : `${roundPoints.total.toLocaleString("es-ES")} pts${roundPoints.reliable ? "" : " (parcial)"}`;
+    roundPointsEl.title = roundPoints.label;
+    qs("#team-squad-points-status").textContent = roundPoints.label;
   }
   applyFutbolFantasySession(state.futbolFantasy);
   const incomingOffers = activeIncomingOffers(state.biwengerOperations?.offers || []);
@@ -13415,7 +13429,9 @@ const applyCurrentRoundPoints = (payload = {}) => {
     name: String(payload.name || ""),
     scoreId: Number(payload.scoreId || state.biwenger.scoreId || 0),
     scoreName: String(payload.scoreName || state.biwenger.scoreName || ""),
-    pointsByPlayer
+    pointsByPlayer,
+    ownTeamRound: payload.ownTeamRound || null,
+    contextKey: decisionContextKey()
   };
   state.currentRoundPointsFetchedAt = Date.now();
   state.teamPlayers = state.teamPlayers.map((player) => {
@@ -13437,17 +13453,23 @@ const applyCurrentRoundPoints = (payload = {}) => {
 };
 
 const loadCurrentRoundPoints = async (forceRefresh = false) => {
-  if (!state.biwenger.connected || !state.teamPlayers.length) return null;
+  if (!state.biwenger.connected || !platformUserCanAccess("team")) return null;
   if (!forceRefresh && state.currentRoundPoints
+    && state.currentRoundPoints.contextKey === decisionContextKey()
+    && Number(state.currentRoundPoints.scoreId) === Number(state.biwenger.scoreId)
     && Date.now() - Number(state.currentRoundPointsFetchedAt || 0) < 60 * 1000) {
     return state.currentRoundPoints;
   }
   if (state.currentRoundPointsLoading) return state.currentRoundPointsLoading;
+  const requestedContext = decisionContextKey();
+  const requestedGeneration = state.biwenger.contextGeneration;
   state.currentRoundPointsLoading = (async () => {
     const response = await apiFetch("/api/biwenger/round-points");
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "No se pudieron actualizar los puntos de la jornada.");
+    if (requestedContext !== decisionContextKey() || requestedGeneration !== state.biwenger.contextGeneration) return null;
     const snapshot = applyCurrentRoundPoints(payload);
+    renderTeam();
     renderLineup();
     return snapshot;
   })().catch(() => null).finally(() => {

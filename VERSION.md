@@ -1,3 +1,10 @@
+# Versión 3.14.1
+
+Fecha: 2026-10-17
+
+- Fotos de jugadores en las decisiones y oportunidades de Tu día fantasy, así como en las selecciones y el once/suplentes del simulador.
+- Reutiliza las fotos y las alternativas de escudo o iniciales de la app, con presentación adaptable a móvil y ambos temas.
+
 # Versión 3.14.0
 
 Fecha: 2026-10-17

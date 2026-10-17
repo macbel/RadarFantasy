@@ -9688,3 +9688,16 @@ html[data-theme="day"] .home-opportunity-list {
 
 #home-decision-hub details > summary { cursor: pointer; min-height: 44px; font-weight: 700; }
 .decision-priorities article { background: var(--surface); }
+
+/* Player portraits in the daily overview reuse the shared media fallback. */
+.decision-player-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.decision-player-heading > strong, .decision-option-copy { min-width: 0; overflow-wrap: anywhere; }
+.decision-player-heading > .player-media, .decision-option > .player-media, .home-opportunity-photo { flex-shrink: 0; }
+.decision-option > .decision-option-copy { flex: 1; }
+.decision-option .player-media span { overflow-wrap: normal; }
+.home-opportunity-photo { display: inline-flex; align-items: center; }
+#home-view .player-media [hidden] { display: none; }
+.decision-roster-photos { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 10px; }
+.decision-roster-player { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; }
+.decision-roster-player > .player-media { flex-shrink: 0; }
+.decision-roster-player > span:last-child { min-width: 0; overflow-wrap: anywhere; }
